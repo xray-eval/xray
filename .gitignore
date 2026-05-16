@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Vite build output
+dist/
+dist-ssr/
+*.local
+
+# Vite & build caches
+.vite/
+vite.config.*.timestamp-*.mjs
+vite.config.*.timestamp-*.mts
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+.nyc_output/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs
+*.log
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
