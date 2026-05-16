@@ -1,0 +1,8 @@
+# Pinned runtime versions — single source of truth for local dev, Docker, and CI.
+# Bump deliberately and in one commit; never let CI float to a different patch
+# than the one developers run locally.
+#
+# Works with mise (https://mise.jdx.dev) and asdf out of the box.
+nodejs 24.15.0
+bun 1.3.14
+pnpm 11.1.2

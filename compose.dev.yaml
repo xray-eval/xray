@@ -1,0 +1,49 @@
+# Development compose — Vite (client) + Bun (server) as two containers with
+# host source bind-mounted. HMR on both sides survives file saves; the Hono
+# event stream doesn't drop when an adapter file changes.
+#
+# `pnpm dev` from package.json wraps this.
+
+services:
+  client:
+    image: node@sha256:24dc26ef1e3c3690f27ebc4136c9c186c3133b25563ae4d7f0692e4d1fe5db0e  # node:24.15.0-bookworm-slim
+    container_name: xray-dev-client
+    # Run as the host user so anything pnpm writes into the bind-mounted repo
+    # is owned by the developer, not root. A compromised dev dep can no longer
+    # rewrite .git/hooks or stage commits via root-write to /app.
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    command: sh -c "corepack enable && corepack prepare --activate && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
+    environment:
+      - VITE_API_PROXY=http://server:8080
+    volumes:
+      - ./:/app
+      - dev_client_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - server
+
+  server:
+    image: oven/bun@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f  # oven/bun:1.3.14-debian
+    container_name: xray-dev-server
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    # `bun install` would trip the `only-allow pnpm` preinstall guard. Bun runs
+    # the server (`bun --hot server/index.ts`), but pnpm owns dep resolution
+    # so the lockfile stays single-source-of-truth.
+    command: sh -c "corepack enable && corepack prepare --activate && pnpm install --frozen-lockfile && bun --hot server/index.ts"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8080
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+      - dev_server_node_modules:/app/node_modules
+    ports:
+      - "8080:8080"
+
+volumes:
+  dev_client_node_modules:
+  dev_server_node_modules:

@@ -1,0 +1,76 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"files": {
+		"ignoreUnknown": true,
+		"includes": ["src/**/*", "biome-plugins/**/*", "*.{ts,tsx,js,mjs,cjs,json,jsonc}"]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineWidth": 100,
+		"lineEnding": "lf"
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"semicolons": "always",
+			"trailingCommas": "all",
+			"arrowParentheses": "always"
+		}
+	},
+	"plugins": ["./biome-plugins/no-as-cast.grit"],
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"suspicious": {
+				"noExplicitAny": "error",
+				"noTsIgnore": "error",
+				"noEmptyBlockStatements": "error",
+				"noConsole": { "level": "warn", "options": { "allow": ["error", "warn", "info"] } }
+			},
+			"style": {
+				"noNonNullAssertion": "error",
+				"useImportType": { "level": "error", "options": { "style": "separatedType" } },
+				"useExportType": "error",
+				"useConsistentArrayType": { "level": "error", "options": { "syntax": "shorthand" } },
+				"noParameterAssign": "error"
+			},
+			"correctness": {
+				"noUnusedImports": "error",
+				"noUnusedVariables": "error",
+				"noUnusedFunctionParameters": "error",
+				"useExhaustiveDependencies": "error"
+			},
+			"nursery": {
+				"noFloatingPromises": "error",
+				"noMisusedPromises": "error",
+				"noShadow": "error",
+				"noMisleadingReturnType": "error"
+			}
+		}
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": {
+					"level": "on",
+					"options": {
+						"groups": [
+							":NODE:",
+							":BLANK_LINE:",
+							":PACKAGE:",
+							":BLANK_LINE:",
+							":ALIAS:",
+							":BLANK_LINE:",
+							":PATH:"
+						]
+					}
+				}
+			}
+		}
+	}
+}

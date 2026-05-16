@@ -1,0 +1,38 @@
+{
+	"compilerOptions": {
+		"target": "ES2023",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"moduleDetection": "force",
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"resolveJsonModule": true,
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"incremental": true,
+		"skipLibCheck": true,
+
+		"lib": ["ES2023", "DOM", "DOM.Iterable"],
+		"jsx": "react-jsx",
+		"types": ["bun"],
+
+		"strict": true,
+		"noImplicitOverride": true,
+		"noFallthroughCasesInSwitch": true,
+		"noPropertyAccessFromIndexSignature": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"useUnknownInCatchVariables": true,
+		"allowUnreachableCode": false,
+		"allowUnusedLabels": false,
+		"forceConsistentCasingInFileNames": true,
+
+		"paths": {
+			"@/*": ["./src/*"]
+		}
+	},
+	"include": ["src", "server", "biome-plugins", "vite.config.ts", "vitest.config.ts"],
+	"exclude": ["node_modules", "dist"]
+}

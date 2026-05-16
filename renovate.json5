@@ -1,0 +1,54 @@
+{
+  // Renovate config — turn this on once the repo is connected to the Renovate app.
+  // Mirrors the supply-chain stance in .claude/rules/supply-chain.md.
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  extends: [
+    "config:recommended",
+    // Pin every GitHub Actions `uses:` to a 40-char commit SHA, matching §4 of supply-chain.md.
+    "helpers:pinGitHubActionDigests",
+    // Group all non-major dev-deps into one PR per week.
+    "group:allNonMajor",
+  ],
+
+  // Mirror pnpm's minimumReleaseAge (7 days). Renovate won't open a PR for any
+  // release that's younger than this — same 7-day cooldown that protects local installs.
+  minimumReleaseAge: "7 days",
+
+  // Don't auto-merge anything. Every upgrade gets eyeballs.
+  automerge: false,
+
+  // One PR per dep group max — don't drown the repo.
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+
+  // Lockfile maintenance: refresh pnpm-lock.yaml weekly so transitive CVE fixes flow through
+  // without waiting for a direct-dep bump.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 5am on monday"],
+  },
+
+  packageRules: [
+    // Major upgrades always get their own PR (review carefully).
+    {
+      matchUpdateTypes: ["major"],
+      addLabels: ["dep:major"],
+      automerge: false,
+    },
+    // GitHub Actions: a "version" upgrade for us means the comment tag bumps; Renovate
+    // re-resolves the SHA via the pin helper above.
+    {
+      matchManagers: ["github-actions"],
+      addLabels: ["dep:actions"],
+    },
+  ],
+
+  // Vulnerability alerts open PRs even if they violate cooldown — they're CVE-driven,
+  // which matches the carve-out in supply-chain.md §3 step 5.
+  vulnerabilityAlerts: {
+    enabled: true,
+    minimumReleaseAge: "0 days",
+    labels: ["security"],
+  },
+}

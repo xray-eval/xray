@@ -1,0 +1,22 @@
+# Production-shape compose. Operators copy this into their own stack and put
+# their reverse proxy in front of it. The image is published to GHCR by tag;
+# pin to a specific tag (or digest) — never `:latest` in real deployments.
+
+services:
+  xray:
+    image: ghcr.io/basilebong/xray:0.0.0  # bump per release; pin to digest in production
+    container_name: xray
+    restart: unless-stopped
+    # Secrets enter HERE — never in the image. The operator's .env stays on the
+    # host and is never COPYied into a layer (.claude/rules/public-repo.md §2).
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # HEALTHCHECK is declared in the Dockerfile — don't override here unless
+    # a per-environment tweak is actually needed.

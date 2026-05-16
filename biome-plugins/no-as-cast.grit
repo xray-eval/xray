@@ -1,0 +1,15 @@
+// Bans TypeScript `as` type assertions. `as const` is the only allowed form
+// (it's a literal-type widening control, not a cast). Use `satisfies`, type
+// guards, or `ts-pattern.match` to narrow types instead. Biome 2.4 has no
+// built-in equivalent — this GritQL plugin fills the gap.
+//
+// Implementation: the negation `$cast <: not `$x as const`` excludes the
+// allowed form via whole-expression match instead of trying to negate the
+// `const` keyword node (which doesn't parse as an expression and so wouldn't
+// match the bare-identifier pattern).
+language js
+
+`$expr as $type` as $cast where {
+	$cast <: not `$x as const`,
+	register_diagnostic(span=$type, message="Banned `as` cast. The only allowed form is `as const`. Use `satisfies`, a type guard, or `ts-pattern.match` instead.")
+}

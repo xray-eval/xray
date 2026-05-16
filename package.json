@@ -1,0 +1,44 @@
+{
+	"name": "xray",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@11.1.2",
+	"engines": {
+		"node": ">=24.0.0",
+		"pnpm": ">=11.0.0"
+	},
+	"scripts": {
+		"preinstall": "node -e \"if(!(process.env.npm_execpath||'').includes('pnpm')&&!(process.env.npm_config_user_agent||'').startsWith('pnpm/'))throw new Error('Use pnpm — see .claude/rules/supply-chain.md')\"",
+		"prepare": "lefthook install",
+		"check": "biome check",
+		"check:fix": "biome check --write",
+		"format": "biome format --write",
+		"lint": "biome lint",
+		"typecheck": "tsc --noEmit",
+		"dev": "docker compose -f compose.dev.yaml up --build",
+		"dev:down": "docker compose -f compose.dev.yaml down -v",
+		"build": "vite build",
+		"start": "bun server/index.ts",
+		"docker:build": "docker build -t xray:local .",
+		"docker:run": "docker run --rm -p 8080:8080 --env-file .env xray:local",
+		"docker:smoke": "bash scripts/docker-smoke.sh",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.14",
+		"@commitlint/cli": "^21.0.0",
+		"@commitlint/config-conventional": "^21.0.0",
+		"@types/bun": "^1.3.13",
+		"@vitest/coverage-v8": "^4.1.5",
+		"happy-dom": "^20.9.0",
+		"lefthook": "^2.1.6",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.5"
+	},
+	"dependencies": {
+		"ts-pattern": "^5.9.0"
+	}
+}

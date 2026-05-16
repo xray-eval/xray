@@ -1,0 +1,31 @@
+# Git hooks managed by lefthook. Installed via `lefthook install` (auto-runs
+# from package.json `prepare` script after `pnpm install`).
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: biome (format + lint, staged only, auto-fix)
+      glob: "*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css}"
+      run: pnpm exec biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true
+
+    - name: typecheck (whole project — types are cross-file)
+      glob: "*.{ts,tsx}"
+      run: pnpm exec tsc --noEmit
+
+    # The single layer that can PREVENT (not mitigate) a leak per
+    # .claude/rules/public-repo.md §4. Push Protection + CI run later — they
+    # block the PR but the blob is already public by then.
+    # Requires `gitleaks` on PATH — see CONTRIBUTING.md for install.
+    - name: gitleaks (staged files, redacted)
+      run: |
+        if ! command -v gitleaks >/dev/null 2>&1; then
+          echo "gitleaks not found. Install: brew install gitleaks  |  pacman -S gitleaks  |  see CONTRIBUTING.md"
+          exit 1
+        fi
+        gitleaks protect --staged --no-banner --redact
+
+commit-msg:
+  jobs:
+    - name: commitlint (conventional commits)
+      run: pnpm exec commitlint --edit {1}

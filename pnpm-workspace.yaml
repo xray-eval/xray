@@ -1,0 +1,27 @@
+# Supply-chain hardening — see .claude/rules/supply-chain.md (section 1).
+# Do NOT relax these without reading that rule first.
+
+# Refuse to resolve packages younger than 7 days (10080 minutes).
+# Catches the high-risk window right after a maintainer-account compromise.
+minimumReleaseAge: 10080
+# Fail loudly when a target version is too new — never silently downgrade.
+minimumReleaseAgeStrict: true
+
+# Default-deny lifecycle scripts. Audit before adding entries here.
+allowBuilds:
+  # lefthook (Evil Martians) — postinstall fetches the prebuilt Go binary from
+  # the lefthook GitHub release matching the package version. Required for the
+  # git hooks to function. Audited 2026-05-16 against npm pkg @ v2.1.6.
+  lefthook: true
+
+# Reinforce the v11 default in case it ever changes upstream.
+strictDepBuilds: true
+
+# No transitive deps from git URLs or raw tarballs — registry only.
+blockExoticSubdeps: true
+
+# Fail install if a newer release has weaker publish-time trust than the prior one.
+trustPolicy: no-downgrade
+
+# Re-verify node_modules matches the lockfile before any script runs.
+verifyDepsBeforeRun: install

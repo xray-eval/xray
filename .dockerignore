@@ -1,0 +1,50 @@
+# Anything NOT listed here ends up in the build context — keep this tight.
+# Secrets in particular must never enter a layer (.claude/rules/public-repo.md §2).
+
+**/.git
+**/.github
+**/.gitignore
+**/.gitattributes
+
+# Dependencies are reinstalled inside the image from the lockfile.
+**/node_modules
+**/.pnpm-store
+
+# Build output and caches.
+**/dist
+**/dist-ssr
+**/.vite
+**/coverage
+**/.nyc_output
+**/*.tsbuildinfo
+
+# Secrets — non-negotiable.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# Editor / OS noise.
+**/.vscode
+**/.idea
+**/.DS_Store
+**/Thumbs.db
+
+# Docs / meta — image doesn't need them at runtime.
+**/README.md
+**/CONTRIBUTING.md
+**/CHANGELOG.md
+**/LICENSE
+**/CLAUDE.md
+**/.claude
+**/renovate.json5
+**/lefthook.yml
+**/commitlint.config.mjs
+**/biome.json
+
+# Compose files are operator-side, not image-side.
+**/compose.yaml
+**/compose.dev.yaml
+**/Dockerfile
+**/.dockerignore
