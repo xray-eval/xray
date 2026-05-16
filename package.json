@@ -16,7 +16,7 @@
 		"format": "biome format --write",
 		"lint": "biome lint",
 		"typecheck": "tsc --noEmit",
-		"dev": "docker compose -f compose.dev.yaml up --build",
+		"dev": "UID=$(id -u) GID=$(id -g) docker compose -f compose.dev.yaml up --build",
 		"dev:down": "docker compose -f compose.dev.yaml down -v",
 		"build": "vite build",
 		"start": "bun src/server/server.ts",
