@@ -1,4 +1,4 @@
-import type { ProviderId } from "../provider/types.ts";
+import type { ProviderId } from "../types.ts";
 
 export class AdapterError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
