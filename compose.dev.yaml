@@ -32,7 +32,7 @@ services:
     # `bun install` would trip the `only-allow pnpm` preinstall guard. Bun runs
     # the server (`bun --hot server/index.ts`), but pnpm owns dep resolution
     # so the lockfile stays single-source-of-truth.
-    command: sh -c "corepack enable && corepack prepare --activate && pnpm install --frozen-lockfile && bun --hot server/index.ts"
+    command: sh -c "corepack enable && corepack prepare --activate && pnpm install --frozen-lockfile && bun --hot src/server/server.ts"
     environment:
       - HOST=0.0.0.0
       - PORT=8080

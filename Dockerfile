@@ -22,7 +22,7 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN corepack enable && corepack prepare --activate \
- && pnpm install --prod --frozen-lockfile
+ && pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # --- Stage 2: runtime --------------------------------------------------------
 #
@@ -44,7 +44,6 @@ COPY --chown=xray:users --from=prod-deps /app/node_modules ./node_modules
 # cache on package.json / tsconfig.json. Bun runs TS directly, so we ship .ts.
 COPY --chown=xray:users package.json tsconfig.json ./
 COPY --chown=xray:users src ./src
-COPY --chown=xray:users server ./server
 
 ENV HOST=0.0.0.0 \
     PORT=8080 \
@@ -54,4 +53,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD bun --eval "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-CMD ["bun", "server/index.ts"]
+CMD ["bun", "src/server/server.ts"]

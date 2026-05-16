@@ -11,6 +11,7 @@
 @.claude/rules/honesty.md
 @.claude/rules/code-layout.md
 @.claude/rules/errors.md
+@.claude/rules/boundary-validation.md
 @.claude/rules/tdd.md
 @.claude/rules/supply-chain.md
 @.claude/rules/public-repo.md
