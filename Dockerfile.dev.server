@@ -12,30 +12,35 @@
 # oven/bun:1.3.14-debian
 FROM oven/bun@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f AS bun-src
 
-# node:24.15.0-bookworm-slim (matches .nvmrc)
-FROM node@sha256:24dc26ef1e3c3690f27ebc4136c9c186c3133b25563ae4d7f0692e4d1fe5db0e
+# node:24.15.0-bookworm (matches .nvmrc). NOT the -bookworm-slim variant: the
+# slim image omits git, and `apt-get install git` at build time is currently
+# broken on bookworm-slim because apt 2.6.1's apt-key signature-split pipeline
+# mis-parses the multi-signature InRelease Debian ships (gpgv validates the
+# file directly; apt's wrapper exits 1 with an empty parse). The non-slim
+# image ships git preinstalled, so we never invoke apt at build time.
+# Production (Dockerfile) stays on -slim because it doesn't need git.
+FROM node@sha256:050bf2bbe33c1d6754e060bec89378a79ed831f04a7bb1a53fe45e997df7b3bb
 
 COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 
-# `git` is required because package.json's `prepare` script runs
-# `lefthook install` after every `pnpm install`, and lefthook shells out to
-# git. The slim node image ships without it.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends git \
- && rm -rf /var/lib/apt/lists/*
+# `git` ships in the base image — required because package.json's `prepare`
+# script runs `lefthook install` after every `pnpm install`, and lefthook
+# shells out to git.
 
 RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 
-# Pre-create /app/node_modules owned by the dev UID so the named volume
-# attached at runtime inherits that ownership (Docker copies the image
-# directory into a fresh named volume on first mount). Without this, the
-# volume defaults to root-owned and pnpm install fails with EACCES.
+# Pre-create /app/node_modules and /data owned by the dev UID so the named
+# volumes attached at runtime inherit that ownership (Docker copies the
+# image directory into a fresh named volume on first mount). Without this,
+# the volumes default to root-owned: pnpm install fails with EACCES on
+# /app/node_modules; the SQLite store fails with EACCES on /data when
+# openStoreFromEnv calls mkdirSync(XRAY_DATA_DIR).
 #
 # UID/GID come from build args — `pnpm dev` exports the host UID/GID into
 # compose, which forwards them here. Defaults to 1000:1000 for the common
 # case but rebuilds per-developer if their host IDs differ.
 ARG UID=1000
 ARG GID=1000
-RUN mkdir -p /app/node_modules && chown -R ${UID}:${GID} /app
+RUN mkdir -p /app/node_modules /data && chown -R ${UID}:${GID} /app /data
 
 WORKDIR /app
