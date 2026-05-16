@@ -78,13 +78,15 @@ If you're running a custom STT→LLM→TTS loop (OpenAI Realtime, Gemini Live, a
 curl -X POST http://localhost:8080/v1/sessions/abc123/events \
   -H 'Content-Type: application/json' \
   -d '{
-    "type": "user_transcript",
-    "ts": 1715865600000,
-    "text": "Book me a flight to Berlin."
+    "type": "turn_completed",
+    "idx": 0,
+    "role": "user",
+    "text": "Book me a flight to Berlin.",
+    "timestamp": "2026-05-16T12:00:01Z"
   }'
 ```
 
-Stream events as they happen; the UI updates live. Event schema and the full event list are documented in the ingest route — see [`src/server/ingest/`](./src/server/ingest/) once that ticket lands.
+Stream events as they happen; the UI updates live. Event schema and the full event list are documented in [`src/server/ingest/ingest.types.ts`](./src/server/ingest/ingest.types.ts).
 
 `compose.yaml` in this repo is a working production example. Drop it into your existing stack behind your own reverse proxy.
 

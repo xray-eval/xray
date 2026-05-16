@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { match, P } from "ts-pattern";
 import type { BaseIssue } from "valibot";
 import * as v from "valibot";
 
@@ -71,19 +72,22 @@ export function createIngestRouter(store: Store): Hono {
 		},
 	);
 
-	router.onError((err, c) => {
-		if (err instanceof InvalidEventError || err instanceof MalformedBodyError) {
-			return c.json({ error: "invalid_event", issues: sanitizeIssues(err.issues) }, 400);
-		}
-		if (err instanceof UnknownTurnError) {
-			return c.json({ error: "unknown_turn", sessionId: err.sessionId, turnIdx: err.turnIdx }, 422);
-		}
-		if (err instanceof BodyTooLargeError) {
-			return c.json({ error: "body_too_large", maxBytes: err.maxBytes }, 413);
-		}
-		console.error("store error during ingest", err);
-		return c.json({ error: "store_failure" }, 500);
-	});
+	router.onError((err, c) =>
+		match(err)
+			.with(P.union(P.instanceOf(InvalidEventError), P.instanceOf(MalformedBodyError)), (e) =>
+				c.json({ error: "invalid_event", issues: sanitizeIssues(e.issues) }, 400),
+			)
+			.with(P.instanceOf(UnknownTurnError), (e) =>
+				c.json({ error: "unknown_turn", sessionId: e.sessionId, turnIdx: e.turnIdx }, 422),
+			)
+			.with(P.instanceOf(BodyTooLargeError), (e) =>
+				c.json({ error: "body_too_large", maxBytes: e.maxBytes }, 413),
+			)
+			.otherwise((e) => {
+				console.error("unhandled error during ingest", e);
+				return c.json({ error: "store_failure" }, 500);
+			}),
+	);
 
 	return router;
 }
