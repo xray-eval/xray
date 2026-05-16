@@ -1,6 +1,6 @@
 import type { Store } from "./store.ts";
 import { openStore } from "./store.ts";
-import type { Session, ToolCallRow, TurnRow } from "./types.ts";
+import type { Session, ToolCallInput, TurnInput } from "./types.ts";
 
 /**
  * In-memory store for a single test. Each call returns a fresh DB — no
@@ -27,11 +27,10 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
 	};
 }
 
-export function makeTurnRow(overrides: Partial<TurnRow> = {}): TurnRow {
+export function makeTurnInput(overrides: Partial<TurnInput> = {}): TurnInput {
 	turnCounter += 1;
 	return {
 		id: `turn-${turnCounter}`,
-		sessionId: "sess-1",
 		idx: 0,
 		role: "user",
 		text: "hello",
@@ -45,15 +44,8 @@ export function makeTurnRow(overrides: Partial<TurnRow> = {}): TurnRow {
 	};
 }
 
-/**
- * Builder for input rows handed to `appendToolCalls`. The `id` field is
- * populated by SQLite, not callers, so it's omitted here.
- */
-export type ToolCallInput = Omit<ToolCallRow, "id">;
-
 export function makeToolCallInput(overrides: Partial<ToolCallInput> = {}): ToolCallInput {
 	return {
-		turnId: "turn-1",
 		idx: 0,
 		name: "lookup",
 		argsJson: '{"q":"hello"}',

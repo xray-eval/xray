@@ -18,6 +18,15 @@ allowBuilds:
   # script wraps its body in `.catch(() => void 0)`. Audited 2026-05-16 against
   # `node_modules/msw/config/scripts/postinstall.js` @ v2.14.5.
   msw: true
+  # esbuild — pulled in transitively by `drizzle-kit` (dev-dep for migration
+  # generation). The postinstall script selects the platform-specific binary
+  # subpackage (e.g. @esbuild/linux-x64) — a regular npm package pnpm has
+  # already resolved with cooldown rules — and falls back to downloading the
+  # tarball from registry.npmjs.org over HTTPS if the optional dep was skipped.
+  # Both paths source from the same registry pnpm already trusts. esbuild has
+  # provenance attestation + Sigstore signature. Audited 2026-05-16 against
+  # `node_modules/esbuild/install.js` @ v0.27.7.
+  esbuild: true
 
 # Reinforce the v11 default in case it ever changes upstream.
 strictDepBuilds: true

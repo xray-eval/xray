@@ -3,7 +3,12 @@
 	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
 	"files": {
 		"ignoreUnknown": true,
-		"includes": ["src/**/*", "biome-plugins/**/*", "*.{ts,tsx,js,mjs,cjs,json,jsonc}"]
+		"includes": [
+			"src/**/*",
+			"biome-plugins/**/*",
+			"*.{ts,tsx,js,mjs,cjs,json,jsonc}",
+			"!src/server/store/migrations"
+		]
 	},
 	"formatter": {
 		"enabled": true,

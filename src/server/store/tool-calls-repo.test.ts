@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
+import { turns } from "./schema.ts";
 import { saveSession } from "./sessions-repo.ts";
-import { makeSession, makeTempStore, makeToolCallInput, makeTurnRow } from "./test-utils.ts";
+import { makeSession, makeTempStore, makeToolCallInput, makeTurnInput } from "./test-utils.ts";
 import { appendToolCalls, listToolCallsForTurn } from "./tool-calls-repo.ts";
 import { appendTurns } from "./turns-repo.ts";
 
 function seedSessionWithTurn(turnId: string) {
 	const store = makeTempStore();
 	saveSession(store.db, makeSession({ id: "sess-1" }));
-	const { sessionId: _ignored, ...turnInput } = makeTurnRow({ id: turnId, idx: 0 });
-	appendTurns(store.db, "sess-1", [turnInput]);
+	appendTurns(store.db, "sess-1", [makeTurnInput({ id: turnId, idx: 0 })]);
 	return store;
 }
 
@@ -82,7 +82,7 @@ describe("tool-calls-repo", () => {
 	it("cascades when the parent turn is deleted", () => {
 		const store = seedSessionWithTurn("turn-A");
 		appendToolCalls(store.db, "turn-A", [makeToolCallInput({ idx: 0 })]);
-		store.db.prepare(`DELETE FROM turns WHERE id = ?`).run("turn-A");
+		store.db.delete(turns).run();
 		expect(listToolCallsForTurn(store.db, "turn-A")).toEqual([]);
 		store.close();
 	});

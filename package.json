@@ -23,6 +23,8 @@
 		"docker:build": "docker build -t xray:local .",
 		"docker:run": "docker run --rm -p 8080:8080 --env-file .env xray:local",
 		"docker:smoke": "bash scripts/docker-smoke.sh",
+		"db:generate": "drizzle-kit generate",
+		"db:studio": "drizzle-kit studio",
 		"test": "pnpm test:vitest && pnpm test:store",
 		"test:watch": "vitest",
 		"test:vitest": "vitest run",
@@ -41,6 +43,7 @@
 		"@types/react-dom": "19.2.3",
 		"@vitejs/plugin-react": "6.0.1",
 		"@vitest/coverage-v8": "^4.1.5",
+		"drizzle-kit": "0.31.10",
 		"happy-dom": "^20.9.0",
 		"lefthook": "^2.1.6",
 		"msw": "2.14.5",
@@ -49,6 +52,7 @@
 		"vitest": "^4.1.5"
 	},
 	"dependencies": {
+		"drizzle-orm": "0.45.2",
 		"hono": "4.12.18",
 		"ky": "2.0.2",
 		"react": "19.2.6",

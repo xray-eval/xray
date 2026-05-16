@@ -1,11 +1,17 @@
-import { readFileSync } from "node:fs";
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
+import * as schema from "./schema.ts";
 import { Database } from "bun:sqlite";
 
-const SCHEMA_SQL = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
+const MIGRATIONS_FOLDER = new URL("./migrations", import.meta.url).pathname;
+
+export type StoreSchema = typeof schema;
+export type StoreDb = BunSQLiteDatabase<StoreSchema>;
 
 export interface Store {
-	readonly db: Database;
+	readonly db: StoreDb;
 	close(): void;
 }
 
@@ -19,17 +25,18 @@ export interface OpenStoreOptions {
 }
 
 /**
- * Open (or create) the xray SQLite store, apply schema, and return a typed
- * handle. Re-running against an existing DB is a no-op — the schema is
- * `IF NOT EXISTS` throughout and `PRAGMA user_version` stays at 1.
+ * Open (or create) the xray SQLite store, run any pending migrations, and
+ * return a Drizzle handle. Reopening an existing DB is a no-op — drizzle's
+ * `__drizzle_migrations` table records which migrations have already run.
  */
 export function openStore(opts: OpenStoreOptions): Store {
-	const db = new Database(opts.path, { create: true, strict: true });
+	const sqlite = new Database(opts.path, { create: true, strict: true });
 	// WAL: readers and the single writer don't block each other. Safe choice
 	// since one Bun process owns the DB (see `.claude/rules/single-image-distribution.md`).
-	db.exec("PRAGMA journal_mode = WAL");
+	sqlite.exec("PRAGMA journal_mode = WAL");
 	// FK enforcement is off by default in SQLite. Required for ON DELETE CASCADE.
-	db.exec("PRAGMA foreign_keys = ON");
-	db.exec(SCHEMA_SQL);
-	return { db, close: () => db.close() };
+	sqlite.exec("PRAGMA foreign_keys = ON");
+	const db = drizzle(sqlite, { schema });
+	migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+	return { db, close: () => sqlite.close() };
 }

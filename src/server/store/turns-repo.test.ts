@@ -1,22 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { saveSession } from "./sessions-repo.ts";
-import { makeSession, makeTempStore, makeTurnRow } from "./test-utils.ts";
-import type { TurnInput } from "./turns-repo.ts";
+import { makeSession, makeTempStore, makeTurnInput } from "./test-utils.ts";
 import { appendTurns, listTurnsForSession } from "./turns-repo.ts";
-
-function toInput(t: ReturnType<typeof makeTurnRow>): TurnInput {
-	const { sessionId: _ignored, ...rest } = t;
-	return rest;
-}
 
 describe("turns-repo", () => {
 	it("appends and lists turns in idx order", () => {
 		const store = makeTempStore();
 		saveSession(store.db, makeSession({ id: "sess-1" }));
 		appendTurns(store.db, "sess-1", [
-			toInput(makeTurnRow({ id: "t-2", idx: 1, text: "second" })),
-			toInput(makeTurnRow({ id: "t-1", idx: 0, text: "first" })),
+			makeTurnInput({ id: "t-2", idx: 1, text: "second" }),
+			makeTurnInput({ id: "t-1", idx: 0, text: "first" }),
 		]);
 		const rows = listTurnsForSession(store.db, "sess-1");
 		expect(rows.map((r) => r.text)).toEqual(["first", "second"]);
@@ -28,17 +22,15 @@ describe("turns-repo", () => {
 		const store = makeTempStore();
 		saveSession(store.db, makeSession({ id: "sess-1" }));
 		appendTurns(store.db, "sess-1", [
-			toInput(
-				makeTurnRow({
-					id: "t-1",
-					idx: 0,
-					activeNodeId: "node-A",
-					edgeFiredId: "edge-1",
-					edgeReasoning: "matched intent",
-					promptSeen: "system prompt",
-					llmLatencyMs: 1234,
-				}),
-			),
+			makeTurnInput({
+				id: "t-1",
+				idx: 0,
+				activeNodeId: "node-A",
+				edgeFiredId: "edge-1",
+				edgeReasoning: "matched intent",
+				promptSeen: "system prompt",
+				llmLatencyMs: 1234,
+			}),
 		]);
 		const [row] = listTurnsForSession(store.db, "sess-1");
 		expect(row).toMatchObject({
@@ -62,13 +54,13 @@ describe("turns-repo", () => {
 	it("rolls back the whole batch on UNIQUE(session_id, idx) collision", () => {
 		const store = makeTempStore();
 		saveSession(store.db, makeSession({ id: "sess-1" }));
-		appendTurns(store.db, "sess-1", [toInput(makeTurnRow({ id: "t-0", idx: 0 }))]);
+		appendTurns(store.db, "sess-1", [makeTurnInput({ id: "t-0", idx: 0 })]);
 
 		expect(() =>
 			appendTurns(store.db, "sess-1", [
-				toInput(makeTurnRow({ id: "t-1", idx: 1 })),
+				makeTurnInput({ id: "t-1", idx: 1 }),
 				// collides with the existing idx=0 row above — whole batch rolls back.
-				toInput(makeTurnRow({ id: "t-2", idx: 0 })),
+				makeTurnInput({ id: "t-2", idx: 0 }),
 			]),
 		).toThrow();
 
@@ -82,7 +74,7 @@ describe("turns-repo", () => {
 	it("rejects turns whose session does not exist (FK)", () => {
 		const store = makeTempStore();
 		expect(() =>
-			appendTurns(store.db, "missing-sess", [toInput(makeTurnRow({ id: "t-1", idx: 0 }))]),
+			appendTurns(store.db, "missing-sess", [makeTurnInput({ id: "t-1", idx: 0 })]),
 		).toThrow();
 		store.close();
 	});

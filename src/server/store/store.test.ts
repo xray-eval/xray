@@ -2,8 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { sessions, toolCalls, turns } from "./schema.ts";
 import { saveSession } from "./sessions-repo.ts";
 import { openStore } from "./store.ts";
 import { makeSession } from "./test-utils.ts";
@@ -30,76 +32,64 @@ describe("openStore", () => {
 	it("creates the expected tables on an empty DB", () => {
 		const store = openStore({ path: ":memory:" });
 		const tables = store.db
-			.prepare<{ name: string }, []>(
-				`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`,
-			)
-			.all()
+			.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
 			.map((r) => r.name);
 		expect(tables).toEqual(expect.arrayContaining(["sessions", "turns", "tool_calls"]));
 		store.close();
 	});
 
 	it("enables WAL journal mode", () => {
-		const store = openStore({ path: ":memory:" });
 		// :memory: databases report `memory`, not `wal` — exercise on a file path.
-		store.close();
-
 		const fileStore = openStore({ path: tmpDbPath() });
-		const row = fileStore.db.prepare<PragmaRow, []>("PRAGMA journal_mode").get();
+		const [row] = fileStore.db.all<PragmaRow>(sql`PRAGMA journal_mode`);
 		expect(row?.journal_mode).toBe("wal");
 		fileStore.close();
 	});
 
 	it("enables foreign-key enforcement", () => {
 		const store = openStore({ path: ":memory:" });
-		const row = store.db.prepare<PragmaRow, []>("PRAGMA foreign_keys").get();
+		const [row] = store.db.all<PragmaRow>(sql`PRAGMA foreign_keys`);
 		expect(row?.foreign_keys).toBe(1);
 		store.close();
 	});
 
-	it("sets user_version to 1", () => {
-		const store = openStore({ path: ":memory:" });
-		const row = store.db.prepare<PragmaRow, []>("PRAGMA user_version").get();
-		expect(row?.user_version).toBe(1);
-		store.close();
-	});
-
-	it("is idempotent: reopening the same file preserves data and version", () => {
+	it("is idempotent: reopening the same file preserves data", () => {
 		const path = tmpDbPath();
 		const first = openStore({ path });
 		saveSession(first.db, makeSession({ id: "persist-me" }));
 		first.close();
 
-		// Reopen — schema reapplies as a no-op, data stays.
+		// Reopen — drizzle's __drizzle_migrations table records that 0000_initial
+		// already ran, so `migrate()` is a no-op and data stays.
 		const second = openStore({ path });
-		const row = second.db
-			.prepare<{ id: string }, [string]>("SELECT id FROM sessions WHERE id = ?")
-			.get("persist-me");
+		const row = second.db.select().from(sessions).where(eq(sessions.id, "persist-me")).get();
 		expect(row?.id).toBe("persist-me");
-		const version = second.db.prepare<PragmaRow, []>("PRAGMA user_version").get();
-		expect(version?.user_version).toBe(1);
 		second.close();
 	});
 
 	it("cascades session deletes to turns and tool_calls", () => {
 		const store = openStore({ path: ":memory:" });
-		const sess = makeSession({ id: "cascade-me" });
-		saveSession(store.db, sess);
+		saveSession(store.db, makeSession({ id: "cascade-me" }));
 		store.db
-			.prepare(`INSERT INTO turns (id, session_id, idx, role, text, ts) VALUES (?, ?, ?, ?, ?, ?)`)
-			.run("turn-1", "cascade-me", 0, "user", "hi", "2026-05-16T12:00:00.000Z");
+			.insert(turns)
+			.values({
+				id: "turn-1",
+				sessionId: "cascade-me",
+				idx: 0,
+				role: "user",
+				text: "hi",
+				ts: "2026-05-16T12:00:00.000Z",
+			})
+			.run();
 		store.db
-			.prepare(`INSERT INTO tool_calls (turn_id, idx, name, args_json) VALUES (?, ?, ?, ?)`)
-			.run("turn-1", 0, "lookup", "{}");
+			.insert(toolCalls)
+			.values({ turnId: "turn-1", idx: 0, name: "lookup", argsJson: "{}" })
+			.run();
 
-		store.db.prepare(`DELETE FROM sessions WHERE id = ?`).run("cascade-me");
+		store.db.delete(sessions).where(eq(sessions.id, "cascade-me")).run();
 
-		const turnCount = store.db.prepare<{ n: number }, []>(`SELECT COUNT(*) AS n FROM turns`).get();
-		const toolCount = store.db
-			.prepare<{ n: number }, []>(`SELECT COUNT(*) AS n FROM tool_calls`)
-			.get();
-		expect(turnCount?.n).toBe(0);
-		expect(toolCount?.n).toBe(0);
+		expect(store.db.select().from(turns).all()).toEqual([]);
+		expect(store.db.select().from(toolCalls).all()).toEqual([]);
 		store.close();
 	});
 });
