@@ -1,52 +1,50 @@
 # syntax=docker/dockerfile:1.7
 
-# --- Stage 1: build the SPA ---------------------------------------------------
+# --- Stage 1: production dependencies only -----------------------------------
 #
-# Base images are pinned by *digest*, not just tag — same rule as GitHub Action
-# pinning (.claude/rules/supply-chain.md §4). Bump the tag in the comment and
-# the digest in the same commit.
+# Installs ONLY `dependencies` from package.json (not devDependencies). This is
+# what ends up in the runtime image — no biome, no lefthook, no vite, no tsc.
+# The 7-day pnpm cooldown and `ignore-scripts=true` defaults still apply
+# (see .claude/rules/supply-chain.md §1).
 #
-# node:24.15.0-bookworm-slim  (matches .nvmrc; pinned by manifest digest)
-FROM node@sha256:24dc26ef1e3c3690f27ebc4136c9c186c3133b25563ae4d7f0692e4d1fe5db0e AS build
+# Base images are pinned by manifest digest, not just tag — same rule as
+# GitHub Action pinning. Bump the tag in the comment and the digest in the
+# same commit.
+#
+# node:24.15.0-bookworm-slim (matches .nvmrc)
+FROM node@sha256:24dc26ef1e3c3690f27ebc4136c9c186c3133b25563ae4d7f0692e4d1fe5db0e AS prod-deps
 
-# Pinned pnpm — corepack picks up the version from package.json#packageManager.
 ENV CI=1 \
     PNPM_HOME=/root/.local/share/pnpm \
     PATH=/root/.local/share/pnpm:$PATH
 
 WORKDIR /app
 
-# Install only what changes infrequently first, for layer-cache hits.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN corepack enable && corepack prepare --activate \
- && pnpm install --frozen-lockfile
+ && pnpm install --prod --frozen-lockfile
 
-COPY tsconfig.json ./
-COPY biome-plugins ./biome-plugins
-COPY src ./src
-COPY server ./server
-COPY vite.config.ts ./
-
-RUN pnpm run build
-
-# --- Stage 2: runtime ---------------------------------------------------------
+# --- Stage 2: runtime --------------------------------------------------------
 #
 # oven/bun:1.3.14-debian (matches .tool-versions; pinned by manifest digest)
 FROM oven/bun@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f AS runtime
 
-# Non-root user. The image carries code; secrets are runtime-only
-# (.claude/rules/public-repo.md §2) — never ARG/ENV them here.
+# Non-root user. The image carries code + production deps; secrets are
+# runtime-only (.claude/rules/public-repo.md §2) — never ARG/ENV them here.
 RUN useradd --system --create-home --uid 10001 --gid users xray
 USER xray
 WORKDIR /home/xray/app
 
-# Copy only what the runtime needs: the built SPA + the server source.
-# Bun runs TS directly, so server/ ships as .ts.
-COPY --chown=xray:users --from=build /app/dist ./dist
-COPY --chown=xray:users --from=build /app/server ./server
-COPY --chown=xray:users --from=build /app/src/adapters ./src/adapters
-COPY --chown=xray:users --from=build /app/tsconfig.json ./
-COPY --chown=xray:users --from=build /app/package.json ./
+# Production node_modules, from stage 1. Avoids re-fetching at container boot
+# (network-at-runtime supply-chain risk) and guarantees the image matches
+# pnpm-lock.yaml exactly.
+COPY --chown=xray:users --from=prod-deps /app/node_modules ./node_modules
+
+# Ordered most-stable to least-stable so source edits don't bust the layer
+# cache on package.json / tsconfig.json. Bun runs TS directly, so we ship .ts.
+COPY --chown=xray:users package.json tsconfig.json ./
+COPY --chown=xray:users src ./src
+COPY --chown=xray:users server ./server
 
 ENV HOST=0.0.0.0 \
     PORT=8080 \
