@@ -1,6 +1,12 @@
 import * as v from "valibot";
 
-import { IngestError, InvalidEventError, UnknownTurnError } from "./ingest.errors.ts";
+import {
+	BodyTooLargeError,
+	IngestError,
+	InvalidEventError,
+	MalformedBodyError,
+	UnknownTurnError,
+} from "./ingest.errors.ts";
 import { describe, expect, it } from "bun:test";
 
 describe("IngestError", () => {
@@ -26,6 +32,37 @@ describe("InvalidEventError", () => {
 		const err = new InvalidEventError("s-1", issues);
 		expect(err.sessionId).toBe("s-1");
 		expect(err.issues).toEqual(issues);
+	});
+});
+
+describe("MalformedBodyError", () => {
+	it("is catchable as IngestError", () => {
+		const err = new MalformedBodyError("s-1");
+		expect(err).toBeInstanceOf(IngestError);
+		expect(err.name).toBe("MalformedBodyError");
+	});
+
+	it("synthesizes a BaseIssue so the 400 response shape matches InvalidEventError", () => {
+		const err = new MalformedBodyError("s-1");
+		expect(err.issues).toHaveLength(1);
+		const [issue] = err.issues;
+		expect(issue?.kind).toBe("schema");
+		expect(typeof issue?.message).toBe("string");
+	});
+
+	it("wraps the underlying SyntaxError via `cause`", () => {
+		const underlying = new SyntaxError("Unexpected token n in JSON");
+		const err = new MalformedBodyError("s-1", { cause: underlying });
+		expect(err.cause).toBe(underlying);
+	});
+});
+
+describe("BodyTooLargeError", () => {
+	it("is catchable as IngestError and exposes maxBytes", () => {
+		const err = new BodyTooLargeError(1024);
+		expect(err).toBeInstanceOf(IngestError);
+		expect(err.name).toBe("BodyTooLargeError");
+		expect(err.maxBytes).toBe(1024);
 	});
 });
 

@@ -24,6 +24,53 @@ export class InvalidEventError extends IngestError {
 	}
 }
 
+// The synthetic issue MalformedBodyError carries has no per-instance state, so
+// the frozen module-level array is shared across throws. Same shape as a real
+// Valibot BaseIssue so the 400 response matches InvalidEventError's.
+const MALFORMED_BODY_ISSUES: readonly BaseIssue<unknown>[] = Object.freeze([
+	{
+		kind: "schema",
+		type: "json_body",
+		input: undefined,
+		expected: "valid JSON",
+		received: "unparseable text",
+		message: "Request body must be valid JSON",
+	},
+]);
+
+/**
+ * The request body wasn't parseable as JSON at all (so Valibot never ran).
+ * Carries the same `issues` shape as `InvalidEventError` so the 400 response
+ * is structurally identical for both failure modes — a consumer reading
+ * `issues[].path` / `.message` doesn't need to branch on which 400 it got.
+ */
+export class MalformedBodyError extends IngestError {
+	readonly sessionId: string;
+	readonly issues: readonly BaseIssue<unknown>[] = MALFORMED_BODY_ISSUES;
+
+	constructor(sessionId: string, options?: ErrorOptions) {
+		super(`Malformed JSON body for session "${sessionId}"`, options);
+		this.name = "MalformedBodyError";
+		this.sessionId = sessionId;
+	}
+}
+
+/**
+ * Request body exceeded the byte cap enforced by the bodyLimit middleware.
+ * Distinct from `MalformedBodyError` because the response status differs
+ * (413, not 400) — operators tuning a client need to see the size error
+ * separately from a schema error.
+ */
+export class BodyTooLargeError extends IngestError {
+	readonly maxBytes: number;
+
+	constructor(maxBytes: number) {
+		super(`Body exceeds ${maxBytes} bytes`);
+		this.name = "BodyTooLargeError";
+		this.maxBytes = maxBytes;
+	}
+}
+
 /** A `tool_called` event references a turn idx no turn row has yet claimed. */
 export class UnknownTurnError extends IngestError {
 	readonly sessionId: string;

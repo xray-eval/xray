@@ -16,14 +16,24 @@ import {
 } from "./ingest.test-utils.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
+const IssueSchema = v.object({
+	kind: v.string(),
+	type: v.string(),
+	message: v.string(),
+});
 const InvalidEventBodySchema = v.object({
-	error: v.string(),
-	issues: v.array(v.unknown()),
+	error: v.literal("invalid_event"),
+	issues: v.array(IssueSchema),
 });
 const ErrorBodySchema = v.object({ error: v.string() });
 const UnknownTurnBodySchema = v.object({
-	error: v.string(),
+	error: v.literal("unknown_turn"),
+	sessionId: v.string(),
 	turnIdx: v.number(),
+});
+const BodyTooLargeBodySchema = v.object({
+	error: v.literal("body_too_large"),
+	maxBytes: v.number(),
 });
 
 let store: Store;
@@ -162,7 +172,7 @@ describe("POST /v1/sessions/:id/events — schema rejection", () => {
 		expect(res.status).toBe(400);
 	});
 
-	it("returns 400 for a non-JSON body", async () => {
+	it("returns 400 for a non-JSON body with the same shape as a schema failure", async () => {
 		const req = new Request("http://test.local/v1/sessions/sess-A/events", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -170,6 +180,64 @@ describe("POST /v1/sessions/:id/events — schema rejection", () => {
 		});
 		const res = await app.request(req);
 		expect(res.status).toBe(400);
+		// Same response shape both 400 paths must use — JSON-parse failure and
+		// Valibot schema failure both emit { error: "invalid_event", issues: [...] }
+		// where every issue carries the BaseIssue-shaped fields below.
+		const body = v.parse(InvalidEventBodySchema, await res.json());
+		expect(body.issues).toHaveLength(1);
+	});
+
+	it("strips `input` from echoed issues so a megabyte body can't reflect back unbounded", async () => {
+		const big = "x".repeat(10_000);
+		const res = await post("sess-A", {
+			type: "turn_completed",
+			idx: 0,
+			role: "user",
+			text: big,
+			timestamp: "tomorrow at noon", // forces a schema failure, but `input` would otherwise echo `big`
+		});
+		expect(res.status).toBe(400);
+		const text = await res.text();
+		expect(text).not.toContain(big);
+	});
+
+	it("returns 400 for a session id with disallowed characters", async () => {
+		const req = new Request("http://test.local/v1/sessions/has%20space/events", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(makeSessionStartedEvent()),
+		});
+		const res = await app.request(req);
+		expect(res.status).toBe(400);
+	});
+});
+
+describe("POST /v1/sessions/:id/events — body size cap", () => {
+	it("returns 413 body_too_large when content-length exceeds the cap", async () => {
+		const req = new Request("http://test.local/v1/sessions/sess-A/events", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "Content-Length": String(2 * 1024 * 1024) },
+			body: "x".repeat(2 * 1024 * 1024),
+		});
+		const res = await app.request(req);
+		expect(res.status).toBe(413);
+		const body = v.parse(BodyTooLargeBodySchema, await res.json());
+		expect(body.maxBytes).toBeGreaterThan(0);
+	});
+});
+
+describe("POST /v1/sessions/:id/events — timezone normalization", () => {
+	it("normalizes a non-UTC ISO timestamp to UTC `Z` before persisting", async () => {
+		// 12:00 in +09:00 == 03:00 UTC; after normalization the row must read 03:00 Z,
+		// otherwise SQLite's TEXT comparison would lex-sort the row against UTC rows
+		// incorrectly (the MIN-merge invariant in sessions-repo depends on this).
+		await post("sess-A", {
+			type: "session_started",
+			agentId: "agent-1",
+			startedAt: "2026-05-16T12:00:00+09:00",
+		});
+		const row = getSession(store.db, "sess-A");
+		expect(row?.startedAt).toBe("2026-05-16T03:00:00.000Z");
 	});
 });
 
