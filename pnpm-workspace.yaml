@@ -39,3 +39,17 @@ trustPolicy: no-downgrade
 
 # Re-verify node_modules matches the lockfile before any script runs.
 verifyDepsBeforeRun: install
+
+# Transitive-dep overrides. Each entry needs a date + reason — same bar as
+# `allowBuilds` above. Keep the path as specific as possible so the override
+# disappears the moment drizzle-kit (or the upstream chain) is fixed.
+overrides:
+  # GHSA-67mh-4wv8-2f99 — esbuild <=0.24.2 lets any website hit the dev server
+  # via permissive CORS. drizzle-kit ships the deprecated `@esbuild-kit/*`
+  # packages which pin esbuild 0.18.20. We only invoke drizzle-kit for
+  # `db:generate` / `db:studio` (no dev-server exposure), so the practical risk
+  # is nil — but `pnpm audit --audit-level=moderate` (supply-chain CI job)
+  # rejects it. Pinning ^0.25.0 lines up with the already-resolved esbuild
+  # 0.25.12 elsewhere in the tree, so this adds zero new versions. Remove this
+  # entry once drizzle-kit drops `@esbuild-kit/*` for `tsx`. Added 2026-05-16.
+  "@esbuild-kit/core-utils>esbuild": "^0.25.0"
