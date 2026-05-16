@@ -2,15 +2,11 @@
 node_modules/
 .pnpm-store/
 
-# Vite build output
+# Bun build output
 dist/
-dist-ssr/
 *.local
 
-# Vite & build caches
-.vite/
-vite.config.*.timestamp-*.mjs
-vite.config.*.timestamp-*.mts
+# Build caches
 *.tsbuildinfo
 
 # Test & coverage

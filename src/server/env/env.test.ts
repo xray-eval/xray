@@ -1,6 +1,5 @@
-import { describe, expect, test } from "vitest";
-
 import { InvalidEnvError, loadEnv } from "./env.ts";
+import { describe, expect, test } from "bun:test";
 
 describe("loadEnv", () => {
 	test("applies defaults when keys are missing", () => {
@@ -30,7 +29,7 @@ describe("loadEnv", () => {
 	test("InvalidEnvError carries issues", () => {
 		try {
 			loadEnv({ PORT: "0" });
-			expect.unreachable();
+			throw new Error("loadEnv was expected to throw InvalidEnvError but returned");
 		} catch (e) {
 			if (!(e instanceof InvalidEnvError)) throw e;
 			expect(e.issues.length).toBeGreaterThan(0);

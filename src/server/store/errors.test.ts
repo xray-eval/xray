@@ -1,6 +1,5 @@
-import { describe, expect, it } from "vitest";
-
 import { StoreError, StoreParentDirNotFoundError } from "./errors.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("StoreError", () => {
 	it("is an Error subclass with a stable name", () => {

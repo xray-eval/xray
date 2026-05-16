@@ -90,7 +90,7 @@ Stream events as they happen; the UI updates live. Event schema and the full eve
 
 ## Stack
 
-Vite + React + TypeScript SPA · [React Flow](https://reactflow.dev) for the node graph · Tailwind + shadcn/ui · [Hono](https://hono.dev) on [Bun](https://bun.sh) for the proxy backend · SQLite via `bun:sqlite` for the conversation store · Docker (multi-stage) for distribution.
+React + TypeScript SPA bundled by [Bun](https://bun.sh)'s built-in HTML bundler · [React Flow](https://reactflow.dev) for the node graph · Tailwind + shadcn/ui · [Hono](https://hono.dev) on Bun for the proxy backend · SQLite via `bun:sqlite` for the conversation store · Docker (multi-stage) for distribution.
 
 The Hono proxy is the only thing that ever sees the API key. SQLite is a single file at `/data/xray.db` on a mounted volume. No external databases, no accounts, no telemetry.
 
@@ -108,7 +108,7 @@ This is the security story:
 ```bash
 corepack enable             # picks up the pinned pnpm
 pnpm install                # frozen-lockfile-safe; respects 7-day cooldown
-pnpm dev                    # Vite + Hono via compose.dev.yaml (HMR on both sides)
+pnpm dev                    # Single Bun process via compose.dev.yaml (HMR for SPA + API)
 pnpm docker:smoke           # build image, run it, curl /healthz, kill — same check CI runs
 ```
 

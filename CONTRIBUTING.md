@@ -36,19 +36,19 @@ Why: see [`.claude/rules/public-repo.md`](./.claude/rules/public-repo.md) §4. T
 ## Daily loop
 
 ```bash
-pnpm dev              # Vite (client) + Bun (server) via compose.dev.yaml, HMR on both
+pnpm dev              # Single Bun container serving SPA + API on :8080 with HMR
 pnpm typecheck        # tsc --noEmit
 pnpm check            # biome check (lint + format)
 pnpm check:fix        # biome check --write
-pnpm test             # vitest run
-pnpm test:watch       # vitest in watch mode (the TDD loop)
-pnpm test:coverage    # vitest run --coverage — same gate CI runs
+pnpm test             # bun test
+pnpm test:watch       # bun test --watch (the TDD loop)
+pnpm test:coverage    # bun test --coverage — same gate CI runs
 pnpm docker:smoke     # build the production image, run it, curl /healthz, kill it
 ```
 
 ### TDD
 
-Every behavior lands red → green → refactor. The failing test goes in *first*, runs (and fails for the right reason), then the production code makes it green. See [`.claude/rules/tdd.md`](./.claude/rules/tdd.md). The CI `test` workflow runs `pnpm test:coverage` and fails the build if coverage drops below the thresholds in `vitest.config.ts`.
+Every behavior lands red → green → refactor. The failing test goes in *first*, runs (and fails for the right reason), then the production code makes it green. See [`.claude/rules/tdd.md`](./.claude/rules/tdd.md). The CI `test` workflow runs `pnpm test:coverage` and fails the build if coverage drops below the thresholds in `bunfig.toml`.
 
 `pnpm docker:smoke` is the **single most important** local check — it is exactly what CI runs before publishing. If it passes locally, it passes in CI.
 

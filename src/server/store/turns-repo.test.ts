@@ -1,8 +1,7 @@
-import { describe, expect, it } from "vitest";
-
 import { saveSession } from "./sessions-repo.ts";
 import { makeSession, makeTempStore, makeTurnInput } from "./test-utils.ts";
 import { appendTurns, listTurnsForSession } from "./turns-repo.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("turns-repo", () => {
 	it("appends and lists turns in idx order", () => {

@@ -3,7 +3,8 @@
 # --- Stage 1: production dependencies only -----------------------------------
 #
 # Installs ONLY `dependencies` from package.json (not devDependencies). This is
-# what ends up in the runtime image — no biome, no lefthook, no vite, no tsc.
+# what ends up in the runtime image — no biome, no lefthook, no tsc, no
+# drizzle-kit. Bun bundles the React entry from index.html at server boot.
 # The 7-day pnpm cooldown and `ignore-scripts=true` defaults still apply
 # (see .claude/rules/supply-chain.md §1).
 #
@@ -42,7 +43,8 @@ COPY --chown=xray:users --from=prod-deps /app/node_modules ./node_modules
 
 # Ordered most-stable to least-stable so source edits don't bust the layer
 # cache on package.json / tsconfig.json. Bun runs TS directly, so we ship .ts.
-COPY --chown=xray:users package.json tsconfig.json ./
+# index.html is bundled at server boot — see src/server/main.ts.
+COPY --chown=xray:users package.json tsconfig.json index.html ./
 COPY --chown=xray:users src ./src
 
 ENV HOST=0.0.0.0 \
@@ -53,4 +55,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD bun --eval "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-CMD ["bun", "src/server/server.ts"]
+CMD ["bun", "src/server/main.ts"]

@@ -1,6 +1,6 @@
 # xray
 
-**Voice Agent X-Ray** — open-source, self-hosted web debugger for voice-agent workflows. Public repo. Vite + React + TypeScript SPA, Hono on Bun for the proxy backend, Docker (multi-stage) for distribution. Adapter pattern for voice-agent providers — the core app stays provider-agnostic; each provider is one file under `src/adapters/`. No accounts, no telemetry, no external databases.
+**Voice Agent X-Ray** — open-source, self-hosted web debugger for voice-agent workflows. Public repo. React + TypeScript SPA bundled by Bun's built-in HTML bundler (no Vite), Hono on Bun for the proxy backend, Docker (multi-stage) for distribution. One Bun process serves both the SPA shell (via Bun.serve's HTML routes) and the API. Adapter pattern for voice-agent providers — the core app stays provider-agnostic; each provider is one file under `src/adapters/`. No accounts, no telemetry, no external databases.
 
 **Storage.** Conversations live in a single SQLite file at `/data/xray.db` (mounted volume on the container). Single-writer, embedded, no driver dependency — uses `bun:sqlite`. Why SQLite is the right choice here is the topic of [`.claude/rules/single-image-distribution.md`](./.claude/rules/single-image-distribution.md).
 

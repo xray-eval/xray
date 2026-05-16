@@ -1,5 +1,3 @@
-import { describe, expect, it } from "vitest";
-
 import {
 	HttpClientError,
 	HttpNetworkError,
@@ -7,6 +5,7 @@ import {
 	HttpResponseShapeError,
 	HttpTimeoutError,
 } from "./errors.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("HttpRequestFailedError", () => {
 	it("is catchable as HttpClientError (and as Error)", () => {

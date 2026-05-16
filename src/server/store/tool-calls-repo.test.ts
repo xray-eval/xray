@@ -1,10 +1,9 @@
-import { describe, expect, it } from "vitest";
-
 import { turns } from "./schema.ts";
 import { saveSession } from "./sessions-repo.ts";
 import { makeSession, makeTempStore, makeToolCallInput, makeTurnInput } from "./test-utils.ts";
 import { appendToolCalls, listToolCallsForTurn } from "./tool-calls-repo.ts";
 import { appendTurns } from "./turns-repo.ts";
+import { describe, expect, it } from "bun:test";
 
 function seedSessionWithTurn(turnId: string) {
 	const store = makeTempStore();

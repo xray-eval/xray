@@ -1,8 +1,7 @@
-import { describe, expect, it } from "vitest";
-
 import { DuplicateAdapterError } from "./errors/errors.ts";
 import { createRegistry } from "./registry.ts";
 import { makeFakeAdapter } from "./test-utils.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("createRegistry", () => {
 	it("retrieves an adapter by provider after registration", () => {

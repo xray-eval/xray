@@ -207,4 +207,4 @@ src/adapters/elevenlabs/
 - "One file per export" / "no barrel files" — preference, not a rule.
 - "Folder names are kebab-case" — preference, follow what's already there.
 - "Components are PascalCase, utilities are kebab-case" — preference.
-- Specific test framework (Bun test vs. Vitest) — chosen elsewhere, not enforced here.
+- Specific test framework — `bun test` is the chosen runner (see `bunfig.toml`); not enforced here.

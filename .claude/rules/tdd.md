@@ -29,10 +29,10 @@ For bug fixes the loop is identical: a failing regression test that reproduces t
 
 ## Coverage gates
 
-The CI `test` job in `.github/workflows/test.yml` runs `pnpm test:coverage` and fails the build if:
+The CI `test` job in `.github/workflows/test.yml` runs `pnpm test:coverage` (→ `bun test --coverage`) and fails the build if:
 
-- Line coverage drops below the threshold in `vitest.config.ts` (`coverage.thresholds.lines`).
-- Branch coverage drops below the threshold.
+- Line coverage drops below the threshold in `bunfig.toml` (`[test].coverageThreshold.line`).
+- Function or statement coverage drops below the threshold.
 
 **Coverage is a sanity floor, not a target.** 100% coverage doesn't mean the tests are good; it means everything ran. The threshold exists to flag "you added 200 lines of code without a single test" — the human reviewer judges quality.
 
@@ -42,7 +42,7 @@ If a PR drops coverage, the fix is to add tests, not to lower the threshold. Low
 
 ## What's NOT a rule here
 
-- "100% coverage required" — preference, and a misleading one. The threshold lives in `vitest.config.ts` and is intentionally tuned to "no new untested code", not "every line covered".
+- "100% coverage required" — preference, and a misleading one. The threshold lives in `bunfig.toml` and is intentionally tuned to "no new untested code", not "every line covered".
 - "One assertion per test" — preference; do whatever reads clearly.
-- "BDD-style `describe`/`it` vs. flat `test`" — preference; vitest accepts both.
+- "BDD-style `describe`/`it` vs. flat `test`" — preference; `bun test` accepts both.
 - "Mock everything" — actively bad. Prefer real implementations and fixtures; mock at the I/O boundary (provider SDK, fetch) only.

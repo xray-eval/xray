@@ -1,7 +1,6 @@
-import { describe, expect, it } from "vitest";
-
 import { getSession, listSessions, saveSession } from "./sessions-repo.ts";
 import { makeSession, makeTempStore } from "./test-utils.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("sessions-repo", () => {
 	it("round-trips a saved session", () => {
