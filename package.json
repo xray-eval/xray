@@ -25,9 +25,9 @@
 		"docker:smoke": "bash scripts/docker-smoke.sh",
 		"db:generate": "drizzle-kit generate",
 		"db:studio": "drizzle-kit studio",
-		"test": "bun test",
-		"test:watch": "bun test --watch",
-		"test:coverage": "bun test --coverage"
+		"test": "bun test --isolate",
+		"test:watch": "bun test --isolate --watch",
+		"test:coverage": "bun test --isolate --coverage"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.14",
@@ -45,12 +45,21 @@
 		"typescript": "^6.0.3"
 	},
 	"dependencies": {
+		"@tanstack/react-query": "5.100.9",
+		"bun-plugin-tailwind": "0.1.2",
+		"class-variance-authority": "0.7.1",
+		"clsx": "2.1.1",
 		"drizzle-orm": "0.45.2",
 		"hono": "4.12.18",
 		"ky": "2.0.2",
+		"lucide-react": "1.14.0",
+		"radix-ui": "1.4.3",
 		"react": "19.2.6",
 		"react-dom": "19.2.6",
+		"tailwind-merge": "3.5.0",
+		"tailwindcss": "4.3.0",
 		"ts-pattern": "5.9.0",
+		"tw-animate-css": "1.4.0",
 		"valibot": "1.3.1"
 	}
 }

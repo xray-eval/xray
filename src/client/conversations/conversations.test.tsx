@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 registerHappyDom();
 const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
 const { ConversationsList } = await import("./conversations.tsx");
+const { withQueryClient } = await import("../test-utils.tsx");
 
 // Bun's test runner has no auto-cleanup hook — without this, the previous
 // test's mounted component is still in the DOM and its in-flight fetch can
@@ -25,7 +26,7 @@ const SESSIONS_URL = "http://localhost/v1/sessions";
 describe("ConversationsList — empty state", () => {
 	it("renders empty-state copy when the store has no sessions", async () => {
 		server.use(http.get(SESSIONS_URL, () => HttpResponse.json(makeListSessionsResponse())));
-		render(<ConversationsList />);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
 		expect(await screen.findByText(/no sessions yet/i)).toBeTruthy();
 		// All three onboarding paths are documented — custom-loop devs are the
 		// primary audience, but adapter-mode users need a pointer too.
@@ -47,7 +48,7 @@ describe("ConversationsList — populated", () => {
 				HttpResponse.json(makeListSessionsResponse({ sessions: items })),
 			),
 		);
-		render(<ConversationsList />);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
 		await waitFor(() => expect(screen.getByText("agent-new")).toBeTruthy());
 		// Each row renders Agent / Duration / Source as a <dl>; the agent
 		// values are the 1st, 4th, 7th <dd> across three rows.
@@ -73,7 +74,7 @@ describe("ConversationsList — populated", () => {
 				),
 			),
 		);
-		render(<ConversationsList />);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
 		await waitFor(() => expect(screen.getByText("from-ingest")).toBeTruthy());
 		// The 3rd <dd> of each row is the source (Agent → Duration → Source).
 		const dds = screen.getAllByRole("definition");
@@ -91,7 +92,7 @@ describe("ConversationsList — populated", () => {
 				),
 			),
 		);
-		render(<ConversationsList />);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
 		await waitFor(() => expect(screen.getByText(/in progress/i)).toBeTruthy());
 	});
 
@@ -103,7 +104,7 @@ describe("ConversationsList — populated", () => {
 				return HttpResponse.json(makeListSessionsResponse());
 			}),
 		);
-		render(<ConversationsList agentId="agent-7" />);
+		render(withQueryClient(<ConversationsList agentId="agent-7" apiBase="http://localhost" />));
 		await waitFor(() => expect(screen.getByText(/no sessions yet/i)).toBeTruthy());
 		expect(seen).toHaveBeenCalledWith("agent-7");
 	});
@@ -125,7 +126,7 @@ describe("ConversationsList — pagination", () => {
 				return HttpResponse.json(c === "cursor-1" ? page2 : page1);
 			}),
 		);
-		render(<ConversationsList />);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
 		const loadMore = await screen.findByRole("button", { name: /load more/i });
 		fireEvent.click(loadMore);
 		await waitFor(() => expect(screen.getByText("second")).toBeTruthy());
@@ -139,16 +140,15 @@ describe("ConversationsList — pagination", () => {
 describe("ConversationsList — error path", () => {
 	it("renders an alert when the server returns 500", async () => {
 		server.use(http.get(SESSIONS_URL, () => HttpResponse.json({ error: "boom" }, { status: 500 })));
-		render(<ConversationsList />);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
 		expect(await screen.findByRole("alert")).toBeTruthy();
 	});
 
 	it("renders an alert when the server returns a body with the wrong shape", async () => {
-		// Confirms `v.safeParse` + SessionsInvalidResponseError replaces a raw
-		// ValiError throw — bad-shape responses now flow through the same
-		// error-state UI as HTTP failures.
+		// Confirms valibot safeParse + SessionsInvalidResponseError surfaces
+		// schema drift through the same error-state UI as HTTP failures.
 		server.use(http.get(SESSIONS_URL, () => HttpResponse.json({ nope: 1 })));
-		render(<ConversationsList />);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
 		expect(await screen.findByRole("alert")).toBeTruthy();
 	});
 
@@ -163,7 +163,7 @@ describe("ConversationsList — error path", () => {
 				);
 			}),
 		);
-		render(<ConversationsList />);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
 		const retry = await screen.findByRole("button", { name: /try again/i });
 		fireEvent.click(retry);
 		await waitFor(() => expect(screen.getByText("after-retry")).toBeTruthy());

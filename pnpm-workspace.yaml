@@ -27,6 +27,18 @@ allowBuilds:
   # provenance attestation + Sigstore signature. Audited 2026-05-16 against
   # `node_modules/esbuild/install.js` @ v0.27.7.
   esbuild: true
+  # bun — pulled in as a peer of `bun-plugin-tailwind` (the Tailwind v4
+  # plugin for Bun's HTML bundler). The npm `bun` package is *only* installed
+  # to satisfy that peer; at runtime everything uses the system bun on
+  # PATH. The postinstall (`install.js`) loads the platform-specific binary
+  # subpackage `@oven/bun-<platform>-<arch>` (already resolved by pnpm with
+  # cooldown rules), or falls back to `registry.npmjs.org/@oven/<pkg>/-/<pkg>-1.3.13.tgz`
+  # over HTTPS — same registry/trust boundary pnpm already enforces. Same
+  # pattern as esbuild above. Without this, the system `bun` errors at
+  # startup when it detects an incomplete `node_modules/bun` sibling.
+  # Audited 2026-05-16 against
+  # `node_modules/.pnpm/bun@1.3.13/node_modules/bun/install.js`.
+  bun: true
 
 # Reinforce the v11 default in case it ever changes upstream.
 strictDepBuilds: true
