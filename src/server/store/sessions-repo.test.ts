@@ -119,4 +119,48 @@ describe("sessions-repo", () => {
 		expect(listSessions(store.db, { limit: 2 })).toHaveLength(2);
 		store.close();
 	});
+
+	it("paginates with a (startedAt, id) cursor", () => {
+		const store = makeTempStore();
+		for (let i = 0; i < 5; i++) {
+			saveSession(
+				store.db,
+				makeSession({ id: `s-${i}`, startedAt: `2026-05-16T12:0${i}:00.000Z` }),
+			);
+		}
+		const first = listSessions(store.db, { limit: 2 });
+		expect(first.map((s) => s.id)).toEqual(["s-4", "s-3"]);
+		const last = first.at(-1);
+		expect(last).toBeDefined();
+		if (!last) return;
+		const second = listSessions(store.db, {
+			limit: 2,
+			cursor: { startedAt: last.startedAt, id: last.id },
+		});
+		expect(second.map((s) => s.id)).toEqual(["s-2", "s-1"]);
+		const lastSecond = second.at(-1);
+		if (!lastSecond) return;
+		const third = listSessions(store.db, {
+			limit: 2,
+			cursor: { startedAt: lastSecond.startedAt, id: lastSecond.id },
+		});
+		expect(third.map((s) => s.id)).toEqual(["s-0"]);
+		store.close();
+	});
+
+	it("breaks startedAt ties deterministically by id", () => {
+		const store = makeTempStore();
+		saveSession(store.db, makeSession({ id: "a", startedAt: "2026-05-16T12:00:00.000Z" }));
+		saveSession(store.db, makeSession({ id: "b", startedAt: "2026-05-16T12:00:00.000Z" }));
+		saveSession(store.db, makeSession({ id: "c", startedAt: "2026-05-16T12:00:00.000Z" }));
+		const ids = listSessions(store.db).map((s) => s.id);
+		expect(ids).toEqual(["c", "b", "a"]);
+		// Cursor at the middle tied row should skip rows with id >= it.
+		const page = listSessions(store.db, {
+			limit: 10,
+			cursor: { startedAt: "2026-05-16T12:00:00.000Z", id: "b" },
+		});
+		expect(page.map((s) => s.id)).toEqual(["a"]);
+		store.close();
+	});
 });

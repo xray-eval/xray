@@ -25,6 +25,10 @@
 			"arrowParentheses": "always"
 		}
 	},
+	"css": {
+		"parser": { "cssModules": false, "tailwindDirectives": true },
+		"formatter": { "enabled": true, "quoteStyle": "double" }
+	},
 	"plugins": ["./biome-plugins/no-as-cast.grit"],
 	"linter": {
 		"enabled": true,

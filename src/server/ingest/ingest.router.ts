@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { match, P } from "ts-pattern";
-import type { BaseIssue } from "valibot";
 import * as v from "valibot";
 
+import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
 import {
@@ -90,30 +90,4 @@ export function createIngestRouter(store: Store): Hono {
 	);
 
 	return router;
-}
-
-/**
- * Echo Valibot issues back to the caller without any caller-supplied values
- * (`input`/`value` at the issue level, plus `input`/`value` on every `path`
- * step — Valibot puts the offending field's value AND the entire parent
- * object on the path step). Without this, a 1MB request body fails schema
- * validation and the 400 response reflects ~1MB of caller content back.
- *
- * The schema-meaningful fields (`kind`, `type`, `expected`, `received`,
- * `message`, plus the path's structural breadcrumbs `type`/`origin`/`key`)
- * survive so a client can still pin-point which field failed.
- */
-function sanitizeIssues(issues: readonly BaseIssue<unknown>[]) {
-	return issues.map((issue) => ({
-		kind: issue.kind,
-		type: issue.type,
-		expected: issue.expected,
-		received: issue.received,
-		message: issue.message,
-		path: issue.path?.map((step) => ({
-			type: step.type,
-			origin: step.origin,
-			key: step.key,
-		})),
-	}));
 }

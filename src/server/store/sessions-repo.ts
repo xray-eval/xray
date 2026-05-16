@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 
 import type { AgentId } from "@/adapters/types.ts";
 
@@ -83,25 +83,44 @@ export function getSession(db: StoreDb, id: string): Session | undefined {
 	return db.select().from(sessions).where(eq(sessions.id, id)).get();
 }
 
+export interface SessionCursor {
+	/** ISO 8601 `started_at` of the last row from the previous page. */
+	startedAt: string;
+	/** `id` of the last row from the previous page — tie-breaker when timestamps match. */
+	id: string;
+}
+
 export interface ListSessionsOptions {
 	source?: SessionSource;
 	agentId?: AgentId;
 	/** Defaults to 100. */
 	limit?: number;
+	/** Opaque cursor: rows strictly older than this `(startedAt, id)` pair. */
+	cursor?: SessionCursor;
 }
 
 export function listSessions(db: StoreDb, opts: ListSessionsOptions = {}): Session[] {
+	// started_at is ISO 8601 — lexicographic sort matches chronological sort,
+	// so SQLite's TEXT comparison is sufficient. id breaks ties so pagination
+	// is deterministic when many sessions share a startedAt.
 	const filters = [
 		opts.source !== undefined ? eq(sessions.source, opts.source) : undefined,
 		opts.agentId !== undefined ? eq(sessions.agentId, opts.agentId) : undefined,
+		opts.cursor !== undefined
+			? or(
+					sql`${sessions.startedAt} < ${opts.cursor.startedAt}`,
+					and(
+						eq(sessions.startedAt, opts.cursor.startedAt),
+						sql`${sessions.id} < ${opts.cursor.id}`,
+					),
+				)
+			: undefined,
 	].filter((c) => c !== undefined);
-	// started_at is ISO 8601 — lexicographic sort matches chronological sort,
-	// so SQLite's TEXT comparison is sufficient.
 	return db
 		.select()
 		.from(sessions)
 		.where(filters.length > 0 ? and(...filters) : undefined)
-		.orderBy(desc(sessions.startedAt))
+		.orderBy(desc(sessions.startedAt), desc(sessions.id))
 		.limit(opts.limit ?? 100)
 		.all();
 }

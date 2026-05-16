@@ -3,13 +3,20 @@
 // guards, or `ts-pattern.match` to narrow types instead. Biome 2.4 has no
 // built-in equivalent — this GritQL plugin fills the gap.
 //
-// Implementation: the negation `$cast <: not `$x as const`` excludes the
-// allowed form via whole-expression match instead of trying to negate the
-// `const` keyword node (which doesn't parse as an expression and so wouldn't
-// match the bare-identifier pattern).
+// Implementation notes:
+//   - The negation `$cast <: not `$x as const`` excludes the allowed form via
+//     whole-expression match instead of trying to negate the `const` keyword
+//     node (which doesn't parse as an expression and so wouldn't match the
+//     bare-identifier pattern).
+//   - `not within import_statement` excludes ECMAScript import specifier
+//     aliases like `import { X as Y } from "..."` — that `as` is a *rename*
+//     in the import grammar, not a TS cast. Same applies to
+//     `export { X as Y } from "..."` (export_statement).
 language js
 
 `$expr as $type` as $cast where {
 	$cast <: not `$x as const`,
+	$cast <: not within `import $_ from $_` ,
+	$cast <: not within `export $_ from $_` ,
 	register_diagnostic(span=$type, message="Banned `as` cast. The only allowed form is `as const`. Use `satisfies`, a type guard, or `ts-pattern.match` instead.")
 }

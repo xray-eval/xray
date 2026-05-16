@@ -1,8 +1,20 @@
 # Bun runtime config — `bun test` is the only test runner for this repo.
 
+# Tailwind v4 plugin for the HTML bundler (both `bun build` and Bun.serve's
+# HTML routes). Without this the `@import "tailwindcss"` in
+# src/client/globals.css would emit as-is and the browser would 404.
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+
 [test]
 # MSW lifecycle for the whole suite (see bun-test-setup.ts).
 preload = ["./bun-test-setup.ts"]
+
+# Each test file gets a fresh global object (set in package.json scripts via
+# --isolate). Required because happy-dom (registered globally by React tests
+# via registerHappyDom()) replaces `globalThis.fetch` — without isolation
+# that replacement leaks into adapter tests whose MSW interception then
+# misses the wrong fetch impl.
 
 # Coverage floor — see .claude/rules/tdd.md "Coverage gates". Don't lower
 # without a written reason in the commit message.
@@ -15,7 +27,7 @@ coverageSkipTestFiles = true
 coveragePathIgnorePatterns = [
   "**/test-utils.ts",
   "**/types.ts",
-  "src/main.tsx",
+  "src/client/main.tsx",
   "src/test-server.ts",
   "src/server/main.ts",
 ]
