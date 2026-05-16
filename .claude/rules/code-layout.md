@@ -50,6 +50,7 @@ src/
 - Genuinely cross-slice code (shared types like `Agent`, `Workflow`; the adapter registry) lives at the parent level (`src/adapters/types.ts`, `src/adapters/registry.ts`). Don't invent a `src/shared/` god-folder.
 - A `utils.ts` *inside a slice* is fine. A top-level `src/utils/` is the smell — it means you couldn't find a slice it belongs to, which usually means the slice is missing.
 - React-Flow nodes, hooks, and component logic for the graph all live in `src/graph/`. There is no `src/hooks/` or `src/components/`.
+- **The "service" ban is about top-level folders, not file suffixes inside a slice.** A `src/services/` folder is banned (it pools every API client). But a `src/server/<feature>/<feature>.service.ts` file *inside a feature slice* is allowed when the slice has internal layering — see §3 for the role-suffix convention.
 
 ## 2 · Tests live next to the file they test
 
@@ -119,6 +120,42 @@ src/graph/
 
 **Why `test-utils.ts` is per-slice, not central.** A central `test/fixtures.ts` becomes a god-file that everyone edits and nobody owns. Per-slice fixtures co-locate the test helper with the type it builds — when the type changes, the fixture builder lives one folder away, not in a separate directory tree. Any test (inside or outside the slice) imports directly: `import { makeAgent } from "@/adapters/agent/test-utils.ts"`.
 
+### Alternative — role-suffixed files for slices with internal layering
+
+When a slice has clearly distinct architectural concerns (HTTP router + business logic + types + errors), files within the slice MAY use a **role suffix** instead of the bare convention above. The slice still organizes by feature; the file names just declare which layer they sit at.
+
+| File                       | Purpose                                                            |
+|----------------------------|--------------------------------------------------------------------|
+| `<slice>.router.ts`        | HTTP wiring, route handlers, error→response mapping                |
+| `<slice>.service.ts`       | Pure business logic; no HTTP, testable without a server            |
+| `<slice>.types.ts`         | Type definitions + Valibot schemas owned by this slice             |
+| `<slice>.errors.ts`        | Typed error classes (per `errors.md`)                              |
+| `<slice>.test-utils.ts`    | Fixture builders for this slice's types                            |
+
+Each gets a co-located `.test.ts` next to it.
+
+Example — HTTP endpoint slice:
+
+```
+src/server/ingest/
+  ingest.router.ts
+  ingest.router.test.ts
+  ingest.service.ts
+  ingest.types.ts
+  ingest.errors.ts
+  ingest.errors.test.ts
+  ingest.test-utils.ts
+```
+
+**When to reach for this convention vs. the bare default:**
+- Bare default (`types.ts`, `<slice>.ts`, `test-utils.ts`) — slices that don't have a router/service split: types-only slices, pure-logic slices, UI component slices.
+- Role-suffixed — server endpoint slices that genuinely have an HTTP layer + a domain-logic layer + typed errors. The suffix has to mean something: `<slice>.service.ts` in a slice with no router is just unused jargon.
+
+**Banned regardless of which convention is used:**
+- `services/`, `controllers/`, `routes/` *folders* — that's §1's layered tree.
+- Mixing the two conventions inside one slice (`types.ts` next to `ingest.errors.ts`). Pick one per slice.
+- A `<slice>.service.ts` that imports Hono or sets HTTP status codes. The point of the split is that the service is HTTP-agnostic.
+
 ---
 
 ## 4 · No barrel exports
@@ -157,11 +194,31 @@ The vertical-slice rule (§1) plus the per-slice convention (§3) already make b
 
 ---
 
-## 5 · When a file gets long, extract a submodule
+## 5 · One file = one concern. Extract sub-slices when concerns multiply.
 
-When a `<slice>.ts` or `<concept>.tsx` crosses **~300 lines**, the fix is to extract the bulging responsibility into a **sub-slice** (subfolder following the same convention as §3), not to split the file into part-1/part-2 or to dump helpers into a `helpers/` folder.
+A `<slice>.ts` or `<concept>.tsx` should do **one thing**. The moment it handles two or more distinct responsibilities — HTTP wiring AND dispatch AND per-variant business logic; rendering AND state AND I/O; API calls AND response shaping AND caching — extract each into a **sub-slice** (subfolder following the same convention as §3). Not part-1/part-2 splits. Not a `helpers/` dump.
 
-Example progression:
+**Triggers, in priority order:**
+
+1. **Multiple responsibilities in one file.** The primary criterion. If you can name two things the file does that could change independently, split now — regardless of LOC. A 120-line file with four responsibilities is worse than a 320-line file with one.
+2. **File crosses ~300 lines.** A secondary smell. Long files almost always hide latent responsibilities; the fix is to find them, not to cut by line count.
+
+**Worked example — concern-driven (small file).** An HTTP ingest endpoint that handles (a) Hono wiring + error→response mapping, (b) request body parsing/validation, and (c) a `switch (event.type)` dispatch over event variants is three responsibilities in one file — even at ~120 lines. Split by role (see §3's role-suffix convention):
+
+```
+src/server/ingest/
+  ingest.router.ts            ← Hono wiring + body parse + error→HTTP mapping
+  ingest.router.test.ts       ← integration tests via app.request()
+  ingest.service.ts           ← applyEvent: validated event → store calls
+  ingest.types.ts             ← Valibot schemas + inferred types
+  ingest.errors.ts            ← typed errors
+  ingest.errors.test.ts
+  ingest.test-utils.ts        ← event factories + request builders
+```
+
+`ingest.router.ts` becomes pure HTTP plumbing — testable without touching the store. `ingest.service.ts` is a pure dispatcher — testable without spinning up Hono. If a single event variant grows large enough to merit its own sub-slice (e.g. `tool-called/` with its own store interactions, types, and tests), extract *that variant* into a sub-slice while keeping the router/service split at the top.
+
+**Worked example — LOC-driven (long file).**
 
 ```
 # Day 1 — small
@@ -193,12 +250,13 @@ src/adapters/elevenlabs/
     types.ts
 ```
 
-**Why.** Long files almost always hide latent slices — distinct responsibilities sharing a filename. Extracting them gives each its own type surface, test file, and future deletion target. The 300-line threshold is a smell trigger, not a hard limit: a 320-line file of one cohesive concept stays as it is; a 250-line file with two unrelated halves should split now.
+**Why.** A file with mixed concerns is a slice with mixed concerns — and a mixed slice is a slice nobody owns. Extracting each responsibility gives it its own type surface, test file, and future deletion target. LOC is a heuristic for spotting trouble; *concerns* are the actual unit of cohesion. A 320-line file of one cohesive concept stays as it is; a 120-line file with three responsibilities should split now.
 
 **Anti-patterns to avoid.**
 - `adapter-part-1.ts`, `adapter-part-2.ts` — no semantic boundary, just arbitrary cuts.
 - `helpers/`, `lib/`, `internal/` — layer thinking sneaking back in. Name the sub-slice after *what it does*, not *what kind of code it is*.
-- Pre-emptive splits at 100 lines — premature submodule = code in search of a concept. Wait for the actual pressure.
+- Splitting on LOC alone when the file does one thing — a 350-line valibot schema for one API surface stays as it is.
+- Splitting before responsibilities are real — if a file has 30 lines of one cohesive thing, leave it alone. Wait until you can *name* two responsibilities, not "imagine" two.
 
 ---
 

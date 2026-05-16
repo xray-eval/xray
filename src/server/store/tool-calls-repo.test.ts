@@ -1,7 +1,11 @@
 import { turns } from "./schema.ts";
 import { saveSession } from "./sessions-repo.ts";
 import { makeSession, makeTempStore, makeToolCallInput, makeTurnInput } from "./test-utils.ts";
-import { appendToolCalls, listToolCallsForTurn } from "./tool-calls-repo.ts";
+import {
+	appendToolCallIdempotent,
+	appendToolCalls,
+	listToolCallsForTurn,
+} from "./tool-calls-repo.ts";
 import { appendTurns } from "./turns-repo.ts";
 import { describe, expect, it } from "bun:test";
 
@@ -67,6 +71,23 @@ describe("tool-calls-repo", () => {
 
 		const names = listToolCallsForTurn(store.db, "turn-A").map((r) => r.name);
 		expect(names).toEqual(["first"]);
+		store.close();
+	});
+
+	it("appendToolCallIdempotent drops duplicate (turn_id, idx) silently", () => {
+		// The ingest path's retry-safety contract: replaying the same
+		// `tool_called` event (same `turnIdx` + client-supplied `idx`) must
+		// not duplicate the row and must not throw.
+		const store = seedSessionWithTurn("turn-A");
+		appendToolCallIdempotent(store.db, "turn-A", makeToolCallInput({ idx: 0, name: "first" }));
+		appendToolCallIdempotent(
+			store.db,
+			"turn-A",
+			makeToolCallInput({ idx: 0, name: "first-replayed" }),
+		);
+		const rows = listToolCallsForTurn(store.db, "turn-A");
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.name).toBe("first");
 		store.close();
 	});
 

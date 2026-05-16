@@ -1,4 +1,4 @@
-import { getSession, listSessions, saveSession } from "./sessions-repo.ts";
+import { getSession, listSessions, markSessionEnded, saveSession } from "./sessions-repo.ts";
 import { makeSession, makeTempStore } from "./test-utils.ts";
 import { describe, expect, it } from "bun:test";
 
@@ -24,6 +24,38 @@ describe("sessions-repo", () => {
 		saveSession(store.db, makeSession({ id: "s-1", endedAt: null }));
 		saveSession(store.db, makeSession({ id: "s-1", endedAt: "2026-05-16T13:00:00.000Z" }));
 		expect(getSession(store.db, "s-1")?.endedAt).toBe("2026-05-16T13:00:00.000Z");
+		store.close();
+	});
+
+	it("markSessionEnded is terminal — second call is a no-op", () => {
+		// Once endedAt is set, a second session_ended (e.g. a retried POST that
+		// the client thinks failed) must not overwrite the canonical end time.
+		const store = makeTempStore();
+		saveSession(store.db, makeSession({ id: "s-1", endedAt: null }));
+		markSessionEnded(store.db, "s-1", "2026-05-16T13:00:00.000Z", 300_000);
+		markSessionEnded(store.db, "s-1", "2026-05-16T14:00:00.000Z", 999_999);
+		const row = getSession(store.db, "s-1");
+		expect(row?.endedAt).toBe("2026-05-16T13:00:00.000Z");
+		expect(row?.durationMs).toBe(300_000);
+		store.close();
+	});
+
+	it("does not regress startedAt past its existing value", () => {
+		// A late session_started arriving after a stub (whose startedAt was
+		// derived from the first turn's timestamp) must not push the canonical
+		// startedAt forward past turns already on disk.
+		const store = makeTempStore();
+		saveSession(store.db, makeSession({ id: "s-1", startedAt: "2026-05-16T12:00:01.000Z" }));
+		saveSession(store.db, makeSession({ id: "s-1", startedAt: "2026-05-16T12:00:02.000Z" }));
+		expect(getSession(store.db, "s-1")?.startedAt).toBe("2026-05-16T12:00:01.000Z");
+		store.close();
+	});
+
+	it("rolls startedAt back to an earlier value (MIN-merge)", () => {
+		const store = makeTempStore();
+		saveSession(store.db, makeSession({ id: "s-1", startedAt: "2026-05-16T12:00:01.000Z" }));
+		saveSession(store.db, makeSession({ id: "s-1", startedAt: "2026-05-16T12:00:00.000Z" }));
+		expect(getSession(store.db, "s-1")?.startedAt).toBe("2026-05-16T12:00:00.000Z");
 		store.close();
 	});
 

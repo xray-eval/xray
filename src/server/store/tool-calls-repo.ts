@@ -17,6 +17,18 @@ export function appendToolCalls(db: StoreDb, turnId: string, batch: ToolCallInpu
 	});
 }
 
+/**
+ * Append one tool call. On `UNIQUE(turn_id, idx)` collision the insert is
+ * silently dropped — the ingest path's idempotency contract: replaying the
+ * same `(turn_id, idx)` is a no-op.
+ */
+export function appendToolCallIdempotent(db: StoreDb, turnId: string, call: ToolCallInput): void {
+	db.insert(toolCalls)
+		.values({ ...call, turnId })
+		.onConflictDoNothing({ target: [toolCalls.turnId, toolCalls.idx] })
+		.run();
+}
+
 export function listToolCallsForTurn(db: StoreDb, turnId: string): ToolCallRow[] {
 	return db
 		.select()
