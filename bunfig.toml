@@ -1,0 +1,14 @@
+# Bun runtime config — only used by `bun test` for the SQLite store slice
+# (everything else runs under vitest, see vitest.config.ts).
+
+[test]
+# Coverage floor for `src/server/store/**` — matches the vitest thresholds in
+# vitest.config.ts. Don't lower without a written reason in the commit message
+# (see .claude/rules/tdd.md "Coverage gates").
+coverageThreshold = { line = 0.8, function = 0.8, statement = 0.8 }
+coverage = true
+coverageReporter = ["text", "lcov"]
+# Don't count the test files themselves in coverage (bun's equivalent of
+# vitest's `coverage.exclude: ["**/*.test.ts"]`). No bun option exists to
+# exclude `types.ts` / `test-utils.ts` — they're covered by tests anyway.
+coverageSkipTestFiles = true

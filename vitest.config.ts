@@ -3,8 +3,14 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
 	test: {
 		include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
-		exclude: ["node_modules/**", "dist/**", "**/test-utils.ts"],
-		environment: "happy-dom",
+		// `src/server/store/**` imports `bun:sqlite` — runs under `bun test`
+		// instead (see package.json `test:store`). v8 coverage doesn't work
+		// under Bun's JSC runtime, so the store slice has its own runner.
+		exclude: ["node_modules/**", "dist/**", "**/test-utils.ts", "src/server/store/**"],
+		// Default to Node — most tests are server-side or pure logic. Tests
+		// that need a DOM opt in via `// @vitest-environment happy-dom` at the
+		// top of the file (see `src/app.test.tsx`).
+		environment: "node",
 		globals: false,
 		clearMocks: true,
 		restoreMocks: true,
@@ -20,6 +26,8 @@ export default defineConfig({
 				"**/types.ts",
 				"src/main.tsx",
 				"src/test-server.ts",
+				// Store slice runs under `bun test` (see exclude above).
+				"src/server/store/**",
 			],
 			// Floor — see .claude/rules/tdd.md "Coverage gates". Don't lower
 			// without a written reason in the commit message.

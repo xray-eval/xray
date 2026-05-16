@@ -1,5 +1,6 @@
 import { createHttpClient } from "@/http/http.ts";
 import type { HttpClient } from "@/http/types.ts";
+
 import { AdapterError } from "../errors/errors.ts";
 import type {
 	Agent,

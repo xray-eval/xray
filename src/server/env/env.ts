@@ -10,6 +10,10 @@ const EnvSchema = v.object({
 		v.maxValue(65535),
 	),
 	HOST: v.optional(v.string(), "0.0.0.0"),
+	// Directory holding the SQLite store file (`xray.db`). `/data` is the
+	// mounted-volume convention in the production image; `./data` is the dev
+	// equivalent at the repo root.
+	XRAY_DATA_DIR: v.pipe(v.optional(v.string(), "/data"), v.nonEmpty()),
 });
 
 export type Env = v.InferOutput<typeof EnvSchema>;

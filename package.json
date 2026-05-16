@@ -23,9 +23,13 @@
 		"docker:build": "docker build -t xray:local .",
 		"docker:run": "docker run --rm -p 8080:8080 --env-file .env xray:local",
 		"docker:smoke": "bash scripts/docker-smoke.sh",
-		"test": "vitest run",
+		"test": "pnpm test:vitest && pnpm test:store",
 		"test:watch": "vitest",
-		"test:coverage": "vitest run --coverage"
+		"test:vitest": "vitest run",
+		"test:store": "bun test src/server/store/",
+		"test:coverage": "pnpm test:coverage:vitest && pnpm test:coverage:store",
+		"test:coverage:vitest": "vitest run --coverage",
+		"test:coverage:store": "bun test --coverage src/server/store/"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.14",

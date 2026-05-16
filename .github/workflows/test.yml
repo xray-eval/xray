@@ -2,12 +2,19 @@
 #
 # Fails the build when:
 #   - any test fails
-#   - line / branch / function coverage drops below the thresholds in vitest.config.ts
+#   - line / branch / function coverage drops below the thresholds in
+#     vitest.config.ts (non-store code) or bunfig.toml (store slice)
 #
 # Pre-commit hooks already run lint + typecheck + gitleaks; this workflow is
 # the *test* layer specifically. Local equivalent: `pnpm test:coverage`.
 
 name: Test
+
+# Two test runners — see vitest.config.ts and bunfig.toml:
+#   - vitest under Node for everything except the SQLite store slice
+#   - `bun test` for `src/server/store/**` (it imports `bun:sqlite`, which
+#     Node can't resolve and which Vite refuses to bundle)
+# CI installs both runtimes; both gates must pass.
 
 on:
   pull_request:
@@ -22,7 +29,7 @@ concurrency:
 
 jobs:
   test:
-    name: Vitest + coverage
+    name: Vitest + bun test + coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -44,6 +51,13 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
           node-version-file: '.nvmrc'
+
+      # Pinned via .tool-versions (single source of truth for local dev,
+      # Docker, and CI). Needed by `pnpm test:store` — see header comment.
+      - name: Setup Bun (pinned via .tool-versions)
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version-file: '.tool-versions'
 
       # Corepack must run AFTER setup-node: current pnpm (11.x) requires
       # Node ≥22.13, and the runner's pre-installed Node is older than that.
