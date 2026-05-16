@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { match, P } from "ts-pattern";
 import * as v from "valibot";
 
-import { sanitizeIssues } from "@/server/http-errors/sanitize-issues.ts";
+import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
 import {

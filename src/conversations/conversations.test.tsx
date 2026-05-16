@@ -142,4 +142,31 @@ describe("ConversationsList — error path", () => {
 		render(<ConversationsList />);
 		expect(await screen.findByRole("alert")).toBeTruthy();
 	});
+
+	it("renders an alert when the server returns a body with the wrong shape", async () => {
+		// Confirms `v.safeParse` + SessionsInvalidResponseError replaces a raw
+		// ValiError throw — bad-shape responses now flow through the same
+		// error-state UI as HTTP failures.
+		server.use(http.get(SESSIONS_URL, () => HttpResponse.json({ nope: 1 })));
+		render(<ConversationsList />);
+		expect(await screen.findByRole("alert")).toBeTruthy();
+	});
+
+	it("recovers via the Try again button when the second fetch succeeds", async () => {
+		let attempts = 0;
+		server.use(
+			http.get(SESSIONS_URL, () => {
+				attempts += 1;
+				if (attempts === 1) return HttpResponse.json({ error: "boom" }, { status: 500 });
+				return HttpResponse.json(
+					makeListSessionsResponse({ sessions: [makeSessionListItem({ agentId: "after-retry" })] }),
+				);
+			}),
+		);
+		render(<ConversationsList />);
+		const retry = await screen.findByRole("button", { name: /try again/i });
+		fireEvent.click(retry);
+		await waitFor(() => expect(screen.getByText("after-retry")).toBeTruthy());
+		expect(attempts).toBe(2);
+	});
 });

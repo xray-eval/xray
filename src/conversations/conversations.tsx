@@ -8,7 +8,7 @@ import type { ListSessionsResponse, SessionListItem } from "@/server/sessions/se
 // A schema drift breaks both ends at typecheck rather than at runtime.
 import { ListSessionsResponseSchema } from "@/server/sessions/sessions.types.ts";
 
-import { SessionsLoadError } from "./errors.ts";
+import { SessionsInvalidResponseError, SessionsLoadError } from "./errors.ts";
 
 export interface ConversationsListProps {
 	/** Optional `agentId` filter passed through as `?agentId=` to the server. */
@@ -37,12 +37,19 @@ export function ConversationsList({ agentId, apiBase }: ConversationsListProps) 
 			if (cursor !== null) url.searchParams.set("cursor", cursor);
 			const res = await fetch(url, { signal });
 			if (!res.ok) throw new SessionsLoadError(res.status);
-			return v.parse(ListSessionsResponseSchema, await res.json());
+			// `safeParse` per boundary-validation.md §4: schema failure becomes a
+			// typed slice error, not a raw ValiError that callers must `instanceof`-check.
+			const parsed = v.safeParse(ListSessionsResponseSchema, await res.json());
+			if (!parsed.success) throw new SessionsInvalidResponseError(parsed.issues);
+			return parsed.output;
 		},
 		[agentId, apiBase],
 	);
 
-	useEffect(() => {
+	// Single load helper shared by the initial-mount effect and the Try again
+	// button. Returns an abort callback so the effect can cancel the in-flight
+	// fetch on unmount and the button can call it directly.
+	const reload = useCallback((): (() => void) => {
 		const controller = new AbortController();
 		setState({ kind: "loading" });
 		fetchPage(null, controller.signal)
@@ -60,6 +67,8 @@ export function ConversationsList({ agentId, apiBase }: ConversationsListProps) 
 			});
 		return () => controller.abort();
 	}, [fetchPage]);
+
+	useEffect(() => reload(), [reload]);
 
 	const loadMore = useCallback(() => {
 		if (state.kind !== "ready" || state.nextCursor === null || state.loadingMore) return;
@@ -93,7 +102,14 @@ export function ConversationsList({ agentId, apiBase }: ConversationsListProps) 
 		<aside aria-label="Conversations" aria-busy={state.kind === "loading"}>
 			{match(state)
 				.with({ kind: "loading" }, () => <p>Loading sessions…</p>)
-				.with({ kind: "error" }, (s) => <p role="alert">Failed to load sessions: {s.message}</p>)
+				.with({ kind: "error" }, (s) => (
+					<>
+						<p role="alert">Failed to load sessions: {s.message}</p>
+						<button type="button" onClick={() => reload()}>
+							Try again
+						</button>
+					</>
+				))
 				.with({ kind: "ready" }, (s) =>
 					s.items.length === 0 ? (
 						<EmptyState />

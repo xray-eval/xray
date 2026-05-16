@@ -2,12 +2,12 @@ import { Hono } from "hono";
 import { match, P } from "ts-pattern";
 import * as v from "valibot";
 
-import { sanitizeIssues } from "@/server/http-errors/sanitize-issues.ts";
+import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
 import { InvalidQueryError } from "./sessions.errors.ts";
+import { ListSessionsQuerySchema } from "./sessions.query.ts";
 import { listSessionsForApi } from "./sessions.service.ts";
-import { ListSessionsQuerySchema } from "./sessions.types.ts";
 
 /**
  * Sessions router. Mounted at `/v1`; final URL is `GET /v1/sessions`.

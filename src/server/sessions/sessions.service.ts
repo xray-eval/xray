@@ -1,9 +1,13 @@
+import { match, P } from "ts-pattern";
+
 import { listSessions } from "@/server/store/sessions-repo.ts";
 import type { Store } from "@/server/store/store.ts";
 import type { Session } from "@/server/store/types.ts";
 
 import { encodeCursor } from "./cursor/cursor.ts";
-import type { ListSessionsQuery, ListSessionsResponse, SessionListItem } from "./sessions.types.ts";
+import { InconsistentSessionRowError } from "./sessions.errors.ts";
+import type { ListSessionsQuery } from "./sessions.query.ts";
+import type { ListSessionsResponse, SessionListItem } from "./sessions.types.ts";
 
 /**
  * List sessions newest-first with optional `agentId` filter and `(startedAt, id)`
@@ -37,7 +41,16 @@ function toListItem(row: Session): SessionListItem {
 		startedAt: row.startedAt,
 		endedAt: row.endedAt,
 		durationMs: row.durationMs,
-		source:
-			row.source === "adapter" && row.provider !== null ? `adapter:${row.provider}` : "ingest",
+		source: composeSource(row),
 	};
+}
+
+function composeSource(row: Session): SessionListItem["source"] {
+	return match(row)
+		.with({ source: "ingest" }, () => "ingest" as const)
+		.with({ source: "adapter", provider: P.string }, (r) => `adapter:${r.provider}` as const)
+		.with({ source: "adapter", provider: null }, () => {
+			throw new InconsistentSessionRowError(row.id);
+		})
+		.exhaustive();
 }

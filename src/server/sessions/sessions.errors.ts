@@ -22,3 +22,20 @@ export class InvalidQueryError extends SessionsError {
 		this.issues = issues;
 	}
 }
+
+/**
+ * A `sessions` row violates the implicit invariant that `source='adapter'`
+ * pairs with a non-null `provider`. Today's writers (ingest + future adapters)
+ * can't produce this state, but errors.md §1 names this exact "message is
+ * load-bearing" failure mode — so we throw loudly instead of silently
+ * mapping the row to `source: "ingest"` on the wire.
+ */
+export class InconsistentSessionRowError extends SessionsError {
+	readonly sessionId: string;
+
+	constructor(sessionId: string) {
+		super(`Session "${sessionId}" has source='adapter' but provider is null`);
+		this.name = "InconsistentSessionRowError";
+		this.sessionId = sessionId;
+	}
+}
