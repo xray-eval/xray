@@ -86,7 +86,7 @@ curl -X POST http://localhost:8080/v1/sessions/abc123/events \
   }'
 ```
 
-Stream events as they happen; the UI updates live. Event schema and the full event list are documented in [`src/server/ingest/ingest.types.ts`](./src/server/ingest/ingest.types.ts).
+Stream events as they happen; the UI updates live. See [`docs/INGEST.md`](./docs/INGEST.md) for the wire contract with side-by-side examples for voice-to-voice (OpenAI Realtime, Gemini Live) and STT→LLM→TTS pipelines; the canonical schema lives in [`src/server/ingest/ingest.types.ts`](./src/server/ingest/ingest.types.ts).
 
 `compose.yaml` in this repo is a working production example. Drop it into your existing stack behind your own reverse proxy.
 

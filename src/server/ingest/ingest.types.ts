@@ -51,7 +51,9 @@ export const TurnCompletedEventSchema = v.object({
 	role: RoleSchema,
 	text: v.pipe(v.string(), v.maxLength(MAX_TURN_TEXT)),
 	timestamp: IsoTimestampSchema,
-	llmLatencyMs: v.optional(NonNegativeDurationMsSchema),
+	responseLatencyMs: v.optional(NonNegativeDurationMsSchema),
+	interrupted: v.optional(v.boolean()),
+	interruptedAtMs: v.optional(NonNegativeDurationMsSchema),
 });
 export type TurnCompletedEvent = v.InferOutput<typeof TurnCompletedEventSchema>;
 

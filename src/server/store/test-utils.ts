@@ -39,7 +39,9 @@ export function makeTurnInput(overrides: Partial<TurnInput> = {}): TurnInput {
 		edgeFiredId: null,
 		edgeReasoning: null,
 		promptSeen: null,
-		llmLatencyMs: null,
+		responseLatencyMs: null,
+		interrupted: null,
+		interruptedAtMs: null,
 		...overrides,
 	};
 }

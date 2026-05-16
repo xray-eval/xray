@@ -78,7 +78,7 @@ describe("POST /v1/sessions/:id/events — happy path", () => {
 				role: "user",
 				text: "hi",
 				timestamp: "2026-05-16T12:00:01.000Z",
-				llmLatencyMs: 1234,
+				responseLatencyMs: 1234,
 			}),
 		);
 		expect(res.status).toBe(200);
@@ -90,8 +90,66 @@ describe("POST /v1/sessions/:id/events — happy path", () => {
 			role: "user",
 			text: "hi",
 			ts: "2026-05-16T12:00:01.000Z",
-			llmLatencyMs: 1234,
+			responseLatencyMs: 1234,
 		});
+	});
+
+	it("accepts a turn_completed with barge-in fields", async () => {
+		await post("sess-A", makeSessionStartedEvent());
+		const res = await post(
+			"sess-A",
+			makeTurnCompletedEvent({
+				idx: 0,
+				role: "agent",
+				text: "Sure, I can…",
+				responseLatencyMs: 400,
+				interrupted: true,
+				interruptedAtMs: 800,
+			}),
+		);
+		expect(res.status).toBe(200);
+		const [row] = listTurnsForSession(store.db, "sess-A");
+		expect(row).toMatchObject({
+			responseLatencyMs: 400,
+			interrupted: true,
+			interruptedAtMs: 800,
+		});
+	});
+
+	// Pins the loose contract: `interrupted` and `interruptedAtMs` are independent
+	// optionals. The schema accepts mismatched combinations (false + offset, true
+	// without offset). Promote to a `v.check` cross-field guard if that becomes wrong.
+	it("accepts a turn_completed with interrupted=false but a stored interruptedAtMs", async () => {
+		await post("sess-A", makeSessionStartedEvent());
+		const res = await post(
+			"sess-A",
+			makeTurnCompletedEvent({
+				idx: 0,
+				role: "agent",
+				text: "ok",
+				interrupted: false,
+				interruptedAtMs: 800,
+			}),
+		);
+		expect(res.status).toBe(200);
+		const [row] = listTurnsForSession(store.db, "sess-A");
+		expect(row).toMatchObject({ interrupted: false, interruptedAtMs: 800 });
+	});
+
+	it("accepts a turn_completed with interrupted=true without interruptedAtMs", async () => {
+		await post("sess-A", makeSessionStartedEvent());
+		const res = await post(
+			"sess-A",
+			makeTurnCompletedEvent({
+				idx: 0,
+				role: "agent",
+				text: "ok",
+				interrupted: true,
+			}),
+		);
+		expect(res.status).toBe(200);
+		const [row] = listTurnsForSession(store.db, "sess-A");
+		expect(row).toMatchObject({ interrupted: true, interruptedAtMs: null });
 	});
 
 	it("accepts a tool_called and creates the tool-call row under its turn", async () => {
@@ -159,6 +217,19 @@ describe("POST /v1/sessions/:id/events — schema rejection", () => {
 			timestamp: 123,
 		};
 		const res = await post("sess-A", badBody);
+		expect(res.status).toBe(400);
+	});
+
+	it("returns 400 for a negative interruptedAtMs", async () => {
+		const res = await post("sess-A", {
+			type: "turn_completed",
+			idx: 0,
+			role: "agent",
+			text: "x",
+			timestamp: "2026-05-16T12:00:01.000Z",
+			interrupted: true,
+			interruptedAtMs: -1,
+		});
 		expect(res.status).toBe(400);
 	});
 
