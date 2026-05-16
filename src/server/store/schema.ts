@@ -43,7 +43,9 @@ export const turns = sqliteTable(
 		edgeFiredId: text("edge_fired_id"),
 		edgeReasoning: text("edge_reasoning"),
 		promptSeen: text("prompt_seen"),
-		llmLatencyMs: integer("llm_latency_ms"),
+		responseLatencyMs: integer("response_latency_ms"),
+		interrupted: integer("interrupted", { mode: "boolean" }),
+		interruptedAtMs: integer("interrupted_at_ms"),
 	},
 	(t) => [
 		index("idx_turns_session_idx").on(t.sessionId, t.idx),

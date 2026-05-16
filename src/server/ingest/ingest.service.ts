@@ -42,7 +42,9 @@ export function applyEvent(store: Store, sessionId: string, event: IngestEvent):
 				edgeFiredId: null,
 				edgeReasoning: null,
 				promptSeen: null,
-				llmLatencyMs: e.llmLatencyMs ?? null,
+				responseLatencyMs: e.responseLatencyMs ?? null,
+				interrupted: e.interrupted ?? null,
+				interruptedAtMs: e.interruptedAtMs ?? null,
 			});
 		})
 		.with({ type: "tool_called" }, (e) => {

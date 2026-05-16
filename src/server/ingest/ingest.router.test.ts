@@ -78,7 +78,7 @@ describe("POST /v1/sessions/:id/events — happy path", () => {
 				role: "user",
 				text: "hi",
 				timestamp: "2026-05-16T12:00:01.000Z",
-				llmLatencyMs: 1234,
+				responseLatencyMs: 1234,
 			}),
 		);
 		expect(res.status).toBe(200);
@@ -90,7 +90,29 @@ describe("POST /v1/sessions/:id/events — happy path", () => {
 			role: "user",
 			text: "hi",
 			ts: "2026-05-16T12:00:01.000Z",
-			llmLatencyMs: 1234,
+			responseLatencyMs: 1234,
+		});
+	});
+
+	it("accepts a turn_completed with barge-in fields", async () => {
+		await post("sess-A", makeSessionStartedEvent());
+		const res = await post(
+			"sess-A",
+			makeTurnCompletedEvent({
+				idx: 0,
+				role: "agent",
+				text: "Sure, I can…",
+				responseLatencyMs: 400,
+				interrupted: true,
+				interruptedAtMs: 800,
+			}),
+		);
+		expect(res.status).toBe(200);
+		const [row] = listTurnsForSession(store.db, "sess-A");
+		expect(row).toMatchObject({
+			responseLatencyMs: 400,
+			interrupted: true,
+			interruptedAtMs: 800,
 		});
 	});
 

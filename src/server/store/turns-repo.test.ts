@@ -28,7 +28,9 @@ describe("turns-repo", () => {
 				edgeFiredId: "edge-1",
 				edgeReasoning: "matched intent",
 				promptSeen: "system prompt",
-				llmLatencyMs: 1234,
+				responseLatencyMs: 1234,
+				interrupted: true,
+				interruptedAtMs: 800,
 			}),
 		]);
 		const [row] = listTurnsForSession(store.db, "sess-1");
@@ -37,7 +39,9 @@ describe("turns-repo", () => {
 			edgeFiredId: "edge-1",
 			edgeReasoning: "matched intent",
 			promptSeen: "system prompt",
-			llmLatencyMs: 1234,
+			responseLatencyMs: 1234,
+			interrupted: true,
+			interruptedAtMs: 800,
 		});
 		store.close();
 	});
