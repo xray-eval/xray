@@ -34,6 +34,37 @@ export function saveSession(db: StoreDb, session: Session): void {
 		.run();
 }
 
+/**
+ * INSERT-OR-IGNORE a placeholder session. Used by the ingest path when an
+ * event (turn, tool call, session_ended) arrives before an explicit
+ * `session_started`. The `agentId="unknown"` row is overwritten by a later
+ * `saveSession` call once the real metadata arrives.
+ */
+export function ensureStubSession(db: StoreDb, id: string, startedAt: string): void {
+	db.insert(sessions)
+		.values({
+			id,
+			source: "ingest",
+			provider: null,
+			agentId: "unknown",
+			startedAt,
+			endedAt: null,
+			durationMs: null,
+		})
+		.onConflictDoNothing({ target: sessions.id })
+		.run();
+}
+
+/** Stamp end-of-session metadata. No-op if `id` does not exist. */
+export function markSessionEnded(
+	db: StoreDb,
+	id: string,
+	endedAt: string,
+	durationMs: number,
+): void {
+	db.update(sessions).set({ endedAt, durationMs }).where(eq(sessions.id, id)).run();
+}
+
 export function getSession(db: StoreDb, id: string): Session | undefined {
 	return db.select().from(sessions).where(eq(sessions.id, id)).get();
 }

@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 
 import { toolCalls } from "./schema.ts";
 import type { StoreDb } from "./store.ts";
@@ -24,4 +24,17 @@ export function listToolCallsForTurn(db: StoreDb, turnId: string): ToolCallRow[]
 		.where(eq(toolCalls.turnId, turnId))
 		.orderBy(asc(toolCalls.idx))
 		.all();
+}
+
+/**
+ * Count tool calls already attached to a turn. The ingest path uses this to
+ * pick the next `idx` without materializing the full row list.
+ */
+export function countToolCallsForTurn(db: StoreDb, turnId: string): number {
+	const row = db
+		.select({ n: sql<number>`count(*)` })
+		.from(toolCalls)
+		.where(eq(toolCalls.turnId, turnId))
+		.get();
+	return row?.n ?? 0;
 }
