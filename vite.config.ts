@@ -1,5 +1,11 @@
 import react from "@vitejs/plugin-react";
+import * as v from "valibot";
 import { defineConfig } from "vite";
+
+const ViteEnvSchema = v.object({
+	VITE_API_PROXY: v.optional(v.pipe(v.string(), v.url()), "http://localhost:8080"),
+});
+const viteEnv = v.parse(ViteEnvSchema, process.env);
 
 export default defineConfig({
 	plugins: [react()],
@@ -16,7 +22,7 @@ export default defineConfig({
 		// share a single origin from the browser's point of view.
 		proxy: {
 			"/api": {
-				target: process.env["VITE_API_PROXY"] ?? "http://localhost:8080",
+				target: viteEnv.VITE_API_PROXY,
 				changeOrigin: true,
 			},
 		},
