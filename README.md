@@ -12,18 +12,28 @@ The same shape of debugging pain — invisible reasoning, fragmented surfaces, n
 
 ## Sources
 
-X-Ray ingests conversations through two coexisting paths — covers both provider-hosted agents and custom voice-to-voice loops without locking you into either.
+X-Ray ingests conversations through two coexisting paths. Pick the one that matches how your voice agent is built — or use both side-by-side against the same UI.
 
-| Source                       | Status       | How it works                                                                                  |
-|------------------------------|--------------|-----------------------------------------------------------------------------------------------|
-| Ingest (custom loops)        | v1           | Your loop POSTs events to `POST /v1/sessions/:id/events`. Language-agnostic; no SDK required. |
-| ElevenLabs                   | planned (v1) | Adapter polls Convai REST + streams live conversations via signed URL.                        |
-| Vapi                         | open         |                                                                                               |
-| Retell                       | open         |                                                                                               |
-| OpenAI Realtime              | open         |                                                                                               |
-| Voiceflow                    | open         |                                                                                               |
+### Custom voice loops — via HTTP ingest
 
-Each provider is one file in [`src/adapters/`](./src/adapters/) implementing the [`VoiceAgentAdapter`](./src/adapters/types.ts) interface. PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+| Status | How it works                                                                                                                                                                                                                                |
+|--------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `v1`   | Your loop POSTs events to `POST /v1/sessions/:id/events` as they happen. Covers end-to-end voice-to-voice models (OpenAI Realtime, Gemini Live) and STT→LLM→TTS pipelines alike. Language-agnostic; no SDK required, just an HTTP client.   |
+
+You own the loop; xray observes it. No workflow graph (your routing lives in your code), but you get transcript, tool calls, latencies, and the "what did the LLM actually see" inspector.
+
+### Provider-hosted agents — via adapter
+
+| Provider     | Status       |
+|--------------|--------------|
+| ElevenLabs   | planned (v1) |
+| Vapi         | open         |
+| Retell       | open         |
+| Voiceflow    | open         |
+
+For platforms that host the agent definition and run orchestration themselves. Each provider is one file in [`src/adapters/`](./src/adapters/) implementing the [`VoiceAgentAdapter`](./src/adapters/types.ts) interface — adapter reads agents, workflow graph, and past conversations from the provider's API. PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+Voice-to-voice model APIs (OpenAI Realtime, Gemini Live) don't fit the adapter shape — there's no hosted agent entity to query, just a model. They go through the ingest path above.
 
 ## Architecture
 
