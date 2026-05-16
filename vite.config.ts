@@ -5,7 +5,21 @@ import { defineConfig } from "vite";
 const ViteEnvSchema = v.object({
 	VITE_API_PROXY: v.optional(v.pipe(v.string(), v.url()), "http://localhost:8080"),
 });
-const viteEnv = v.parse(ViteEnvSchema, process.env);
+
+class InvalidViteEnvError extends Error {
+	readonly issues: readonly v.BaseIssue<unknown>[];
+	constructor(issues: readonly v.BaseIssue<unknown>[]) {
+		super(`Invalid Vite environment: ${issues.map((i) => i.message).join(", ")}`);
+		this.name = "InvalidViteEnvError";
+		this.issues = issues;
+	}
+}
+
+const viteEnvResult = v.safeParse(ViteEnvSchema, process.env);
+if (!viteEnvResult.success) {
+	throw new InvalidViteEnvError(viteEnvResult.issues);
+}
+const viteEnv = viteEnvResult.output;
 
 export default defineConfig({
 	plugins: [react()],

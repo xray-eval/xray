@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { HttpClientError, HttpRequestFailedError, HttpResponseShapeError } from "./errors.ts";
+import {
+	HttpClientError,
+	HttpNetworkError,
+	HttpRequestFailedError,
+	HttpResponseShapeError,
+	HttpTimeoutError,
+} from "./errors.ts";
 
 describe("HttpRequestFailedError", () => {
 	it("is catchable as HttpClientError (and as Error)", () => {
@@ -41,5 +47,27 @@ describe("HttpResponseShapeError", () => {
 		expect(err.name).toBe("HttpResponseShapeError");
 		expect(err.url).toBe("https://x/v1/agents");
 		expect(err.issues).toEqual(issues);
+	});
+});
+
+describe("HttpTimeoutError", () => {
+	it("is catchable as HttpClientError and exposes the url", () => {
+		const cause = new Error("upstream timeout");
+		const err = new HttpTimeoutError("https://x/v1/agents", { cause });
+		expect(err).toBeInstanceOf(HttpClientError);
+		expect(err.name).toBe("HttpTimeoutError");
+		expect(err.url).toBe("https://x/v1/agents");
+		expect(err.cause).toBe(cause);
+	});
+});
+
+describe("HttpNetworkError", () => {
+	it("is catchable as HttpClientError and exposes the url", () => {
+		const cause = new Error("ECONNREFUSED");
+		const err = new HttpNetworkError("https://x/v1/agents", { cause });
+		expect(err).toBeInstanceOf(HttpClientError);
+		expect(err.name).toBe("HttpNetworkError");
+		expect(err.url).toBe("https://x/v1/agents");
+		expect(err.cause).toBe(cause);
 	});
 });

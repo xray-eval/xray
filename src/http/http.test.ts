@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { server } from "@/test-server.ts";
 
-import { HttpRequestFailedError, HttpResponseShapeError } from "./errors.ts";
+import {
+	HttpNetworkError,
+	HttpRequestFailedError,
+	HttpResponseShapeError,
+	HttpTimeoutError,
+} from "./errors.ts";
 import { createHttpClient } from "./http.ts";
 
 const BASE_URL = "https://api.example.test";
@@ -103,5 +108,31 @@ describe("createHttpClient", () => {
 			HttpRequestFailedError,
 		);
 		expect(handler).toHaveBeenCalledTimes(1);
+	});
+
+	it("wraps ky TimeoutError as HttpTimeoutError", async () => {
+		server.use(
+			http.get(
+				`${BASE_URL}/v1/slow`,
+				({ request }) =>
+					new Promise<Response>((_, reject) => {
+						request.signal.addEventListener("abort", () => reject(request.signal.reason), {
+							once: true,
+						});
+					}),
+			),
+		);
+		const client = createHttpClient({ baseUrl: BASE_URL, timeoutMs: 5 });
+
+		await expect(client.get("/v1/slow", PingSchema)).rejects.toBeInstanceOf(HttpTimeoutError);
+	});
+
+	it("wraps ky NetworkError as HttpNetworkError", async () => {
+		server.use(http.get(`${BASE_URL}/v1/unreachable`, () => HttpResponse.error()));
+		const client = createHttpClient({ baseUrl: BASE_URL, retry: 1 });
+
+		await expect(client.get("/v1/unreachable", PingSchema)).rejects.toBeInstanceOf(
+			HttpNetworkError,
+		);
 	});
 });

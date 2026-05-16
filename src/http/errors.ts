@@ -32,3 +32,23 @@ export class HttpResponseShapeError extends HttpClientError {
 		this.issues = issues;
 	}
 }
+
+export class HttpTimeoutError extends HttpClientError {
+	readonly url: string;
+
+	constructor(url: string, options?: ErrorOptions) {
+		super(`Request to ${url} timed out`, options);
+		this.name = "HttpTimeoutError";
+		this.url = url;
+	}
+}
+
+export class HttpNetworkError extends HttpClientError {
+	readonly url: string;
+
+	constructor(url: string, options?: ErrorOptions) {
+		super(`Network failure on request to ${url}`, options);
+		this.name = "HttpNetworkError";
+		this.url = url;
+	}
+}

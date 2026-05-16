@@ -21,7 +21,7 @@ importers:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
       ts-pattern:
-        specifier: ^5.9.0
+        specifier: 5.9.0
         version: 5.9.0
       valibot:
         specifier: 1.3.1

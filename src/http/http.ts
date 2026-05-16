@@ -1,7 +1,12 @@
-import ky, { HTTPError } from "ky";
+import ky, { HTTPError, NetworkError, TimeoutError } from "ky";
 import * as v from "valibot";
 
-import { HttpRequestFailedError, HttpResponseShapeError } from "./errors.ts";
+import {
+	HttpNetworkError,
+	HttpRequestFailedError,
+	HttpResponseShapeError,
+	HttpTimeoutError,
+} from "./errors.ts";
 import type { HttpClient, HttpClientOptions, HttpGetOptions } from "./types.ts";
 
 const DEFAULT_RETRY_ATTEMPTS = 3;
@@ -37,6 +42,12 @@ export function createHttpClient(opts: HttpClientOptions): HttpClient {
 					// reading `e.response.text()` would yield empty.
 					const body = typeof e.data === "string" ? e.data : JSON.stringify(e.data ?? "");
 					throw new HttpRequestFailedError(e.response.url, e.response.status, body);
+				}
+				if (e instanceof TimeoutError) {
+					throw new HttpTimeoutError(e.request.url, { cause: e });
+				}
+				if (e instanceof NetworkError) {
+					throw new HttpNetworkError(e.request.url, { cause: e });
 				}
 				throw e;
 			}
