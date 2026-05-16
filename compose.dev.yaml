@@ -2,20 +2,31 @@
 # host source bind-mounted. HMR on both sides survives file saves; the Hono
 # event stream doesn't drop when an adapter file changes.
 #
-# `pnpm dev` from package.json wraps this.
+# `pnpm dev` from package.json wraps this. The dev images bake pnpm (and bun,
+# for the server) at build time as root so the running container can drop to
+# the host user without needing privileges to `corepack enable` at runtime.
 
 services:
   client:
-    image: node@sha256:24dc26ef1e3c3690f27ebc4136c9c186c3133b25563ae4d7f0692e4d1fe5db0e  # node:24.15.0-bookworm-slim
+    build:
+      context: .
+      dockerfile: Dockerfile.dev.client
+      args:
+        UID: "${UID:-1000}"
+        GID: "${GID:-1000}"
     container_name: xray-dev-client
     # Run as the host user so anything pnpm writes into the bind-mounted repo
     # is owned by the developer, not root. A compromised dev dep can no longer
     # rewrite .git/hooks or stage commits via root-write to /app.
     user: "${UID:-1000}:${GID:-1000}"
     working_dir: /app
-    command: sh -c "corepack enable && corepack prepare --activate && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
+    # HOME/PNPM_HOME point at writable paths because the host UID has no
+    # /etc/passwd entry inside the container, so $HOME would otherwise be `/`.
     environment:
+      - HOME=/tmp
+      - PNPM_HOME=/tmp/pnpm
       - VITE_API_PROXY=http://server:8080
+    command: sh -c "pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
     volumes:
       - ./:/app
       - dev_client_node_modules:/app/node_modules
@@ -25,19 +36,26 @@ services:
       - server
 
   server:
-    image: oven/bun@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f  # oven/bun:1.3.14-debian
+    build:
+      context: .
+      dockerfile: Dockerfile.dev.server
+      args:
+        UID: "${UID:-1000}"
+        GID: "${GID:-1000}"
     container_name: xray-dev-server
     user: "${UID:-1000}:${GID:-1000}"
     working_dir: /app
     # `bun install` would trip the `only-allow pnpm` preinstall guard. Bun runs
-    # the server (`bun --hot server/index.ts`), but pnpm owns dep resolution
+    # the server (`bun --hot src/server/server.ts`), but pnpm owns dep resolution
     # so the lockfile stays single-source-of-truth.
-    command: sh -c "corepack enable && corepack prepare --activate && pnpm install --frozen-lockfile && bun --hot server/index.ts"
     environment:
+      - HOME=/tmp
+      - PNPM_HOME=/tmp/pnpm
       - HOST=0.0.0.0
       - PORT=8080
     env_file:
       - .env
+    command: sh -c "pnpm install --frozen-lockfile && bun --hot src/server/server.ts"
     volumes:
       - ./:/app
       - dev_server_node_modules:/app/node_modules

@@ -33,6 +33,6 @@
 			"@/*": ["./src/*"]
 		}
 	},
-	"include": ["src", "server", "biome-plugins", "vite.config.ts", "vitest.config.ts"],
+	"include": ["src", "biome-plugins", "vite.config.ts", "vitest.config.ts"],
 	"exclude": ["node_modules", "dist"]
 }
