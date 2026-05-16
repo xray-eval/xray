@@ -29,16 +29,18 @@ COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 
 RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 
-# Pre-create /app/node_modules owned by the dev UID so the named volume
-# attached at runtime inherits that ownership (Docker copies the image
-# directory into a fresh named volume on first mount). Without this, the
-# volume defaults to root-owned and pnpm install fails with EACCES.
+# Pre-create /app/node_modules and /data owned by the dev UID so the named
+# volumes attached at runtime inherit that ownership (Docker copies the
+# image directory into a fresh named volume on first mount). Without this,
+# the volumes default to root-owned: pnpm install fails with EACCES on
+# /app/node_modules; the SQLite store fails with EACCES on /data when
+# openStoreFromEnv calls mkdirSync(XRAY_DATA_DIR).
 #
 # UID/GID come from build args — `pnpm dev` exports the host UID/GID into
 # compose, which forwards them here. Defaults to 1000:1000 for the common
 # case but rebuilds per-developer if their host IDs differ.
 ARG UID=1000
 ARG GID=1000
-RUN mkdir -p /app/node_modules && chown -R ${UID}:${GID} /app
+RUN mkdir -p /app/node_modules /data && chown -R ${UID}:${GID} /app /data
 
 WORKDIR /app
