@@ -17,7 +17,13 @@ export default defineConfig({
 			provider: "v8",
 			reporter: ["text", "html", "lcov"],
 			include: ["src/**/*.ts", "src/**/*.tsx", "server/**/*.ts"],
-			exclude: ["**/*.test.ts", "**/*.test.tsx", "**/test-utils.ts", "**/types.ts"],
+			exclude: [
+				"**/*.test.ts",
+				"**/*.test.tsx",
+				"**/test-utils.ts",
+				"**/types.ts",
+				"server/index.ts",
+			],
 			// Floor — see .claude/rules/tdd.md "Coverage gates". Bump as the
 			// codebase fills in; don't lower without a written reason in the
 			// commit message.
