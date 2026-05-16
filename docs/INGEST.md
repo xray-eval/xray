@@ -2,7 +2,9 @@
 
 xray observes two paradigms of voice agents. The same `POST /v1/sessions/:id/events` endpoint covers both — pick the field set that matches how your loop is built. Schemas live in [`src/server/ingest/ingest.types.ts`](../src/server/ingest/ingest.types.ts).
 
-The session id lives in the URL only; retries are idempotent on the URL alone. All timestamps are ISO 8601; xray normalizes to UTC `Z` at the boundary.
+The session id lives in the URL only; retries are idempotent on the URL alone. Allowed charset is `A-Z a-z 0-9 . _ -`, up to 128 characters — anything else returns 400. All timestamps are ISO 8601; xray normalizes to UTC `Z` at the boundary.
+
+`responseLatencyMs` measures one thing across both paradigms: **end of user input → first agent output chunk**. In a pipeline that's the LLM stage time (the dominant slice of the response cycle); in voice-to-voice it's the end-to-end model response. `interruptedAtMs` is the offset in ms into the agent's response audio at which the user barged in. Latencies must be `>= 0` and `<= 7 days`.
 
 ## Voice-to-voice (OpenAI Realtime, Gemini Live, Claude voice-to-voice)
 
@@ -34,7 +36,7 @@ POST /v1/sessions/sess-42/events
   "interruptedAtMs": 800 }
 ```
 
-Tool calls map to a separate event under the agent turn that initiated them:
+Tool calls map to a separate event under the agent turn that initiated them. `turnIdx` must match a previously posted `turn_completed.idx` — otherwise the response is 422 `unknown_turn`:
 
 ```jsonc
 // Provider: OpenAI → `response.function_call_arguments.done`
@@ -67,7 +69,7 @@ Pipelines rarely emit barge-in as a wire event — the dev's code handles it. If
 
 ## Bookending a session
 
-`session_started` and `session_ended` are optional — xray auto-creates a stub session on the first `turn_completed` and accepts a later `session_started` as a metadata upsert. Send them when you have the data:
+You may skip these events entirely — xray auto-creates a stub session on the first `turn_completed` and accepts a later `session_started` as a metadata upsert. If you do send them, every field shown below is required:
 
 ```jsonc
 POST /v1/sessions/sess-42/events
