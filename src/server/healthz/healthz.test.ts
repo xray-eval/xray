@@ -1,6 +1,5 @@
-import { describe, expect, it } from "vitest";
-
 import { healthz } from "./healthz.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("healthz router", () => {
 	it("returns 200 with {ok:true} for GET /", async () => {

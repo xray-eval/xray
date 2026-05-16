@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { eq, sql } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { makeEnv } from "@/server/env/test-utils.ts";
 
@@ -12,6 +11,7 @@ import { sessions, toolCalls, turns } from "./schema.ts";
 import { saveSession } from "./sessions-repo.ts";
 import { openStore, openStoreFromEnv } from "./store.ts";
 import { makeSession } from "./test-utils.ts";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 interface PragmaRow {
 	journal_mode?: string;

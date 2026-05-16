@@ -1,7 +1,6 @@
-import { describe, expect, it } from "vitest";
-
 import { AdapterError } from "../errors/errors.ts";
 import { ElevenLabsMissingWorkflowError } from "./errors.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("ElevenLabsMissingWorkflowError", () => {
 	it("is catchable as AdapterError", () => {

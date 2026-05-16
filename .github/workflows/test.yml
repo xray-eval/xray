@@ -2,19 +2,16 @@
 #
 # Fails the build when:
 #   - any test fails
-#   - line / branch / function coverage drops below the thresholds in
-#     vitest.config.ts (non-store code) or bunfig.toml (store slice)
+#   - line / function / statement coverage drops below the thresholds in
+#     bunfig.toml
 #
 # Pre-commit hooks already run lint + typecheck + gitleaks; this workflow is
 # the *test* layer specifically. Local equivalent: `pnpm test:coverage`.
 
 name: Test
 
-# Two test runners — see vitest.config.ts and bunfig.toml:
-#   - vitest under Node for everything except the SQLite store slice
-#   - `bun test` for `src/server/store/**` (it imports `bun:sqlite`, which
-#     Node can't resolve and which Vite refuses to bundle)
-# CI installs both runtimes; both gates must pass.
+# Single runner: `bun test`. Tests import `bun:sqlite` directly, and Bun's
+# native test runner is the only one that resolves it — see bunfig.toml.
 
 on:
   pull_request:
@@ -29,7 +26,7 @@ concurrency:
 
 jobs:
   test:
-    name: Vitest + bun test + coverage
+    name: bun test + coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -53,7 +50,7 @@ jobs:
           node-version-file: '.nvmrc'
 
       # Pinned via .tool-versions (single source of truth for local dev,
-      # Docker, and CI). Needed by `pnpm test:store` — see header comment.
+      # Docker, and CI). Owns the test runner.
       - name: Setup Bun (pinned via .tool-versions)
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
@@ -88,8 +85,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run tests with coverage
-        # vitest.config.ts thresholds (lines / branches / functions / statements)
-        # fail the step automatically — no extra gate needed here.
+        # bunfig.toml `coverageThreshold` fails the step automatically — no
+        # extra gate needed here.
         run: pnpm test:coverage
 
       - name: Upload coverage artifact

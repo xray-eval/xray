@@ -1,6 +1,5 @@
 import { HttpResponse, http } from "msw";
 import * as v from "valibot";
-import { describe, expect, it, vi } from "vitest";
 
 import { server } from "@/test-server.ts";
 
@@ -11,6 +10,7 @@ import {
 	HttpTimeoutError,
 } from "./errors.ts";
 import { createHttpClient } from "./http.ts";
+import { describe, expect, it, mock } from "bun:test";
 
 const BASE_URL = "https://api.example.test";
 
@@ -29,7 +29,7 @@ describe("createHttpClient", () => {
 	});
 
 	it("sends configured headers on every request", async () => {
-		const seen = vi.fn();
+		const seen = mock();
 		server.use(
 			http.get(`${BASE_URL}/v1/ping`, ({ request }) => {
 				seen(request.headers.get("x-test-key"));
@@ -44,7 +44,7 @@ describe("createHttpClient", () => {
 	});
 
 	it("encodes searchParams and surfaces them on the wire", async () => {
-		const seen = vi.fn();
+		const seen = mock();
 		server.use(
 			http.get(`${BASE_URL}/v1/items`, ({ request }) => {
 				seen(new URL(request.url).search);
@@ -85,8 +85,7 @@ describe("createHttpClient", () => {
 	});
 
 	it("retries retryable 5xx responses up to the configured attempt count", async () => {
-		const handler = vi
-			.fn<() => Response>()
+		const handler = mock<() => Response>()
 			.mockReturnValueOnce(HttpResponse.text("boom", { status: 503 }))
 			.mockReturnValueOnce(HttpResponse.text("boom", { status: 503 }))
 			.mockReturnValueOnce(HttpResponse.json({ ok: true }));
@@ -100,7 +99,7 @@ describe("createHttpClient", () => {
 	});
 
 	it("does not retry when retry: 1 is configured", async () => {
-		const handler = vi.fn(() => HttpResponse.text("boom", { status: 503 }));
+		const handler = mock(() => HttpResponse.text("boom", { status: 503 }));
 		server.use(http.get(`${BASE_URL}/v1/flaky`, handler));
 		const client = createHttpClient({ baseUrl: BASE_URL, retry: 1 });
 

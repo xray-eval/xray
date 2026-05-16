@@ -20,7 +20,7 @@ A **boundary** is any value entering the program from outside the bytes we shipp
 | Files / JSON we read at runtime          | **Yes** |
 | Browser inputs handed to the API         | **Yes** (client-side) |
 | Return values from our own typed code    | No — the type is the proof |
-| `import.meta.env.*` at Vite build time   | No — frozen at build |
+| Bun build-time env (`Bun.env` at bundle time) | No — frozen at build |
 
 If you're inside a slice consuming a typed value produced by another slice in this repo, the boundary was already crossed. Don't double-validate.
 

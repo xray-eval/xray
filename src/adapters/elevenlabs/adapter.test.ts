@@ -1,5 +1,4 @@
 import { HttpResponse, http } from "msw";
-import { describe, expect, it, vi } from "vitest";
 
 import { HttpRequestFailedError, HttpResponseShapeError } from "@/http/errors.ts";
 import { server } from "@/test-server.ts";
@@ -18,6 +17,7 @@ import {
 	makeElevenLabsWorkflowEdge,
 	makeElevenLabsWorkflowNode,
 } from "./test-utils.ts";
+import { describe, expect, it, mock } from "bun:test";
 
 const API_KEY = "test-key";
 const BASE_URL = "https://api.elevenlabs.io";
@@ -33,7 +33,7 @@ describe("createElevenLabsAdapter", () => {
 
 	describe("listAgents", () => {
 		it("calls GET /v1/convai/agents with the xi-api-key header", async () => {
-			const seen = vi.fn();
+			const seen = mock();
 			server.use(
 				http.get(`${BASE_URL}/v1/convai/agents`, ({ request }) => {
 					seen(request.headers.get("xi-api-key"));
@@ -43,7 +43,7 @@ describe("createElevenLabsAdapter", () => {
 
 			await makeAdapter().listAgents();
 
-			expect(seen).toHaveBeenCalledOnce();
+			expect(seen).toHaveBeenCalledTimes(1);
 			expect(seen).toHaveBeenCalledWith(API_KEY);
 		});
 
@@ -93,7 +93,7 @@ describe("createElevenLabsAdapter", () => {
 
 	describe("getWorkflow", () => {
 		it("calls GET /v1/convai/agents/{id} and maps nodes/edges", async () => {
-			const seen = vi.fn();
+			const seen = mock();
 			server.use(
 				http.get(`${BASE_URL}/v1/convai/agents/agent_1`, ({ request }) => {
 					seen(request.url);
@@ -127,7 +127,7 @@ describe("createElevenLabsAdapter", () => {
 
 			const workflow = await makeAdapter().getWorkflow("agent_1");
 
-			expect(seen).toHaveBeenCalledOnce();
+			expect(seen).toHaveBeenCalledTimes(1);
 			expect(workflow).toEqual({
 				agentId: "agent_1",
 				nodes: [
@@ -182,7 +182,7 @@ describe("createElevenLabsAdapter", () => {
 
 	describe("listConversations", () => {
 		it("calls GET /v1/convai/conversations?agent_id=... and maps to ConversationMeta[]", async () => {
-			const seen = vi.fn();
+			const seen = mock();
 			server.use(
 				http.get(`${BASE_URL}/v1/convai/conversations`, ({ request }) => {
 					seen(new URL(request.url).searchParams.get("agent_id"));
@@ -215,7 +215,7 @@ describe("createElevenLabsAdapter", () => {
 		});
 
 		it("url-encodes the agent id query parameter", async () => {
-			const seen = vi.fn();
+			const seen = mock();
 			server.use(
 				http.get(`${BASE_URL}/v1/convai/conversations`, ({ request }) => {
 					seen(new URL(request.url).search);

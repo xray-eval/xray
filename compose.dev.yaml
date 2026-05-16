@@ -1,53 +1,31 @@
-# Development compose — Vite (client) + Bun (server) as two containers with
-# host source bind-mounted. HMR on both sides survives file saves; the Hono
-# event stream doesn't drop when an adapter file changes.
+# Development compose — single Bun container serving the React SPA (via Bun's
+# HTML bundler) and the Hono API on :8080. `bun --hot` rebuilds the bundle on
+# file change and reloads the server when src/server/* changes.
 #
-# `pnpm dev` from package.json wraps this. The dev images bake pnpm (and bun,
-# for the server) at build time as root so the running container can drop to
-# the host user without needing privileges to `corepack enable` at runtime.
+# `pnpm dev` wraps this. The dev image bakes pnpm and bun at build time as root
+# so the running container can drop to the host user without needing
+# privileges to `corepack enable` at runtime.
 
 services:
-  client:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev.client
-      args:
-        UID: "${UID:-1000}"
-        GID: "${GID:-1000}"
-    container_name: xray-dev-client
-    # Run as the host user so anything pnpm writes into the bind-mounted repo
-    # is owned by the developer, not root. A compromised dev dep can no longer
-    # rewrite .git/hooks or stage commits via root-write to /app.
-    user: "${UID:-1000}:${GID:-1000}"
-    working_dir: /app
-    # HOME/PNPM_HOME point at writable paths because the host UID has no
-    # /etc/passwd entry inside the container, so $HOME would otherwise be `/`.
-    environment:
-      - HOME=/tmp
-      - PNPM_HOME=/tmp/pnpm
-      - VITE_API_PROXY=http://server:8080
-    command: sh -c "pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
-    volumes:
-      - ./:/app
-      - dev_client_node_modules:/app/node_modules
-    ports:
-      - "5173:5173"
-    depends_on:
-      - server
-
-  server:
+  app:
     build:
       context: .
       dockerfile: Dockerfile.dev.server
       args:
         UID: "${UID:-1000}"
         GID: "${GID:-1000}"
-    container_name: xray-dev-server
+    container_name: xray-dev
+    # Run as the host user so anything pnpm writes into the bind-mounted repo
+    # is owned by the developer, not root. A compromised dev dep can no longer
+    # rewrite .git/hooks or stage commits via root-write to /app.
     user: "${UID:-1000}:${GID:-1000}"
     working_dir: /app
     # `bun install` would trip the `only-allow pnpm` preinstall guard. Bun runs
-    # the server (`bun --hot src/server/server.ts`), but pnpm owns dep resolution
+    # the server (`bun --hot src/server/main.ts`), but pnpm owns dep resolution
     # so the lockfile stays single-source-of-truth.
+    #
+    # HOME/PNPM_HOME point at writable paths because the host UID has no
+    # /etc/passwd entry inside the container, so $HOME would otherwise be `/`.
     environment:
       - HOME=/tmp
       - PNPM_HOME=/tmp/pnpm
@@ -55,13 +33,12 @@ services:
       - PORT=8080
     env_file:
       - .env
-    command: sh -c "pnpm install --frozen-lockfile && bun --hot src/server/server.ts"
+    command: sh -c "pnpm install --frozen-lockfile && bun --hot src/server/main.ts"
     volumes:
       - ./:/app
-      - dev_server_node_modules:/app/node_modules
+      - dev_node_modules:/app/node_modules
     ports:
       - "8080:8080"
 
 volumes:
-  dev_client_node_modules:
-  dev_server_node_modules:
+  dev_node_modules:

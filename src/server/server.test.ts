@@ -1,6 +1,5 @@
-import { describe, expect, it } from "vitest";
-
 import { app } from "./server.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("server composition", () => {
 	it("exposes the healthz router at /healthz", async () => {
