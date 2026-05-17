@@ -260,12 +260,10 @@ async function handleUserAudioCommit(
 	ws.data.transcriptAccumulator = "";
 	ws.data.lastTurnStartedAtMs = Date.now();
 	up.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-	up.send(
-		JSON.stringify({
-			type: "response.create",
-			response: { modalities: ["audio", "text"] },
-		}),
-	);
+	// No per-response overrides — `output_modalities` is set once on the
+	// session in `openUpstream`. GA renamed the field from `modalities` to
+	// `output_modalities` and rejects the legacy name with `unknown_parameter`.
+	up.send(JSON.stringify({ type: "response.create" }));
 }
 
 /**
