@@ -111,6 +111,11 @@ const REALTIME_SUPPORTED_INPUT_CONTENT_TYPES: ReadonlySet<string> = new Set(["au
 
 interface PerSocketState {
 	upstream: WebSocket | null;
+	/** Resolves once OpenAI's `session.updated` fires — `handleUserAudio*`
+	 *  awaits this so audio frames that arrive before the upstream is
+	 *  configured aren't silently dropped (the bug that surfaced as
+	 *  "replay hangs forever and OpenAI shows zero token usage"). */
+	upstreamReady: Promise<void> | null;
 	manifestByIdx: Map<number, TurnManifestEntry>;
 	awaitingTurnIdx: number | null;
 	transcriptAccumulator: string;
@@ -125,6 +130,7 @@ interface PerSocketState {
 function freshState(): PerSocketState {
 	return {
 		upstream: null,
+		upstreamReady: null,
 		manifestByIdx: new Map(),
 		awaitingTurnIdx: null,
 		transcriptAccumulator: "",
@@ -183,14 +189,8 @@ async function handleClientFrame(
 ): Promise<void> {
 	await match(frame)
 		.with({ type: "session.start" }, (f) => handleSessionStart(ws, f))
-		.with({ type: "user_audio.append" }, (f) => {
-			handleUserAudioAppend(ws, f);
-			return Promise.resolve();
-		})
-		.with({ type: "user_audio.commit" }, (f) => {
-			handleUserAudioCommit(ws, f);
-			return Promise.resolve();
-		})
+		.with({ type: "user_audio.append" }, (f) => handleUserAudioAppend(ws, f))
+		.with({ type: "user_audio.commit" }, (f) => handleUserAudioCommit(ws, f))
 		.with({ type: "session.end" }, () => {
 			ws.data.upstream?.close(1000, "session.end");
 			ws.close(1000, "session.end");
@@ -231,16 +231,17 @@ async function handleSessionStart(
 	}
 
 	const tools = collectTools(frame.turns);
-	const upstream = openUpstream(ws, tools);
+	const { upstream, ready } = openUpstream(ws, tools);
 	ws.data.upstream = upstream;
+	ws.data.upstreamReady = ready;
 }
 
-function handleUserAudioAppend(
+async function handleUserAudioAppend(
 	ws: ServerWebSocket<PerSocketState>,
 	frame: Extract<ClientFrame, { type: "user_audio.append" }>,
-): void {
-	const up = ws.data.upstream;
-	if (up === null || up.readyState !== WebSocket.OPEN) return;
+): Promise<void> {
+	const up = await waitForUpstream(ws);
+	if (up === null) return;
 	up.send(
 		JSON.stringify({
 			type: "input_audio_buffer.append",
@@ -249,12 +250,12 @@ function handleUserAudioAppend(
 	);
 }
 
-function handleUserAudioCommit(
+async function handleUserAudioCommit(
 	ws: ServerWebSocket<PerSocketState>,
 	frame: Extract<ClientFrame, { type: "user_audio.commit" }>,
-): void {
-	const up = ws.data.upstream;
-	if (up === null || up.readyState !== WebSocket.OPEN) return;
+): Promise<void> {
+	const up = await waitForUpstream(ws);
+	if (up === null) return;
 	ws.data.awaitingTurnIdx = frame.turnIdx;
 	ws.data.transcriptAccumulator = "";
 	ws.data.lastTurnStartedAtMs = Date.now();
@@ -265,6 +266,26 @@ function handleUserAudioCommit(
 			response: { modalities: ["audio", "text"] },
 		}),
 	);
+}
+
+/**
+ * Resolves with the upstream WebSocket once OpenAI's `session.updated` has
+ * fired — guarantees `input_audio_buffer.append` calls land on a configured
+ * upstream. Returns null if the upstream is gone (closed before we could use
+ * it); the caller then no-ops.
+ */
+async function waitForUpstream(ws: ServerWebSocket<PerSocketState>): Promise<WebSocket | null> {
+	const ready = ws.data.upstreamReady;
+	if (ready !== null) {
+		try {
+			await ready;
+		} catch {
+			return null;
+		}
+	}
+	const up = ws.data.upstream;
+	if (up === null || up.readyState !== WebSocket.OPEN) return null;
+	return up;
 }
 
 interface UpstreamTool {
@@ -290,10 +311,17 @@ function collectTools(turns: readonly TurnManifestEntry[]): UpstreamTool[] {
 	return [...byName.values()];
 }
 
+interface OpenedUpstream {
+	readonly upstream: WebSocket;
+	/** Resolves once OpenAI's `session.updated` event fires. Rejects on
+	 *  early-close / error so awaiters fall through cleanly. */
+	readonly ready: Promise<void>;
+}
+
 function openUpstream(
 	ws: ServerWebSocket<PerSocketState>,
 	tools: readonly UpstreamTool[],
-): WebSocket {
+): OpenedUpstream {
 	const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}`;
 	// Bun's WebSocket constructor accepts a `{ headers }` options object that
 	// lib.dom's WebSocket does not. `Reflect.construct` forwards extra args
@@ -304,7 +332,19 @@ function openUpstream(
 		{ headers: { Authorization: `Bearer ${ENV.OPENAI_API_KEY}` } },
 	]);
 
+	let resolveReady: (() => void) | null = null;
+	let rejectReady: ((err: unknown) => void) | null = null;
+	const ready = new Promise<void>((resolve, reject) => {
+		resolveReady = resolve;
+		rejectReady = reject;
+	});
+
 	upstream.addEventListener("open", () => {
+		console.info(`[upstream] connected to OpenAI Realtime (model=${MODEL})`);
+		// Manual turn detection: we control commit + response.create explicitly.
+		// `server_vad` would race against our manual commit for pre-recorded
+		// audio and the response would either never fire or fire on the wrong
+		// turn boundary.
 		upstream.send(
 			JSON.stringify({
 				type: "session.update",
@@ -314,14 +354,9 @@ function openUpstream(
 					input_audio_format: "pcm16",
 					output_audio_format: "pcm16",
 					instructions: SYSTEM_PROMPT,
-					turn_detection: {
-						type: "server_vad",
-						threshold: 0.5,
-						prefix_padding_ms: 300,
-						silence_duration_ms: 200,
-					},
+					turn_detection: null,
 					tools,
-					tool_choice: "auto",
+					tool_choice: tools.length > 0 ? "auto" : "none",
 				},
 			}),
 		);
@@ -336,24 +371,58 @@ function openUpstream(
 		} catch {
 			return;
 		}
+		const evtType =
+			json !== null && typeof json === "object" && "type" in json && typeof json.type === "string"
+				? json.type
+				: null;
+		if (evtType === "session.updated" && resolveReady !== null) {
+			console.info(`[upstream] session ready`);
+			resolveReady();
+			resolveReady = null;
+			rejectReady = null;
+			return;
+		}
+		if (evtType === "error") {
+			console.error(`[upstream] error event:`, json);
+		}
 		handleUpstreamEvent(ws, upstream, json);
 	});
 
 	upstream.addEventListener("close", (event) => {
+		const reason = event.reason || "(no reason)";
+		console.error(
+			`[upstream] closed code=${event.code} reason=${reason} wasClean=${event.wasClean}`,
+		);
+		if (rejectReady !== null) {
+			rejectReady(new Error(`upstream closed before session.updated (${event.code})`));
+			resolveReady = null;
+			rejectReady = null;
+		}
 		if (ws.readyState === WebSocket.OPEN) {
-			sendError(ws, "upstream_closed", `OpenAI Realtime closed (code=${event.code})`);
+			sendError(
+				ws,
+				"upstream_closed",
+				`OpenAI Realtime closed (code=${event.code} reason=${reason}). Common causes: ` +
+					`invalid OPENAI_API_KEY, no Realtime access on this org, or model "${MODEL}" not available.`,
+			);
 			ws.close(1011, "upstream_closed");
 		}
 	});
 
-	upstream.addEventListener("error", () => {
+	upstream.addEventListener("error", (event) => {
+		console.error(`[upstream] error event`, event);
+		if (rejectReady !== null) {
+			rejectReady(new Error("upstream error before session.updated"));
+			resolveReady = null;
+			rejectReady = null;
+		}
 		if (ws.readyState === WebSocket.OPEN) {
-			sendError(ws, "upstream_error", "OpenAI Realtime connection error");
+			sendError(ws, "upstream_error", "OpenAI Realtime connection error — check OPENAI_API_KEY");
 			ws.close(1011, "upstream_error");
 		}
 	});
 
-	return upstream;
+	return { upstream, ready };
 }
 
 /**
