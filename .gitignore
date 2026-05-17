@@ -31,3 +31,9 @@ Thumbs.db
 !.vscode/settings.json
 !.vscode/extensions.json
 .idea/
+
+# Claude Code subagent worktrees — git worktrees the Agent tool spins up
+# under `isolation: "worktree"`. Real working trees with their own checkouts;
+# they shouldn't pollute git status here OR trip biome's config discovery
+# (their full biome.json copy makes biome see two competing root configs).
+.claude/worktrees/

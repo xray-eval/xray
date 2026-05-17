@@ -33,12 +33,13 @@ The training pressure on LLMs leans toward over-commenting (the model is rewarde
 
 ## 2 · Test the comment before you write it
 
-Two questions, in order. If both answers don't pass, delete the comment.
+**Default to delete.** A comment earns its place only if all three checks pass; if any one fails, drop it.
 
-1. **Does the comment say something the code doesn't already say?** If a competent reader can derive the comment's content from the line below it, the comment is noise. (`// returns the user's id` above `return user.id;` — the function is one line of self-evident code.)
+1. **Does the comment say something the code doesn't already say?** If a competent reader can derive the comment's content from the line below it, the comment is noise. A precisely-named function, a typed signature, an explicit error message, or a self-evident variable all count as "the code already says this." (`// returns the user's id` above `return user.id;` — already obvious.)
 2. **Will the comment still be true after a refactor that changes the line below it?** If the comment hard-codes a *what* (a return value, a status code, a method name), it rots the moment that line changes. If the comment encodes a *why* (the constraint that forced this line to exist), it survives — because the constraint outlives the implementation.
+3. **If I deleted this comment, would a future reader make a *concrete wrong decision* — not just be mildly less informed?** A wrong decision means: introducing a bug, undoing a safety mechanism, picking a worse alternative they would have ruled out with the comment, "fixing" something that wasn't broken. Mild loss of context is not enough. Vague benefit ("helps the next dev") is the trap; demand a specific failure the comment prevents.
 
-A useful sniff test: **if I deleted this comment, would a future reader make a wrong decision?** If yes, keep it. If no, delete it.
+If you find yourself writing "this prevents a future agent from getting it wrong" without being able to name the concrete bad fix, you're rationalizing. **Delete.** The training pressure pushes toward keeping comments; you have to push back.
 
 ---
 

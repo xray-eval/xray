@@ -11,7 +11,15 @@
 // docs in CLAUDE.md point at this endpoint), so the wire contract gets
 // exercised end-to-end rather than poked at via the store directly.
 
-const BASE = process.env.XRAY_BASE_URL ?? "http://localhost:8080";
+import * as v from "valibot";
+
+// Env codec — parse once at startup per boundary-validation.md, not as
+// scattered untyped index lookups.
+const EnvSchema = v.object({
+	XRAY_BASE_URL: v.optional(v.string()),
+});
+const ENV = v.parse(EnvSchema, process.env);
+const BASE = ENV.XRAY_BASE_URL ?? "http://localhost:8080";
 
 type Role = "user" | "agent" | "tool" | "system";
 
@@ -238,7 +246,7 @@ const SESSIONS: SeedSession[] = [
 
 interface PostOptions {
 	sessionId: string;
-	body: Record<string, unknown>;
+	body: { type: string } & Record<string, unknown>;
 }
 
 async function postEvent({ sessionId, body }: PostOptions): Promise<void> {
@@ -307,7 +315,7 @@ async function seedSession(session: SeedSession): Promise<void> {
 }
 
 async function main(): Promise<void> {
-	console.log(`Seeding ${SESSIONS.length} sessions to ${BASE}`);
+	console.info(`Seeding ${SESSIONS.length} sessions to ${BASE}`);
 	// Quick reachability check so the failure mode is obvious if the dev
 	// server isn't running, instead of N opaque fetch errors.
 	try {
@@ -321,9 +329,9 @@ async function main(): Promise<void> {
 
 	for (const session of SESSIONS) {
 		await seedSession(session);
-		console.log(`  + ${session.id} (${session.turns.length} turns)`);
+		console.info(`  + ${session.id} (${session.turns.length} turns)`);
 	}
-	console.log("Done. Open http://localhost:8080 to see them.");
+	console.info("Done. Open http://localhost:8080 to see them.");
 }
 
 await main();

@@ -6,8 +6,10 @@
 		"includes": [
 			"src/**/*",
 			"biome-plugins/**/*",
+			"scripts/**/*",
 			"*.{ts,tsx,js,mjs,cjs,json,jsonc}",
-			"!src/server/store/migrations"
+			"!src/server/store/migrations",
+			"!.claude/worktrees"
 		]
 	},
 	"formatter": {
