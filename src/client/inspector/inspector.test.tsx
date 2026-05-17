@@ -11,7 +11,9 @@ import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
-const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
+const { cleanup, fireEvent, render, screen, waitFor, within } = await import(
+	"@testing-library/react"
+);
 const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
@@ -265,5 +267,44 @@ describe("Inspector — back navigation", () => {
 		const back = await screen.findByRole("link", { name: /all sessions/i });
 		fireEvent.click(back);
 		await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+	});
+});
+
+describe("Inspector — replay", () => {
+	it("does not render the Replay button while the conversation is loading", async () => {
+		const never = new Promise<Response>(() => {
+			// noop: intentionally never resolves to keep the query in `pending`.
+		});
+		server.use(http.get(CONVO_URL, () => never));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+		await screen.findByLabelText(/transcript/i);
+		expect(screen.queryByRole("button", { name: /^replay session/i })).toBeNull();
+	});
+
+	it("does not render the Replay button when the conversation fails to load", async () => {
+		server.use(
+			http.get(CONVO_URL, () =>
+				HttpResponse.json({ error: "session_not_found", sessionId: "sess-1" }, { status: 404 }),
+			),
+		);
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+		await screen.findByText(/session not found/i);
+		expect(screen.queryByRole("button", { name: /^replay session/i })).toBeNull();
+	});
+
+	it("opens the replay modal seeded with the current session id when clicked", async () => {
+		server.use(
+			http.get(CONVO_URL, () =>
+				HttpResponse.json(makeConversation({ id: "sess-1", agentId: "agent-1" })),
+			),
+		);
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+		const replay = await screen.findByRole("button", { name: /^replay session agent-1/i });
+		fireEvent.click(replay);
+		const dialog = await screen.findByRole("dialog");
+		expect(within(dialog).getByText("sess-1")).toBeTruthy();
 	});
 });

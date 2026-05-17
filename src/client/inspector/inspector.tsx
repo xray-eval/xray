@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { getRouteApi } from "@tanstack/react-router";
-import { AlertCircle, ChevronRight, Zap, ZapOff } from "lucide-react";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { AlertCircle, ChevronRight, Play, Zap, ZapOff } from "lucide-react";
+import { useState } from "react";
 import { match } from "ts-pattern";
 
 import type {
@@ -23,6 +24,7 @@ import {
 import { Separator } from "../components/ui/separator.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
 import { formatAbsolute, formatDuration } from "../format.ts";
+import { ReplayModal } from "../replays/replay-modal.tsx";
 import { BackToSessionsLink } from "../router/back-to-sessions-link.tsx";
 import { sourceBadgeVariant } from "../source-badge.ts";
 import { ConversationLoadError } from "./errors.ts";
@@ -33,30 +35,55 @@ type ConversationQueryKey = readonly ["conversation", { sessionId: string }];
 
 export function Inspector() {
 	const { sessionId } = route.useParams();
+	const navigate = useNavigate();
+	const [replayOpen, setReplayOpen] = useState(false);
 	const query = useQuery<Conversation, Error, Conversation, ConversationQueryKey>({
 		queryKey: ["conversation", { sessionId }] as const,
 		queryFn: ({ signal }) => fetchConversation({ sessionId, signal }),
 	});
 
 	return (
-		<section
-			aria-label="Transcript"
-			aria-busy={query.isPending}
-			aria-live="polite"
-			className="space-y-6"
-		>
-			<header className="flex items-baseline justify-between gap-4">
-				<BackToSessionsLink />
-			</header>
+		<>
+			<section
+				aria-label="Transcript"
+				aria-busy={query.isPending}
+				aria-live="polite"
+				className="space-y-6"
+			>
+				<header className="flex items-baseline justify-between gap-4">
+					<BackToSessionsLink />
+					{query.status === "success" && (
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => setReplayOpen(true)}
+							aria-label={`Replay session ${query.data.agentId}`}
+						>
+							<Play />
+							Replay
+						</Button>
+					)}
+				</header>
 
-			{match(query)
-				.with({ status: "pending" }, () => <LoadingState />)
-				.with({ status: "error" }, (q) => (
-					<ErrorState error={q.error} onRetry={() => query.refetch()} />
-				))
-				.with({ status: "success" }, (q) => <Transcript conversation={q.data} />)
-				.exhaustive()}
-		</section>
+				{match(query)
+					.with({ status: "pending" }, () => <LoadingState />)
+					.with({ status: "error" }, (q) => (
+						<ErrorState error={q.error} onRetry={() => query.refetch()} />
+					))
+					.with({ status: "success" }, (q) => <Transcript conversation={q.data} />)
+					.exhaustive()}
+			</section>
+			{replayOpen && (
+				<ReplayModal
+					sourceSessionId={sessionId}
+					onClose={() => setReplayOpen(false)}
+					onStarted={(run) => {
+						setReplayOpen(false);
+						void navigate({ to: "/replays/$replayId", params: { replayId: run.id } });
+					}}
+				/>
+			)}
+		</>
 	);
 }
 
