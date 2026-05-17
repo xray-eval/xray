@@ -65,6 +65,7 @@ export function makeReplayRunInput(overrides: Partial<ReplayRunInput> = {}): Rep
 		sourceSessionId: "sess-1",
 		targetSessionId: `target-${replayCounter}`,
 		status: "pending",
+		mode: "text",
 		webhookUrl: "https://example.test/webhook",
 		progressCompleted: 0,
 		progressTotal: 0,

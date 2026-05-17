@@ -25,10 +25,14 @@ export async function synthesizeAndUpload(
 	const { apiKey, xrayBase, sessionId, turnIdx, text, ttsModel, voice } = params;
 	if (text.trim().length === 0) return { ok: false, reason: "empty text" };
 
+	// WAV (PCM16 24 kHz mono) is the only TTS format OpenAI Realtime can ingest
+	// directly. Browsers play WAV fine, so the text-only inspector view still
+	// works — the only cost is larger files vs opus, which is a non-issue for
+	// short demo turns. Switching here unblocks v2v replay end-to-end.
 	const ttsRes = await fetch("https://api.openai.com/v1/audio/speech", {
 		method: "POST",
 		headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-		body: JSON.stringify({ model: ttsModel, voice, input: text, response_format: "opus" }),
+		body: JSON.stringify({ model: ttsModel, voice, input: text, response_format: "wav" }),
 	});
 	if (!ttsRes.ok) {
 		return { ok: false, reason: `OpenAI TTS ${ttsRes.status}` };
@@ -38,7 +42,7 @@ export async function synthesizeAndUpload(
 	const uploadUrl = `${xrayBase}/v1/sessions/${encodeURIComponent(sessionId)}/turns/${turnIdx}/audio`;
 	const uploadRes = await fetch(uploadUrl, {
 		method: "POST",
-		headers: { "content-type": "audio/ogg" },
+		headers: { "content-type": "audio/wav" },
 		body: audioBytes,
 	});
 	if (!uploadRes.ok) {

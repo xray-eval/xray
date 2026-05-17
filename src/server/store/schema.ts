@@ -3,7 +3,7 @@ import { check, index, integer, sqliteTable, text, unique } from "drizzle-orm/sq
 
 import type { AgentId, ProviderId, Role } from "@/adapters/types.ts";
 
-import type { ReplayRunStatus, SessionSource } from "./types.ts";
+import type { ReplayRunMode, ReplayRunStatus, SessionSource } from "./types.ts";
 
 // Each `.$type<...>()` narrows the column's TypeScript type without affecting
 // the stored SQL type — keeps the row shapes branded with the same identifiers
@@ -94,6 +94,9 @@ export const replayRuns = sqliteTable(
 			.references(() => sessions.id, { onDelete: "cascade" }),
 		targetSessionId: text("target_session_id").notNull().unique(),
 		status: text("status").$type<ReplayRunStatus>().notNull(),
+		// Default 'text' so existing rows pre-dating realtime replay get the
+		// right value on migration without a hand-written backfill.
+		mode: text("mode").$type<ReplayRunMode>().notNull().default("text"),
 		webhookUrl: text("webhook_url").notNull(),
 		progressCompleted: integer("progress_completed").notNull().default(0),
 		progressTotal: integer("progress_total").notNull(),
@@ -108,5 +111,9 @@ export const replayRuns = sqliteTable(
 			"replay_runs_status_ck",
 			sql`${t.status} IN ('pending', 'running', 'completed', 'failed')`,
 		),
+		// No CHECK on `mode` — would force a table rebuild on every migration that
+		// touches replay_runs. TS `$type<ReplayRunMode>()` + Valibot picklist at
+		// the boundary enforce the value set; nothing inside our process writes a
+		// raw string here.
 	],
 );

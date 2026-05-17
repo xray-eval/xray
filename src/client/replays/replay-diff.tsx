@@ -6,6 +6,7 @@ import type { ReplayRunResponse } from "@/server/replays/replays.types.ts";
 import type { Conversation, ConversationTurn } from "@/server/sessions/sessions.types.ts";
 
 import { fetchConversation } from "../api/conversation-api.ts";
+import { TurnAudio } from "../audio/turn-audio.tsx";
 import { Badge } from "../components/ui/badge.tsx";
 import {
 	Card,
@@ -77,6 +78,7 @@ function DiffBody({ source, target }: { source: Conversation; target: Conversati
 						{divergences.map(({ pair, divergence }) => (
 							<li key={pair.idx} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 								<DiffCell
+									sessionId={source.id}
 									turn={pair.source}
 									other={pair.target}
 									annotatedTools={divergence.sourceToolCalls}
@@ -84,6 +86,7 @@ function DiffBody({ source, target }: { source: Conversation; target: Conversati
 									side="source"
 								/>
 								<DiffCell
+									sessionId={target.id}
 									turn={pair.target}
 									other={pair.source}
 									annotatedTools={divergence.targetToolCalls}
@@ -131,6 +134,7 @@ function DiffSummaryCard({
 }
 
 interface DiffCellProps {
+	sessionId: string;
 	turn: ConversationTurn | undefined;
 	other: ConversationTurn | undefined;
 	annotatedTools: AnnotatedToolCall[];
@@ -138,7 +142,7 @@ interface DiffCellProps {
 	side: "source" | "target";
 }
 
-function DiffCell({ turn, other, annotatedTools, divergence, side }: DiffCellProps) {
+function DiffCell({ sessionId, turn, other, annotatedTools, divergence, side }: DiffCellProps) {
 	if (turn === undefined) {
 		return (
 			<Card className="border-dashed text-muted-foreground">
@@ -192,6 +196,7 @@ function DiffCell({ turn, other, annotatedTools, divergence, side }: DiffCellPro
 				<CardTitle className="text-base font-medium whitespace-pre-wrap break-words">
 					{turn.text}
 				</CardTitle>
+				{turn.audioPath !== null && <TurnAudio sessionId={sessionId} turn={turn} />}
 			</CardHeader>
 			{annotatedTools.length > 0 && (
 				<CardContent>

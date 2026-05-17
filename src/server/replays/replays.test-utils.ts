@@ -26,6 +26,7 @@ export function makeReplayRunResponse(
 		sourceSessionId: "sess-1",
 		targetSessionId: "target-1",
 		status: "pending",
+		mode: "text",
 		progress: { completed: 0, total: 0 },
 		startedAt: "2026-05-16T12:00:00.000Z",
 		finishedAt: null,

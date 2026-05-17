@@ -9,8 +9,8 @@ import type {
 	ConversationTurn,
 } from "@/server/sessions/sessions.types.ts";
 
-import { turnAudioUrl } from "../api/audio-api.ts";
 import { fetchConversation } from "../api/conversation-api.ts";
+import { TurnAudio } from "../audio/turn-audio.tsx";
 import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
 import {
@@ -144,20 +144,6 @@ function TurnCard({ sessionId, turn }: { sessionId: string; turn: ConversationTu
 				</CardContent>
 			)}
 		</Card>
-	);
-}
-
-function TurnAudio({ sessionId, turn }: { sessionId: string; turn: ConversationTurn }) {
-	// `preload="none"` keeps bytes off the wire until the user clicks play —
-	// otherwise a 50-turn transcript would fire one HEAD per element on mount.
-	return (
-		<audio
-			controls
-			preload="none"
-			src={turnAudioUrl(sessionId, turn.idx)}
-			aria-label={`Audio for ${turn.role} turn ${turn.idx}`}
-			className="mt-2 w-full max-w-sm"
-		/>
 	);
 }
 

@@ -104,6 +104,81 @@ describe("ReplayView — completed diff", () => {
 		expect(screen.getByText(/2 aligned turns/i)).toBeTruthy();
 	});
 
+	it("renders an audio element for each turn that has audioPath", async () => {
+		server.use(
+			http.get(REPLAY_URL, () =>
+				HttpResponse.json(
+					makeReplayRunResponse({
+						id: "r-1",
+						sourceSessionId: "sess-source",
+						targetSessionId: "sess-target",
+						status: "completed",
+						mode: "realtime",
+					}),
+				),
+			),
+			http.get(SOURCE_URL, () =>
+				HttpResponse.json(
+					makeConversation({
+						id: "sess-source",
+						turns: [
+							makeConversationTurn({
+								id: "t-0",
+								idx: 0,
+								role: "user",
+								text: "hi",
+								audioPath: "sess-source/0.wav",
+							}),
+							makeConversationTurn({
+								id: "t-1",
+								idx: 1,
+								role: "agent",
+								text: "hi back",
+								audioPath: "sess-source/1.wav",
+							}),
+						],
+					}),
+				),
+			),
+			http.get(TARGET_URL, () =>
+				HttpResponse.json(
+					makeConversation({
+						id: "sess-target",
+						turns: [
+							makeConversationTurn({
+								id: "t-0",
+								idx: 0,
+								role: "user",
+								text: "hi",
+								audioPath: "sess-target/0.wav",
+							}),
+							makeConversationTurn({
+								id: "t-1",
+								idx: 1,
+								role: "agent",
+								text: "hi there",
+								audioPath: "sess-target/1.wav",
+							}),
+						],
+					}),
+				),
+			),
+		);
+		const { ui } = renderWithRouter({ initialEntries: ["/replays/r-1"] });
+		render(ui);
+		await waitFor(() => expect(screen.getByText("hi back")).toBeTruthy());
+
+		// One audio per turn per side → 4 elements. The src URLs disambiguate
+		// source vs target so the player on each side fetches the right bytes.
+		const players = screen.getAllByLabelText(/^Audio for/i);
+		expect(players.length).toBe(4);
+		const sources = players.map((p) => p.getAttribute("src") ?? "");
+		expect(sources.some((s) => s.includes("/sessions/sess-source/turns/0/audio"))).toBe(true);
+		expect(sources.some((s) => s.includes("/sessions/sess-source/turns/1/audio"))).toBe(true);
+		expect(sources.some((s) => s.includes("/sessions/sess-target/turns/0/audio"))).toBe(true);
+		expect(sources.some((s) => s.includes("/sessions/sess-target/turns/1/audio"))).toBe(true);
+	});
+
 	it("shows 'no turn at this position' when one side is missing", async () => {
 		server.use(
 			http.get(REPLAY_URL, () =>

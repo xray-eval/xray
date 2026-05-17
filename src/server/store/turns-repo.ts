@@ -63,3 +63,13 @@ export function setTurnAudioPath(
 		.all();
 	return rows.length > 0;
 }
+
+/** Delete one turn by `(sessionId, idx)`. The `tool_calls.turn_id` FK is
+ *  `ON DELETE CASCADE`, so attached tool calls go with it. No-op if no
+ *  row matches — callers use this for rollback paths where the row may
+ *  already be gone. */
+export function deleteTurnByIdx(db: StoreDb, sessionId: string, idx: number): void {
+	db.delete(turns)
+		.where(and(eq(turns.sessionId, sessionId), eq(turns.idx, idx)))
+		.run();
+}

@@ -7,8 +7,8 @@ import {
 	RoleSchema,
 	SessionIdSchema,
 } from "@/server/ingest/ingest.types.ts";
-import type { ReplayRunStatus } from "@/server/store/types.ts";
-import { REPLAY_RUN_STATUSES } from "@/server/store/types.ts";
+import type { ReplayRunMode, ReplayRunStatus } from "@/server/store/types.ts";
+import { REPLAY_RUN_MODES, REPLAY_RUN_STATUSES } from "@/server/store/types.ts";
 
 // Wire-shared schemas for the agent-replay surface.
 // - Request body for `POST /v1/replays` and response for `GET /v1/replays/:id`.
@@ -22,6 +22,9 @@ const MAX_HISTORY = 1024;
 
 export const ReplayStatusSchema = v.picklist(REPLAY_RUN_STATUSES);
 export type ReplayStatus = ReplayRunStatus;
+
+export const ReplayModeSchema = v.picklist(REPLAY_RUN_MODES);
+export type ReplayMode = ReplayRunMode;
 
 /**
  * Body of `POST /v1/replays`. The webhook URL must be parseable as a URL and
@@ -60,6 +63,7 @@ export const ReplayRunResponseSchema = v.object({
 	sourceSessionId: v.string(),
 	targetSessionId: v.string(),
 	status: ReplayStatusSchema,
+	mode: ReplayModeSchema,
 	progress: v.object({
 		completed: v.number(),
 		total: v.number(),

@@ -11,6 +11,14 @@ export const REPLAY_RUN_STATUSES = ["pending", "running", "completed", "failed"]
 export type ReplayRunStatus = (typeof REPLAY_RUN_STATUSES)[number];
 
 /**
+ * Replay run flavors. `text` is the HTTP-webhook flow (text → text per turn);
+ * `realtime` is the WebSocket V2V flow (recorded user audio → agent audio
+ * + transcript per turn). Same `replay_runs` row shape, different worker.
+ */
+export const REPLAY_RUN_MODES = ["text", "realtime"] as const;
+export type ReplayRunMode = (typeof REPLAY_RUN_MODES)[number];
+
+/**
  * A unified session record. Covers provider-adapter polls (source='adapter',
  * provider set) and HTTP ingest pushes (source='ingest', provider null).
  *

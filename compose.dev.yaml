@@ -108,6 +108,42 @@ services:
       retries: 6
       start_period: 10s
 
+  # Sibling of agent-webhook for the V2V (realtime) replay path. WebSocket
+  # endpoint at ws://agent-webhook-realtime:4001/ — xray's realtime replay
+  # engine opens a WS to this, the script bridges to OpenAI Realtime.
+  agent-webhook-realtime:
+    profiles: ["webhook"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev.server
+      args:
+        UID: "${UID:-1000}"
+        GID: "${GID:-1000}"
+    container_name: xray-agent-webhook-realtime
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      - HOME=/tmp
+      - PNPM_HOME=/tmp/pnpm
+      - REALTIME_PORT=4001
+    env_file:
+      - .env
+    command: bun scripts/agent-webhook-realtime.ts
+    volumes:
+      - ./:/app
+      - dev_node_modules:/app/node_modules
+    # No `ports:` mapping — same reasoning as agent-webhook above. xray-dev
+    # reaches us via ws://agent-webhook-realtime:4001/.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4001/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
 volumes:
   dev_node_modules:
   dev_data:

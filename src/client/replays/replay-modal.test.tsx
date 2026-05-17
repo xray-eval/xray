@@ -14,15 +14,17 @@ const { withQueryClient } = await import("../test-utils.tsx");
 afterEach(() => cleanup());
 
 beforeEach(() => {
-	// Wipe the localStorage key between tests so prefill doesn't leak across tests.
+	// Wipe both prefill keys between tests so realtime/text URLs don't leak.
 	try {
 		window.localStorage.removeItem("xray.replay.webhookUrl");
+		window.localStorage.removeItem("xray.replay.realtimeWebhookUrl");
 	} catch {
 		// happy-dom may throw when storage is disabled; test isolation still holds.
 	}
 });
 
 const REPLAYS_URL = "http://localhost/v1/replays";
+const REALTIME_REPLAYS_URL = "http://localhost/v1/replays/realtime";
 
 describe("ReplayModal — render", () => {
 	it("renders with the source session id in the body", () => {
@@ -128,6 +130,57 @@ describe("ReplayModal — submit", () => {
 				"https://persisted.example/wh",
 			),
 		);
+	});
+});
+
+describe("ReplayModal — realtime mode", () => {
+	it("POSTs to /v1/replays/realtime when the realtime mode is picked", async () => {
+		const seen = mock();
+		server.use(
+			http.post(REALTIME_REPLAYS_URL, async ({ request }) => {
+				seen(await request.json());
+				return HttpResponse.json(makeReplayRunResponse({ mode: "realtime" }), { status: 202 });
+			}),
+		);
+		const onStarted = mock();
+		render(
+			withQueryClient(
+				<ReplayModal sourceSessionId="sess-1" onClose={mock()} onStarted={onStarted} />,
+			),
+		);
+		fireEvent.click(screen.getByRole("radio", { name: /realtime/i }));
+		fireEvent.change(screen.getByLabelText(/webhook url/i), {
+			target: { value: "wss://example.test/realtime" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /run replay/i }));
+		await waitFor(() => expect(onStarted).toHaveBeenCalled());
+		expect(seen.mock.calls[0]?.[0]).toEqual({
+			sourceSessionId: "sess-1",
+			webhookUrl: "wss://example.test/realtime",
+		});
+	});
+
+	it("persists the realtime webhook URL under its own storage key", async () => {
+		server.use(
+			http.post(REALTIME_REPLAYS_URL, () =>
+				HttpResponse.json(makeReplayRunResponse({ mode: "realtime" }), { status: 202 }),
+			),
+		);
+		render(
+			withQueryClient(<ReplayModal sourceSessionId="s" onClose={mock()} onStarted={mock()} />),
+		);
+		fireEvent.click(screen.getByRole("radio", { name: /realtime/i }));
+		fireEvent.change(screen.getByLabelText(/webhook url/i), {
+			target: { value: "wss://persisted.example/realtime" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /run replay/i }));
+		await waitFor(() =>
+			expect(window.localStorage.getItem("xray.replay.realtimeWebhookUrl")).toBe(
+				"wss://persisted.example/realtime",
+			),
+		);
+		// Text key untouched.
+		expect(window.localStorage.getItem("xray.replay.webhookUrl")).toBeNull();
 	});
 });
 

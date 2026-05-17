@@ -1,12 +1,23 @@
 // Seed the running xray dev server with fake conversations so the UI has
-// something to render without a real agent loop.
+// something to render without a real agent loop. Three modes are seeded so a
+// developer sees one of each:
+//
+//   * text  — text-only, no audio (default custom-loop shape)
+//   * tts   — text + per-turn TTS audio (requires VOICE=1 + OPENAI_API_KEY,
+//             otherwise the audio step is skipped for these sessions)
+//   * v2v   — text + real per-turn TTS audio for both user and agent turns
+//             so the realtime-replay engine has playable, intelligible audio
+//             to stream end-to-end. Same VOICE=1 + OPENAI_API_KEY requirement
+//             as `tts`; without it the v2v session still renders but its
+//             realtime replay has no audio to forward.
 //
 // Usage:
 //   pnpm dev                          # in one terminal — dev server on :8080
 //   pnpm seed                         # in another — POSTs events through /v1/sessions/:id/events
 //   VOICE=1 OPENAI_API_KEY=sk-... pnpm seed
-//                                     # also synthesizes per-turn audio via OpenAI TTS and
-//                                     # POSTs it to /v1/sessions/:id/turns/:idx/audio
+//                                     # synthesizes per-turn audio via OpenAI TTS for the
+//                                     # `tts` and `v2v` sessions so playback is a real
+//                                     # conversation, not silence.
 //
 // Override target via env: XRAY_BASE_URL=http://otherhost:9000 pnpm seed
 //
@@ -43,6 +54,19 @@ if (VOICE_ENABLED && ENV.OPENAI_API_KEY === undefined) {
 
 type Role = "user" | "agent" | "tool" | "system";
 
+/**
+ * One conversation shape per audio strategy so a developer running `pnpm
+ * seed` always has a working example of each:
+ *
+ *   text — no audio uploaded, ever
+ *   tts  — per-turn TTS audio when VOICE=1 + OPENAI_API_KEY are set
+ *   v2v  — same TTS path as `tts`, but the resulting audio is in the
+ *          format the realtime-replay engine can stream end-to-end (WAV).
+ *          The startup warning flags when VOICE is off so the operator
+ *          isn't surprised that v2v replay has nothing to forward.
+ */
+type SeedMode = "text" | "tts" | "v2v";
+
 interface SeedToolCall {
 	idx: number;
 	name: string;
@@ -65,6 +89,7 @@ interface SeedTurn {
 interface SeedSession {
 	id: string;
 	agentId: string;
+	mode: SeedMode;
 	startedAt: string;
 	durationMs?: number;
 	turns: SeedTurn[];
@@ -80,10 +105,18 @@ function isoAt(baseMs: number, offsetMs: number): string {
 	return new Date(baseMs + offsetMs).toISOString();
 }
 
+// Exactly one session per audio strategy — naming mirrors the `mode` so a
+// developer scanning the list view instantly sees which path each row
+// exercises. Tools, barge-in, and the live (no-`session_ended`) edge case
+// are folded into the three modes' content so the variety stays without
+// multiplying rows.
 const SESSIONS: SeedSession[] = [
 	{
-		id: "seed-pipeline-support",
-		agentId: "support-pipeline",
+		// Text-only: tool-heavy support flow, no audio anywhere. Default
+		// shape for a custom-loop developer who doesn't ship audio.
+		id: "seed-mode-text",
+		agentId: "seed-mode-text",
+		mode: "text",
 		startedAt: isoAt(ANCHOR, 0),
 		durationMs: 42_000,
 		turns: [
@@ -125,9 +158,14 @@ const SESSIONS: SeedSession[] = [
 		],
 	},
 	{
-		id: "seed-voice-bargein",
-		agentId: "concierge-v2v",
-		startedAt: isoAt(ANCHOR, 12 * 60 * 1000),
+		// TTS demo: barge-in scenario. Audio is uploaded for each turn ONLY
+		// when VOICE=1 + OPENAI_API_KEY is set — without that, the row still
+		// renders correctly with the interrupted-turn UI affordances and no
+		// audio players.
+		id: "seed-mode-tts",
+		agentId: "concierge-tts",
+		mode: "tts",
+		startedAt: isoAt(ANCHOR, 20 * 60 * 1000),
 		durationMs: 18_500,
 		turns: [
 			{
@@ -149,7 +187,11 @@ const SESSIONS: SeedSession[] = [
 						idx: 0,
 						name: "get_weather",
 						args: { city: "Paris", when: "tomorrow" },
-						result: { tempC: 22, summary: "partly cloudy", precipitation: 0.05 },
+						result: {
+							tempC: 22,
+							summary: "partly cloudy",
+							precipitation: 0.05,
+						},
 						latencyMs: 310,
 					},
 				],
@@ -170,95 +212,50 @@ const SESSIONS: SeedSession[] = [
 		],
 	},
 	{
-		id: "seed-tools-heavy",
-		agentId: "research-pipeline",
-		startedAt: isoAt(ANCHOR, 28 * 60 * 1000),
-		durationMs: 64_000,
+		// V2V: with VOICE=1 + OPENAI_API_KEY, every turn gets a real TTS WAV
+		// (PCM16 24 kHz mono) — the format OpenAI Realtime accepts as input,
+		// so this seeded session can be driven end-to-end through the realtime
+		// replay engine without re-recording anything.
+		id: "seed-mode-v2v",
+		agentId: "concierge-v2v",
+		mode: "v2v",
+		startedAt: isoAt(ANCHOR, 40 * 60 * 1000),
+		durationMs: 22_000,
 		turns: [
 			{
 				idx: 0,
 				role: "user",
-				text: "Find me three recent papers about retrieval-augmented generation.",
-				offsetMs: 500,
+				text: "Book me a table for two at the bistro tonight at seven.",
+				offsetMs: 400,
 			},
 			{
 				idx: 1,
 				role: "agent",
-				text: "Searching across arXiv and Semantic Scholar.",
-				offsetMs: 2_100,
-				responseLatencyMs: 540,
+				text: "Got it — two people, seven PM. Checking availability now.",
+				offsetMs: 1_700,
+				responseLatencyMs: 720,
 				toolCalls: [
 					{
 						idx: 0,
-						name: "search_arxiv",
-						args: { query: "retrieval augmented generation", limit: 3 },
-						result: {
-							papers: [
-								{ id: "2405.12345", title: "Self-RAG: Learning to Retrieve…" },
-								{ id: "2406.00987", title: "Adaptive RAG with reflection" },
-							],
-						},
-						latencyMs: 1_120,
-					},
-					{
-						idx: 1,
-						name: "search_semantic_scholar",
-						args: { query: "retrieval augmented generation", year_min: 2025 },
-						result: { papers: [{ id: "SS:9928", title: "RAG benchmarks revisited" }] },
-						latencyMs: 980,
+						name: "book_table",
+						args: { party_size: 2, time: "19:00" },
+						result: { confirmed: true, reference: "BIS-9821" },
+						latencyMs: 380,
 					},
 				],
 			},
 			{
 				idx: 2,
 				role: "agent",
-				text: "I found three: Self-RAG, Adaptive RAG with reflection, and RAG benchmarks revisited.",
-				offsetMs: 8_900,
-				responseLatencyMs: 1_320,
+				text: "Confirmed — reference BIS-9821. You'll get an SMS shortly.",
+				offsetMs: 6_200,
+				responseLatencyMs: 480,
 			},
 			{
 				idx: 3,
 				role: "user",
-				text: "Summarize the first one in two sentences.",
-				offsetMs: 14_200,
-			},
-			{
-				idx: 4,
-				role: "agent",
-				text: "Self-RAG trains the model to decide when retrieval is needed and to critique its own retrieved passages. It outperforms vanilla RAG on long-form generation by gating the retrieval step at inference time.",
-				offsetMs: 17_400,
-				responseLatencyMs: 2_100,
-				toolCalls: [
-					{
-						idx: 0,
-						name: "fetch_paper_abstract",
-						args: { id: "2405.12345" },
-						result: { abstract: "Self-RAG trains the model to decide…" },
-						latencyMs: 460,
-					},
-				],
-			},
-		],
-	},
-	{
-		id: "seed-live",
-		agentId: "support-pipeline",
-		startedAt: isoAt(ANCHOR, 55 * 60 * 1000),
-		// No `durationMs` and no `session_ended` — this session renders as
-		// "in progress" in the list view, useful for exercising that branch.
-		turns: [
-			{
-				idx: 0,
-				role: "user",
-				text: "Hey, are you there?",
-				offsetMs: 200,
-			},
-			{
-				idx: 1,
-				role: "agent",
-				text: "Yes, I'm here — how can I help?",
-				offsetMs: 900,
-				responseLatencyMs: 350,
+				text: "Perfect, thanks.",
+				offsetMs: 10_500,
 			},
 		],
 	},
@@ -321,8 +318,8 @@ async function seedSession(session: SeedSession): Promise<void> {
 				},
 			});
 		}
-		if (VOICE_ENABLED && (turn.role === "user" || turn.role === "agent")) {
-			await runVoice(session.id, turn.idx, turn.role, turn.text);
+		if (turn.role === "user" || turn.role === "agent") {
+			await applyAudioForMode(session, turn.idx, turn.role, turn.text);
 		}
 	}
 	if (session.durationMs !== undefined) {
@@ -360,10 +357,35 @@ async function runVoice(
 	}
 }
 
+/**
+ * Decide whether (and how) to upload audio for this turn based on the
+ * session's mode. Both `tts` and `v2v` go through OpenAI TTS — there's no
+ * silent placeholder, because audio that doesn't say the line text is
+ * indistinguishable from no audio at all once you press play.
+ */
+async function applyAudioForMode(
+	session: SeedSession,
+	turnIdx: number,
+	role: "user" | "agent",
+	text: string,
+): Promise<void> {
+	if (session.mode === "text") return;
+	if (!VOICE_ENABLED) return;
+	await runVoice(session.id, turnIdx, role, text);
+}
+
 async function main(): Promise<void> {
 	console.info(
 		`Seeding ${SESSIONS.length} sessions to ${BASE}${VOICE_ENABLED ? " (voice on)" : ""}`,
 	);
+	const v2vSession = SESSIONS.find((s) => s.mode === "v2v");
+	if (v2vSession !== undefined && !VOICE_ENABLED) {
+		console.warn(
+			`! ${v2vSession.id} is mode=v2v but VOICE=1 is not set — the session will seed with no audio, ` +
+				`so the realtime-replay engine will have nothing to forward. Re-run with ` +
+				`VOICE=1 OPENAI_API_KEY=sk-... pnpm seed to get a real audio conversation.`,
+		);
+	}
 	// Quick reachability check so the failure mode is obvious if the dev
 	// server isn't running, instead of N opaque fetch errors.
 	try {

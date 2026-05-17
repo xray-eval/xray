@@ -1,22 +1,34 @@
 import * as v from "valibot";
 
-import type { CreateReplayRequest, ReplayRunResponse } from "@/server/replays/replays.types.ts";
+import type {
+	CreateReplayRequest,
+	ReplayMode,
+	ReplayRunResponse,
+} from "@/server/replays/replays.types.ts";
 import { ReplayRunResponseSchema } from "@/server/replays/replays.types.ts";
 
 import { ReplayInvalidResponseError, ReplayLoadError } from "../replays/errors.ts";
 
+const REPLAY_MODE_TO_PATH: Record<ReplayMode, string> = {
+	text: "/v1/replays",
+	realtime: "/v1/replays/realtime",
+};
+
 export interface CreateReplayParams {
 	body: CreateReplayRequest;
+	/** Defaults to the text path; pass `"realtime"` to start a V2V WebSocket run. */
+	mode?: ReplayMode;
 	/** Optional — POST is a mutation; useMutation doesn't provide a signal and there's nothing to cancel. */
 	signal?: AbortSignal;
 }
 
-/** POST /v1/replays — start a new replay run. */
+/** POST /v1/replays{,/realtime} — start a new replay run. */
 export async function createReplay({
 	body,
+	mode = "text",
 	signal,
 }: CreateReplayParams): Promise<ReplayRunResponse> {
-	const url = new URL("/v1/replays", window.location.origin);
+	const url = new URL(REPLAY_MODE_TO_PATH[mode], window.location.origin);
 	const res = await fetch(url, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
