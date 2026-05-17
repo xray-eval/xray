@@ -259,15 +259,8 @@ async function handleUserAudioCommit(
 	ws.data.awaitingTurnIdx = frame.turnIdx;
 	ws.data.transcriptAccumulator = "";
 	ws.data.lastTurnStartedAtMs = Date.now();
-	// GA Realtime auto-creates a response when `input_audio_buffer.commit`
-	// lands (server_vad's `create_response: true` is the default and is in
-	// effect even when we set `turn_detection: null` — turning it off
-	// reliably across preview/GA versions is fiddly). Issuing our own
-	// `response.create` here collides with the auto-created one on turn 2+
-	// with `conversation_already_has_active_response`. Trust auto-create on
-	// commit; the tool re-trigger path below still calls response.create
-	// because that loop continues without a fresh commit.
 	up.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+	up.send(JSON.stringify({ type: "response.create" }));
 }
 
 /**
@@ -389,6 +382,9 @@ function openUpstream(
 			json !== null && typeof json === "object" && "type" in json && typeof json.type === "string"
 				? json.type
 				: null;
+		// Single-line per event — keeps `docker logs | grep` useful for tracing
+		// the GA event flow without losing context in multi-line JSON dumps.
+		console.info(`[upstream] evt ${evtType ?? "(unknown)"}`);
 		if (evtType === "session.updated" && resolveReady !== null) {
 			console.info(`[upstream] session ready`);
 			resolveReady();
@@ -397,7 +393,7 @@ function openUpstream(
 			return;
 		}
 		if (evtType === "error") {
-			console.error(`[upstream] error event:`, json);
+			console.error(`[upstream] error: ${JSON.stringify(json)}`);
 		}
 		handleUpstreamEvent(ws, upstream, json);
 	});
@@ -566,6 +562,14 @@ function handleUpstreamEvent(
 			const param = e.error?.param;
 			const detail =
 				param !== undefined && param !== null ? `${message} (param=${param})` : message;
+			// Race-with-auto-create: GA may auto-create a response from
+			// `input_audio_buffer.commit` AND honor our explicit
+			// `response.create`. Whichever loses fires this error; the winner
+			// runs to `response.done` normally. Log and keep listening.
+			if (code === "conversation_already_has_active_response") {
+				console.warn(`[upstream] benign race: ${detail} — continuing on the active response`);
+				return;
+			}
 			sendError(ws, code, detail);
 			ws.close(1011, code);
 			upstream.close(1000, "client closed");
