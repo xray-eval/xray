@@ -1,5 +1,6 @@
+import { createReplayRun } from "./replay-runs-repo.ts";
 import { getSession, listSessions, markSessionEnded, saveSession } from "./sessions-repo.ts";
-import { makeSession, makeTempStore } from "./test-utils.ts";
+import { makeReplayRunInput, makeSession, makeTempStore } from "./test-utils.ts";
 import { describe, expect, it } from "bun:test";
 
 describe("sessions-repo", () => {
@@ -85,6 +86,22 @@ describe("sessions-repo", () => {
 		saveSession(store.db, makeSession({ id: "new", startedAt: "2026-05-16T08:00:00.000Z" }));
 		const ids = listSessions(store.db).map((s) => s.id);
 		expect(ids).toEqual(["new", "mid", "old"]);
+		store.close();
+	});
+
+	it("excludes replay target sessions", () => {
+		const store = makeTempStore();
+		saveSession(store.db, makeSession({ id: "src" }));
+		saveSession(store.db, makeSession({ id: "tgt" }));
+		saveSession(store.db, makeSession({ id: "other" }));
+		createReplayRun(
+			store.db,
+			makeReplayRunInput({ sourceSessionId: "src", targetSessionId: "tgt" }),
+		);
+		const ids = listSessions(store.db).map((s) => s.id);
+		expect(ids).toContain("src");
+		expect(ids).toContain("other");
+		expect(ids).not.toContain("tgt");
 		store.close();
 	});
 

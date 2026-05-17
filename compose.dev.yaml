@@ -45,6 +45,67 @@ services:
       - dev_data:/data
     ports:
       - "8080:8080"
+    # Used by the `agent-webhook` profile below: that service depends on `app`
+    # being healthy before it boots, which is how we serialize the initial
+    # `pnpm install` write to the shared `dev_node_modules` volume (the app
+    # service installs once, the webhook service then finds node_modules
+    # already populated and skips its own install).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 60s
+
+  # FOR XRAY CONTRIBUTORS ONLY — not a feature of xray itself.
+  #
+  # Throwaway sibling service that acts as an OpenAI-backed test webhook for
+  # agent replay, used by contributors hacking on this repo to smoke-test
+  # replay-related changes end-to-end. Real xray users already have their own
+  # agent loop and never run this. See scripts/agent-webhook.ts for the why.
+  #
+  # Opt-in via the `webhook` compose profile so the default `pnpm dev` doesn't
+  # need an OPENAI_API_KEY. Brought up by `pnpm dev:webhook`.
+  #
+  # Reuses Dockerfile.dev.server: the cost of running a 100-line script in the
+  # dev image is zero in dev, and it saves us maintaining a second pinned base
+  # digest.
+  #
+  # Reachable from xray-dev at `http://agent-webhook:4000/replay` (Docker
+  # network DNS). Port 4000 is also exposed to the host so you can curl
+  # /healthz to debug.
+  agent-webhook:
+    profiles: ["webhook"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev.server
+      args:
+        UID: "${UID:-1000}"
+        GID: "${GID:-1000}"
+    container_name: xray-agent-webhook
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      - HOME=/tmp
+      - PNPM_HOME=/tmp/pnpm
+      - PORT=4000
+    env_file:
+      - .env
+    command: bun scripts/agent-webhook.ts
+    volumes:
+      - ./:/app
+      - dev_node_modules:/app/node_modules
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
 
 volumes:
   dev_node_modules:

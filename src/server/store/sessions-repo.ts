@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 
 import type { AgentId } from "@/adapters/types.ts";
 
-import { sessions } from "./schema.ts";
+import { replayRuns, sessions } from "./schema.ts";
 import type { StoreDb } from "./store.ts";
 import type { Session, SessionSource } from "./types.ts";
 
@@ -99,11 +99,25 @@ export interface ListSessionsOptions {
 	cursor?: SessionCursor;
 }
 
+/**
+ * Replay target sessions are excluded from the list. They're real sessions
+ * (the replay worker writes them through the same ingest path as anything
+ * else), but surfacing them in the conversations list would clutter it with
+ * one extra entry per replay attempt. The diff view fetches them by id via
+ * `getSession` / `getConversationForApi`, which is unaffected by this filter.
+ *
+ * Future: when target sessions get their own tab inside the source session's
+ * detail view (tracked separately), that tab will join `replay_runs` directly
+ * — it won't call `listSessions`.
+ */
 export function listSessions(db: StoreDb, opts: ListSessionsOptions = {}): Session[] {
 	// started_at is ISO 8601 — lexicographic sort matches chronological sort,
 	// so SQLite's TEXT comparison is sufficient. id breaks ties so pagination
 	// is deterministic when many sessions share a startedAt.
 	const filters = [
+		// NOT EXISTS (not NOT IN): NOT IN is NULL-poisoned if the subquery has any
+		// null target_session_id (it shouldn't, but the schema doesn't enforce).
+		sql`NOT EXISTS (SELECT 1 FROM ${replayRuns} WHERE ${replayRuns.targetSessionId} = ${sessions.id})`,
 		opts.source !== undefined ? eq(sessions.source, opts.source) : undefined,
 		opts.agentId !== undefined ? eq(sessions.agentId, opts.agentId) : undefined,
 		opts.cursor !== undefined
@@ -119,7 +133,7 @@ export function listSessions(db: StoreDb, opts: ListSessionsOptions = {}): Sessi
 	return db
 		.select()
 		.from(sessions)
-		.where(filters.length > 0 ? and(...filters) : undefined)
+		.where(and(...filters))
 		.orderBy(desc(sessions.startedAt), desc(sessions.id))
 		.limit(opts.limit ?? 100)
 		.all();

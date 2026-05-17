@@ -14,6 +14,14 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../components/ui/card.tsx";
+import type {
+	AnnotatedToolCall,
+	DiffSummary,
+	SummarySentence,
+	ToolCallStatus,
+	TurnDivergence,
+} from "./diff/diff.ts";
+import { alignTurns, divergencesFor, plural, summarize, summarySentence } from "./diff/diff.ts";
 
 export interface DiffPanelProps {
 	run: ReplayRunResponse;
@@ -47,32 +55,31 @@ export function DiffPanel({ run }: DiffPanelProps) {
 }
 
 function DiffBody({ source, target }: { source: Conversation; target: Conversation }) {
-	const aligned = alignTurns(source.turns, target.turns);
-	const diffCount = aligned.filter((p) => p.kind !== "same").length;
+	const divergences = divergencesFor(alignTurns(source.turns, target.turns));
+	const summary = summarize(divergences, source, target);
+	const sentence = summarySentence(summary);
 	return (
 		<div className="space-y-4">
-			<Card>
-				<CardHeader>
-					<CardTitle className="flex items-center gap-2 text-base">
-						<CheckCircle2 className="size-4 text-green-600" />
-						Replay complete
-					</CardTitle>
-					<CardDescription>
-						{diffCount} of {aligned.length} aligned turns differ
-					</CardDescription>
-				</CardHeader>
-			</Card>
-
+			<DiffSummaryCard summary={summary} sentence={sentence} />
 			<div className="grid grid-cols-2 gap-3 text-xs font-medium text-muted-foreground">
 				<div>Source</div>
 				<div>Replay</div>
 			</div>
-
 			<ol className="space-y-3">
-				{aligned.map((pair) => (
+				{divergences.map(({ pair, divergence }) => (
 					<li key={pair.idx} className="grid grid-cols-2 gap-3">
-						<DiffCell turn={pair.source} other={pair.target} side="source" />
-						<DiffCell turn={pair.target} other={pair.source} side="target" />
+						<DiffCell
+							turn={pair.source}
+							annotatedTools={divergence.sourceToolCalls}
+							divergence={divergence}
+							side="source"
+						/>
+						<DiffCell
+							turn={pair.target}
+							annotatedTools={divergence.targetToolCalls}
+							divergence={divergence}
+							side="target"
+						/>
 					</li>
 				))}
 			</ol>
@@ -80,67 +87,45 @@ function DiffBody({ source, target }: { source: Conversation; target: Conversati
 	);
 }
 
-export interface AlignedPair {
-	idx: number;
-	source: ConversationTurn | undefined;
-	target: ConversationTurn | undefined;
-	kind: "same" | "diff" | "missing";
-}
-
-/**
- * Pair turns by idx so the same position in source and target line up. A
- * missing side becomes `undefined`. "diff" means both sides exist but at
- * least one tracked field differs.
- */
-export function alignTurns(source: ConversationTurn[], target: ConversationTurn[]): AlignedPair[] {
-	const sourceByIdx = new Map(source.map((t) => [t.idx, t]));
-	const targetByIdx = new Map(target.map((t) => [t.idx, t]));
-	const indices = new Set<number>([...sourceByIdx.keys(), ...targetByIdx.keys()]);
-	return [...indices]
-		.sort((a, b) => a - b)
-		.map((idx) => {
-			const s = sourceByIdx.get(idx);
-			const t = targetByIdx.get(idx);
-			const kind: AlignedPair["kind"] =
-				s === undefined || t === undefined ? "missing" : turnsDiffer(s, t) ? "diff" : "same";
-			return { idx, source: s, target: t, kind };
-		});
-}
-
-/**
- * Best-effort field-by-field comparison. `JSON.stringify` on `args` is order-
- * sensitive — two semantically-equal objects with different key orders read
- * as different. Acceptable for v1: surfaces in the diff view, but the user
- * can visually verify. Upgrade to a stable deep-equal when this matters.
- *
- * `responseLatencyMs` is deliberately NOT compared: replay latency is wall-
- * clock from the webhook; source latency is the original measurement. They
- * differ on essentially every agent turn, so including it would flood the
- * diff with false positives. The cards still render the per-side value for
- * context.
- */
-export function turnsDiffer(a: ConversationTurn, b: ConversationTurn): boolean {
-	if (a.role !== b.role) return true;
-	if (a.text !== b.text) return true;
-	if ((a.interrupted ?? null) !== (b.interrupted ?? null)) return true;
-	if (a.toolCalls.length !== b.toolCalls.length) return true;
-	for (let i = 0; i < a.toolCalls.length; i++) {
-		const ac = a.toolCalls[i];
-		const bc = b.toolCalls[i];
-		if (!ac || !bc) return true;
-		if (ac.name !== bc.name) return true;
-		if (JSON.stringify(ac.args) !== JSON.stringify(bc.args)) return true;
+function DiffSummaryCard({
+	summary,
+	sentence,
+}: {
+	summary: DiffSummary;
+	sentence: SummarySentence;
+}) {
+	const { Icon, iconClass } = match(sentence.tone)
+		.with("ok", () => ({ Icon: CheckCircle2, iconClass: "text-green-600" }))
+		.with("warn", () => ({ Icon: AlertCircle, iconClass: "text-amber-600" }))
+		.exhaustive();
+	const subParts: string[] = [plural(summary.alignedTurns, "aligned turn")];
+	if (summary.turnsWithToolDivergence > 0) {
+		subParts.push(`${summary.turnsWithToolDivergence} with tool divergence`);
 	}
-	return false;
+	if (summary.latencyRegressions > 0) {
+		subParts.push(plural(summary.latencyRegressions, "latency regression"));
+	}
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle className="flex items-center gap-2 text-base">
+					<Icon className={`size-4 ${iconClass}`} />
+					{sentence.text}
+				</CardTitle>
+				<CardDescription>{subParts.join(" • ")}</CardDescription>
+			</CardHeader>
+		</Card>
+	);
 }
 
 interface DiffCellProps {
 	turn: ConversationTurn | undefined;
-	other: ConversationTurn | undefined;
+	annotatedTools: AnnotatedToolCall[];
+	divergence: TurnDivergence;
 	side: "source" | "target";
 }
 
-function DiffCell({ turn, other, side }: DiffCellProps) {
+function DiffCell({ turn, annotatedTools, divergence, side }: DiffCellProps) {
 	if (turn === undefined) {
 		return (
 			<Card className="border-dashed text-muted-foreground">
@@ -150,15 +135,17 @@ function DiffCell({ turn, other, side }: DiffCellProps) {
 			</Card>
 		);
 	}
-	const differs = other !== undefined && turnsDiffer(turn, other);
-	const textDiffers = other !== undefined && turn.text !== other.text;
+	const cardDivergent =
+		divergence.toolsDiverge || divergence.latencyRegressed || divergence.shapeDiverged;
+	const latencyBadgeVariant: "destructive" | "outline" =
+		side === "target" && divergence.latencyRegressed ? "destructive" : "outline";
 	return (
-		<Card className={differs ? "border-amber-500/50" : undefined}>
+		<Card className={cardDivergent ? "border-amber-500/50" : undefined}>
 			<CardHeader>
 				<CardDescription className="flex flex-wrap items-center gap-2">
 					<Badge variant={turn.role === "agent" ? "default" : "secondary"}>{turn.role}</Badge>
 					{turn.responseLatencyMs !== null && (
-						<Badge variant="outline">
+						<Badge variant={latencyBadgeVariant}>
 							<Zap />
 							{turn.responseLatencyMs}ms
 						</Badge>
@@ -169,26 +156,23 @@ function DiffCell({ turn, other, side }: DiffCellProps) {
 							interrupted
 						</Badge>
 					)}
-					{differs && (
+					{divergence.shapeDiverged && <Badge variant="destructive">shape changed</Badge>}
+					{divergence.toolsDiverge && (
 						<Badge variant="outline" className="border-amber-500/50 text-amber-600">
-							{side === "source" ? "changed →" : "← changed"}
+							tools {side === "source" ? "→" : "←"} differ
 						</Badge>
 					)}
 				</CardDescription>
-				<CardTitle
-					className={`text-base font-medium whitespace-pre-wrap break-words ${
-						textDiffers ? "underline decoration-amber-500/50 decoration-2 underline-offset-2" : ""
-					}`}
-				>
+				<CardTitle className="text-base font-medium whitespace-pre-wrap break-words">
 					{turn.text}
 				</CardTitle>
 			</CardHeader>
-			{turn.toolCalls.length > 0 && (
+			{annotatedTools.length > 0 && (
 				<CardContent>
 					<ul className="space-y-1 text-xs">
-						{turn.toolCalls.map((call) => (
-							<li key={call.idx} className="font-mono">
-								{call.name}({JSON.stringify(call.args)})
+						{annotatedTools.map((a) => (
+							<li key={a.call.idx} className={`font-mono ${toolCallClass(a.status)}`}>
+								{a.call.name}({JSON.stringify(a.call.args)})
 							</li>
 						))}
 					</ul>
@@ -196,6 +180,14 @@ function DiffCell({ turn, other, side }: DiffCellProps) {
 			)}
 		</Card>
 	);
+}
+
+function toolCallClass(status: ToolCallStatus): string {
+	return match(status)
+		.with("matched", () => "")
+		.with("args-differ", () => "text-amber-600")
+		.with("only-this-side", () => "text-red-600")
+		.exhaustive();
 }
 
 function DiffLoading() {
