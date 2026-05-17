@@ -114,6 +114,22 @@ describe("POST /v1/replays — validation", () => {
 		expect(res.status).toBe(400);
 	});
 
+	it("rejects non-http(s) webhook URL schemes (file://, gopher://, etc.)", async () => {
+		seedSource("src-1");
+		const cases = [
+			"file:///etc/passwd",
+			"gopher://example.test/",
+			"javascript:alert(1)",
+			"data:text/plain,hello",
+		];
+		for (const webhookUrl of cases) {
+			const res = await app.request(
+				makeCreateReplayRequestObject({ sourceSessionId: "src-1", webhookUrl }),
+			);
+			expect(res.status).toBe(400);
+		}
+	});
+
 	it("returns 404 when source session doesn't exist", async () => {
 		const res = await app.request(
 			makeCreateReplayRequestObject(makeCreateReplayRequest({ sourceSessionId: "missing" })),

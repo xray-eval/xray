@@ -168,7 +168,7 @@ describe("ReplayModal — submit", () => {
 });
 
 describe("ReplayModal — close", () => {
-	it("fires onClose when the X button is clicked", () => {
+	it("fires onClose when the shadcn close button is clicked", () => {
 		const onClose = mock();
 		render(
 			withQueryClient(
@@ -180,11 +180,12 @@ describe("ReplayModal — close", () => {
 				/>,
 			),
 		);
-		fireEvent.click(screen.getByRole("button", { name: /close modal/i }));
+		// shadcn's DialogContent renders a built-in close button with `<span class="sr-only">Close</span>`.
+		fireEvent.click(screen.getByRole("button", { name: /close/i }));
 		expect(onClose).toHaveBeenCalled();
 	});
 
-	it("fires onClose when the backdrop is clicked", () => {
+	it("fires onClose when Cancel is clicked", () => {
 		const onClose = mock();
 		render(
 			withQueryClient(
@@ -196,7 +197,7 @@ describe("ReplayModal — close", () => {
 				/>,
 			),
 		);
-		fireEvent.click(screen.getByRole("button", { name: /close dialog/i }));
+		fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
 		expect(onClose).toHaveBeenCalled();
 	});
 });

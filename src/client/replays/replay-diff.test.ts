@@ -61,16 +61,9 @@ describe("turnsDiffer", () => {
 		expect(turnsDiffer(a, b)).toBe(true);
 	});
 
-	it("returns true on differing responseLatencyMs", () => {
+	it("ignores responseLatencyMs differences — replay vs source latency would flood the diff with false positives", () => {
 		const a = makeConversationTurn({ responseLatencyMs: 100 });
 		const b = makeConversationTurn({ responseLatencyMs: 200 });
-		expect(turnsDiffer(a, b)).toBe(true);
-	});
-
-	it("treats null and undefined responseLatencyMs as equal", () => {
-		const a = makeConversationTurn({ responseLatencyMs: null });
-		// makeConversationTurn defaults responseLatencyMs to null, so both null.
-		const b = makeConversationTurn({});
 		expect(turnsDiffer(a, b)).toBe(false);
 	});
 

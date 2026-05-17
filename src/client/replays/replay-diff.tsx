@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Loader2, Zap, ZapOff } from "lucide-react";
+import { match, P } from "ts-pattern";
 
 import type { ReplayRunResponse } from "@/server/replays/replays.types.ts";
 import type { Conversation, ConversationTurn } from "@/server/sessions/sessions.types.ts";
@@ -41,15 +42,28 @@ export function DiffPanel({ run, apiBase }: DiffPanelProps) {
 			}),
 	});
 
-	if (sourceQuery.status === "pending" || targetQuery.status === "pending") {
-		return <DiffLoading />;
-	}
-	if (sourceQuery.status === "error") return <DiffError error={sourceQuery.error} />;
-	if (targetQuery.status === "error") return <DiffError error={targetQuery.error} />;
+	// Dispatch over the *combined* status of both queries so a future status
+	// variant can't slip past either site silently. `match.exhaustive()` here
+	// also fixes a latent bug where the previous if-chain showed only the
+	// source error when both queries failed.
+	return match([sourceQuery, targetQuery] as const)
+		.with([{ status: "error" }, P.any], [P.any, { status: "error" }], ([s, t]) => (
+			<DiffError
+				error={
+					s.status === "error" ? s.error : t.status === "error" ? t.error : new Error("unknown")
+				}
+			/>
+		))
+		.with([{ status: "pending" }, P.any], [P.any, { status: "pending" }], () => <DiffLoading />)
+		.with([{ status: "success" }, { status: "success" }], ([s, t]) => (
+			<DiffBody source={s.data} target={t.data} />
+		))
+		.exhaustive();
+}
 
-	const aligned = alignTurns(sourceQuery.data.turns, targetQuery.data.turns);
+function DiffBody({ source, target }: { source: Conversation; target: Conversation }) {
+	const aligned = alignTurns(source.turns, target.turns);
 	const diffCount = aligned.filter((p) => p.kind !== "same").length;
-
 	return (
 		<div className="space-y-4">
 			<Card>
@@ -113,11 +127,16 @@ export function alignTurns(source: ConversationTurn[], target: ConversationTurn[
  * sensitive — two semantically-equal objects with different key orders read
  * as different. Acceptable for v1: surfaces in the diff view, but the user
  * can visually verify. Upgrade to a stable deep-equal when this matters.
+ *
+ * `responseLatencyMs` is deliberately NOT compared: replay latency is wall-
+ * clock from the webhook; source latency is the original measurement. They
+ * differ on essentially every agent turn, so including it would flood the
+ * diff with false positives. The cards still render the per-side value for
+ * context.
  */
 export function turnsDiffer(a: ConversationTurn, b: ConversationTurn): boolean {
 	if (a.role !== b.role) return true;
 	if (a.text !== b.text) return true;
-	if ((a.responseLatencyMs ?? null) !== (b.responseLatencyMs ?? null)) return true;
 	if ((a.interrupted ?? null) !== (b.interrupted ?? null)) return true;
 	if (a.toolCalls.length !== b.toolCalls.length) return true;
 	for (let i = 0; i < a.toolCalls.length; i++) {

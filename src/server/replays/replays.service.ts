@@ -244,10 +244,15 @@ async function callWebhook(
 ): Promise<WebhookResponse> {
 	let res: Response;
 	try {
+		// `redirect: "manual"` so a benign-looking webhook can't 302-redirect to
+		// an internal endpoint (cloud metadata, localhost services). The schema
+		// already restricts the *initial* URL to http(s); this blocks the
+		// follow-up. A 3xx is surfaced as a WebhookHttpError below.
 		res = await fetchImpl(url, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
+			redirect: "manual",
 		});
 	} catch (cause) {
 		throw new WebhookFetchError(`Failed to reach webhook: ${errorMessage(cause)}`, { cause });

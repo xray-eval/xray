@@ -1,12 +1,19 @@
 import { useMutation } from "@tanstack/react-query";
-import { AlertCircle, Loader2, X } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
-import { match } from "ts-pattern";
 
 import type { ReplayRunResponse } from "@/server/replays/replays.types.ts";
 
 import { createReplay } from "../api/replays-api.ts";
 import { Button } from "../components/ui/button.tsx";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../components/ui/dialog.tsx";
 
 export interface ReplayModalProps {
 	sourceSessionId: string;
@@ -37,7 +44,6 @@ function writeWebhookToStorage(url: string): void {
 }
 
 export function ReplayModal({ sourceSessionId, apiBase, onClose, onStarted }: ReplayModalProps) {
-	const titleId = useId();
 	const urlInputId = useId();
 	const [webhookUrl, setWebhookUrl] = useState<string>(readWebhookFromStorage);
 
@@ -59,38 +65,17 @@ export function ReplayModal({ sourceSessionId, apiBase, onClose, onStarted }: Re
 	};
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-			<button
-				type="button"
-				aria-label="Close dialog"
-				onClick={onClose}
-				className="absolute inset-0 size-full cursor-default"
-				tabIndex={-1}
-			/>
-			<div
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby={titleId}
-				className="relative w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg"
-			>
-				<button
-					type="button"
-					onClick={onClose}
-					aria-label="Close modal"
-					className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
-				>
-					<X className="size-4" />
-				</button>
+		<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Replay session</DialogTitle>
+					<DialogDescription>
+						xray walks the user-side inputs through your webhook and records the responses as a new
+						session. <span className="font-mono text-xs">{sourceSessionId}</span>
+					</DialogDescription>
+				</DialogHeader>
 
-				<h2 id={titleId} className="text-lg font-semibold tracking-tight">
-					Replay session
-				</h2>
-				<p className="mt-1 text-sm text-muted-foreground">
-					xray walks the user-side inputs through your webhook and records the responses as a new
-					session. <span className="font-mono text-xs">{sourceSessionId}</span>
-				</p>
-
-				<form onSubmit={submit} className="mt-6 space-y-5">
+				<form onSubmit={submit} className="space-y-5">
 					<div className="space-y-2">
 						<label htmlFor={urlInputId} className="text-sm font-medium">
 							Webhook URL
@@ -99,6 +84,7 @@ export function ReplayModal({ sourceSessionId, apiBase, onClose, onStarted }: Re
 							id={urlInputId}
 							type="url"
 							required
+							autoFocus
 							placeholder="https://your-agent.example.com/replay"
 							value={webhookUrl}
 							onChange={(e) => setWebhookUrl(e.target.value)}
@@ -111,22 +97,22 @@ export function ReplayModal({ sourceSessionId, apiBase, onClose, onStarted }: Re
 						</p>
 					</div>
 
-					{match(mutation)
-						.with({ status: "error" }, (m) => (
-							<div
-								role="alert"
-								className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm"
-							>
-								<AlertCircle className="mt-0.5 size-4 text-destructive" />
-								<div>
-									<div className="font-medium">Failed to start replay.</div>
-									<div className="break-all text-xs text-muted-foreground">{m.error.message}</div>
+					{mutation.isError && (
+						<div
+							role="alert"
+							className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm"
+						>
+							<AlertCircle className="mt-0.5 size-4 text-destructive" />
+							<div>
+								<div className="font-medium">Failed to start replay.</div>
+								<div className="break-all text-xs text-muted-foreground">
+									{mutation.error.message}
 								</div>
 							</div>
-						))
-						.otherwise(() => null)}
+						</div>
+					)}
 
-					<div className="flex justify-end gap-2">
+					<DialogFooter>
 						<Button type="button" variant="ghost" onClick={onClose}>
 							Cancel
 						</Button>
@@ -134,9 +120,9 @@ export function ReplayModal({ sourceSessionId, apiBase, onClose, onStarted }: Re
 							{mutation.isPending && <Loader2 className="size-4 animate-spin" />}
 							{mutation.isPending ? "Starting…" : "Run replay"}
 						</Button>
-					</div>
+					</DialogFooter>
 				</form>
-			</div>
-		</div>
+			</DialogContent>
+		</Dialog>
 	);
 }

@@ -24,13 +24,30 @@ export const ReplayStatusSchema = v.picklist(REPLAY_RUN_STATUSES);
 export type ReplayStatus = ReplayRunStatus;
 
 /**
- * Body of `POST /v1/replays`. The webhook URL must be parseable as a URL but
- * is otherwise unconstrained — operators self-hosting xray pick whatever scheme
- * fits their stack (http, https, even http://localhost during dev).
+ * Body of `POST /v1/replays`. The webhook URL must be parseable as a URL and
+ * must use `http:` or `https:` — `file://`, `gopher://`, `javascript:` etc.
+ * are rejected at the boundary so the worker's `fetch` can never be coerced
+ * into reading from the filesystem or following non-HTTP schemes. SSRF against
+ * internal HTTP hosts (cloud metadata, localhost services) is NOT prevented
+ * here — see `replays.service.ts` where `redirect: "manual"` blocks chained
+ * redirects to internal endpoints, and the README for the residual operator
+ * threat model.
  */
+const HTTP_URL_SCHEMES = new Set(["http:", "https:"]);
 export const CreateReplayRequestSchema = v.object({
 	sourceSessionId: SessionIdSchema,
-	webhookUrl: v.pipe(v.string(), v.url(), v.maxLength(MAX_WEBHOOK_URL)),
+	webhookUrl: v.pipe(
+		v.string(),
+		v.url(),
+		v.maxLength(MAX_WEBHOOK_URL),
+		v.check((u) => {
+			try {
+				return HTTP_URL_SCHEMES.has(new URL(u).protocol);
+			} catch {
+				return false;
+			}
+		}, "Webhook URL must use http or https"),
+	),
 });
 export type CreateReplayRequest = v.InferOutput<typeof CreateReplayRequestSchema>;
 
