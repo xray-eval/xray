@@ -144,9 +144,6 @@ describe("ConversationsList — navigation", () => {
 		);
 		const { router, ui } = renderWithRouter({ initialEntries: ["/"] });
 		render(ui);
-		// The link's accessible name is the concatenation of its descendant
-		// text (timestamp + agent id + duration + source). agent-8 uniquely
-		// identifies the second row.
 		const row = await screen.findByRole("link", { name: /agent-8/i });
 		fireEvent.click(row);
 		await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/sess-8"));
@@ -186,10 +183,10 @@ describe("ConversationsList — navigation", () => {
 		render(ui);
 		const replay = await screen.findByRole("button", { name: /^replay session agent-7/i });
 		fireEvent.click(replay);
-		// Modal opens — its body contains the source session id.
 		await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
 		expect(screen.getByText("sess-7")).toBeTruthy();
-		// Row click was suppressed via stopPropagation so the route did not change.
+		// The row link sits in a sibling cell, so the button click never bubbles
+		// up to it — route stays put.
 		expect(router.state.location.pathname).toBe("/");
 	});
 });

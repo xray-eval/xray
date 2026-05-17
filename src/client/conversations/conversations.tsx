@@ -53,9 +53,15 @@ export function ConversationsList() {
 
 	return (
 		<>
-			<section aria-label="Conversations" aria-busy={query.isPending} className="space-y-6">
+			<section
+				aria-labelledby="conversations-heading"
+				aria-busy={query.isPending}
+				className="space-y-6"
+			>
 				<header className="flex items-baseline justify-between gap-4">
-					<h2 className="text-2xl font-semibold tracking-tight">Conversations</h2>
+					<h2 id="conversations-heading" className="text-2xl font-semibold tracking-tight">
+						Conversations
+					</h2>
 					<SessionCount query={query} />
 				</header>
 
@@ -139,11 +145,11 @@ function ConversationsTableHead() {
 	return (
 		<TableHeader>
 			<TableRow>
-				<TableHead>Started</TableHead>
-				<TableHead>Agent</TableHead>
-				<TableHead>Duration</TableHead>
-				<TableHead>Source</TableHead>
-				<TableHead className="w-px text-right">
+				<TableHead scope="col">Started</TableHead>
+				<TableHead scope="col">Agent</TableHead>
+				<TableHead scope="col">Duration</TableHead>
+				<TableHead scope="col">Source</TableHead>
+				<TableHead scope="col" className="w-px text-right">
 					<span className="sr-only">Actions</span>
 				</TableHead>
 			</TableRow>
@@ -169,7 +175,8 @@ function ConversationRow({ session, onReplay }: ConversationRowProps) {
 				<Link
 					to="/sessions/$sessionId"
 					params={{ sessionId: session.id }}
-					className="after:absolute after:inset-0 after:rounded-md focus:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring/50"
+					aria-label={`Open session ${session.agentId}, started ${formatAbsolute(session.startedAt)}`}
+					className="after:absolute after:inset-0 after:rounded-md focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring/50"
 				>
 					{session.agentId}
 				</Link>
