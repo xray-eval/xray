@@ -1,5 +1,6 @@
 import * as v from "valibot";
 
+import { makeTempAudioRoot } from "@/server/audio/audio.test-utils.ts";
 import { createApp } from "@/server/server.ts";
 import { getSession, listSessions } from "@/server/store/sessions-repo.ts";
 import type { Store } from "@/server/store/store.ts";
@@ -37,15 +38,18 @@ const BodyTooLargeBodySchema = v.object({
 });
 
 let store: Store;
+let audio: ReturnType<typeof makeTempAudioRoot>;
 let app: ReturnType<typeof createApp>;
 
 beforeEach(() => {
 	store = makeTempStore();
-	app = createApp(store);
+	audio = makeTempAudioRoot();
+	app = createApp(store, { audioRoot: audio.path });
 });
 
 afterEach(() => {
 	store.close();
+	audio.dispose();
 });
 
 async function post(sessionId: string, event: unknown): Promise<Response> {

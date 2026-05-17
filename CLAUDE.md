@@ -25,6 +25,7 @@ Both write into the same SQLite store. One source-agnostic UI reads from it. The
 @.claude/rules/pattern-matching.md
 @.claude/rules/boundary-validation.md
 @.claude/rules/comments.md
+@.claude/rules/no-lint-suppressions.md
 @.claude/rules/tdd.md
 @.claude/rules/supply-chain.md
 @.claude/rules/public-repo.md

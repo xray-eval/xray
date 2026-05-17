@@ -1,6 +1,7 @@
 import { HttpResponse, http } from "msw";
 import * as v from "valibot";
 
+import { makeTempAudioRoot } from "@/server/audio/audio.test-utils.ts";
 import { applyEvent } from "@/server/ingest/ingest.service.ts";
 import {
 	makeSessionStartedEvent,
@@ -27,15 +28,18 @@ const ErrorBodySchema = v.object({
 });
 
 let store: Store;
+let audio: ReturnType<typeof makeTempAudioRoot>;
 let app: ReturnType<typeof createApp>;
 
 beforeEach(() => {
 	store = makeTempStore();
-	app = createApp(store);
+	audio = makeTempAudioRoot();
+	app = createApp(store, { audioRoot: audio.path });
 });
 
 afterEach(() => {
 	store.close();
+	audio.dispose();
 });
 
 function seedSource(sessionId: string) {

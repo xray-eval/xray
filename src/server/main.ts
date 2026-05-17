@@ -1,3 +1,6 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+
 // `import index from "*.html"` triggers Bun's HTML bundler: Bun walks the
 // shell's `<script type="module">` tags and bundles the React entry on boot.
 // With `bun --hot` the bundle is rebuilt + HMR'd on file change.
@@ -12,6 +15,11 @@ const env = loadEnv();
 // misconfiguration fails-fast instead of surfacing on a route handler.
 const store = openStoreFromEnv(env);
 
+// Audio uploads share the mounted volume with `xray.db` so the single-image
+// promise (`.claude/rules/single-image-distribution.md`) still holds.
+const audioRoot = join(env.XRAY_DATA_DIR, "audio");
+mkdirSync(audioRoot, { recursive: true });
+
 // Single-writer model: any replay row in `running` is from a process that
 // died holding it. Mark them failed so the UI shows them broken instead of
 // stuck "in progress" forever.
@@ -20,7 +28,7 @@ if (orphaned > 0) {
 	console.warn(`Marked ${orphaned} orphaned replay run(s) as failed`);
 }
 
-const app = createApp(store);
+const app = createApp(store, { audioRoot });
 
 const server = Bun.serve({
 	port: env.PORT,

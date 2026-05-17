@@ -2,8 +2,11 @@
 // something to render without a real agent loop.
 //
 // Usage:
-//   pnpm dev          # in one terminal — dev server on :8080
-//   pnpm seed         # in another — POSTs events through /v1/sessions/:id/events
+//   pnpm dev                          # in one terminal — dev server on :8080
+//   pnpm seed                         # in another — POSTs events through /v1/sessions/:id/events
+//   VOICE=1 OPENAI_API_KEY=sk-... pnpm seed
+//                                     # also synthesizes per-turn audio via OpenAI TTS and
+//                                     # POSTs it to /v1/sessions/:id/turns/:idx/audio
 //
 // Override target via env: XRAY_BASE_URL=http://otherhost:9000 pnpm seed
 //
@@ -13,13 +16,35 @@
 
 import * as v from "valibot";
 
-// Env codec — parse once at startup per boundary-validation.md, not as
-// scattered untyped index lookups.
 const EnvSchema = v.object({
 	XRAY_BASE_URL: v.optional(v.string()),
+	// Voice mode (#25) — when truthy, after each turn the script calls OpenAI
+	// TTS and POSTs the resulting bytes to xray's per-turn audio endpoint so
+	// the inspector can play them back.
+	VOICE: v.optional(v.string()),
+	OPENAI_API_KEY: v.optional(v.string()),
+	OPENAI_TTS_MODEL: v.optional(v.string()),
+	OPENAI_TTS_VOICE: v.optional(v.string()),
 });
 const ENV = v.parse(EnvSchema, process.env);
 const BASE = ENV.XRAY_BASE_URL ?? "http://localhost:8080";
+
+const VOICE_ENABLED = isTruthy(ENV.VOICE);
+const TTS_MODEL = ENV.OPENAI_TTS_MODEL ?? "tts-1";
+// Cycle two voices so user/agent turns are easy to distinguish in the player.
+const USER_VOICE = "shimmer";
+const AGENT_VOICE = ENV.OPENAI_TTS_VOICE ?? "alloy";
+
+if (VOICE_ENABLED && ENV.OPENAI_API_KEY === undefined) {
+	console.error("VOICE=1 set but OPENAI_API_KEY is missing — pass it or unset VOICE.");
+	process.exit(1);
+}
+
+function isTruthy(raw: string | undefined): boolean {
+	if (raw === undefined) return false;
+	const s = raw.toLowerCase();
+	return s === "1" || s === "true" || s === "yes" || s === "on";
+}
 
 type Role = "user" | "agent" | "tool" | "system";
 
@@ -301,6 +326,9 @@ async function seedSession(session: SeedSession): Promise<void> {
 				},
 			});
 		}
+		if (VOICE_ENABLED && (turn.role === "user" || turn.role === "agent")) {
+			await synthesizeAndUploadAudio(session.id, turn.idx, turn.role, turn.text);
+		}
 	}
 	if (session.durationMs !== undefined) {
 		await postEvent({
@@ -314,8 +342,51 @@ async function seedSession(session: SeedSession): Promise<void> {
 	}
 }
 
+async function synthesizeAndUploadAudio(
+	sessionId: string,
+	turnIdx: number,
+	role: "user" | "agent",
+	text: string,
+): Promise<void> {
+	if (text.trim().length === 0) return;
+	try {
+		const ttsRes = await fetch("https://api.openai.com/v1/audio/speech", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				authorization: `Bearer ${ENV.OPENAI_API_KEY ?? ""}`,
+			},
+			body: JSON.stringify({
+				model: TTS_MODEL,
+				voice: role === "user" ? USER_VOICE : AGENT_VOICE,
+				input: text,
+				response_format: "opus",
+			}),
+		});
+		if (!ttsRes.ok) {
+			throw new Error(`OpenAI TTS ${ttsRes.status}: ${await ttsRes.text()}`);
+		}
+		const audioBytes = new Uint8Array(await ttsRes.arrayBuffer());
+		const uploadUrl = `${BASE}/v1/sessions/${encodeURIComponent(sessionId)}/turns/${turnIdx}/audio`;
+		const uploadRes = await fetch(uploadUrl, {
+			method: "POST",
+			headers: { "content-type": "audio/ogg" },
+			body: audioBytes,
+		});
+		if (!uploadRes.ok) {
+			throw new Error(`xray audio upload ${uploadRes.status}: ${await uploadRes.text()}`);
+		}
+	} catch (cause) {
+		// Don't break the seed run on TTS failures — log and continue. The text
+		// turn is already persisted; the audio is enrichment.
+		console.warn(`  ! audio for ${sessionId} turn ${turnIdx} (${role}) failed:`, cause);
+	}
+}
+
 async function main(): Promise<void> {
-	console.info(`Seeding ${SESSIONS.length} sessions to ${BASE}`);
+	console.info(
+		`Seeding ${SESSIONS.length} sessions to ${BASE}${VOICE_ENABLED ? " (voice on)" : ""}`,
+	);
 	// Quick reachability check so the failure mode is obvious if the dev
 	// server isn't running, instead of N opaque fetch errors.
 	try {

@@ -9,6 +9,7 @@ import type {
 	ConversationTurn,
 } from "@/server/sessions/sessions.types.ts";
 
+import { turnAudioUrl } from "../api/audio-api.ts";
 import { fetchConversation } from "../api/conversation-api.ts";
 import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
@@ -70,7 +71,7 @@ function Transcript({ conversation }: { conversation: Conversation }) {
 				<ol className="space-y-4">
 					{conversation.turns.map((turn) => (
 						<li key={turn.id}>
-							<TurnCard turn={turn} />
+							<TurnCard sessionId={conversation.id} turn={turn} />
 						</li>
 					))}
 				</ol>
@@ -109,7 +110,7 @@ function TranscriptHeader({ conversation }: { conversation: Conversation }) {
 	);
 }
 
-function TurnCard({ turn }: { turn: ConversationTurn }) {
+function TurnCard({ sessionId, turn }: { sessionId: string; turn: ConversationTurn }) {
 	const interruptedSuffix = turn.interruptedAtMs !== null ? ` at ${turn.interruptedAtMs}ms` : "";
 	return (
 		<Card>
@@ -135,6 +136,7 @@ function TurnCard({ turn }: { turn: ConversationTurn }) {
 				<CardTitle className="text-base font-medium whitespace-pre-wrap break-words">
 					{turn.text}
 				</CardTitle>
+				{turn.audioPath !== null && <TurnAudio sessionId={sessionId} turn={turn} />}
 			</CardHeader>
 			{turn.toolCalls.length > 0 && (
 				<CardContent>
@@ -143,6 +145,33 @@ function TurnCard({ turn }: { turn: ConversationTurn }) {
 			)}
 		</Card>
 	);
+}
+
+function TurnAudio({ sessionId, turn }: { sessionId: string; turn: ConversationTurn }) {
+	// `preload="none"` is the lazy-load knob: the browser fetches metadata +
+	// bytes only after the user clicks play. Without it, a transcript of 50
+	// turns would burn a HEAD request per audio element on mount.
+	return (
+		<audio
+			controls
+			preload="none"
+			src={turnAudioUrl(sessionId, turn.idx)}
+			aria-label={`Audio for ${turn.role} turn ${turn.idx}`}
+			className="mt-2 w-full max-w-sm"
+		>
+			<track kind="captions" src={turn.text ? captionVttUrl(turn.text) : EMPTY_VTT} default />
+		</audio>
+	);
+}
+
+const EMPTY_VTT = "data:text/vtt;charset=utf-8,WEBVTT%0A%0A";
+
+/** Build an inline WebVTT URL whose only cue spans 0–24h and shows the turn's
+ *  transcript. Satisfies the `<audio>` caption requirement without a separate
+ *  endpoint: the text is already in the API payload. */
+function captionVttUrl(text: string): string {
+	const cue = `WEBVTT\n\n00:00:00.000 --> 24:00:00.000\n${text.replace(/\n/g, " ")}\n`;
+	return `data:text/vtt;charset=utf-8,${encodeURIComponent(cue)}`;
 }
 
 function RoleBadge({ role }: { role: ConversationTurn["role"] }) {

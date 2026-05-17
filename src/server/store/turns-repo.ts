@@ -45,3 +45,25 @@ export function listTurnsForSession(db: StoreDb, sessionId: string): TurnRow[] {
 		.orderBy(asc(turns.idx))
 		.all();
 }
+
+/**
+ * Stamp the on-disk location of the turn's uploaded audio. Returns `true`
+ * iff a row matched — callers (the audio service) write the file first and
+ * then call this so the existence check + DB write happen as one step. A
+ * `false` return means the turn vanished between disk write and DB write
+ * (concurrent session delete), and the caller cleans up the orphan file.
+ */
+export function setTurnAudioPath(
+	db: StoreDb,
+	sessionId: string,
+	idx: number,
+	audioPath: string,
+): boolean {
+	const rows = db
+		.update(turns)
+		.set({ audioPath })
+		.where(and(eq(turns.sessionId, sessionId), eq(turns.idx, idx)))
+		.returning({ id: turns.id })
+		.all();
+	return rows.length > 0;
+}

@@ -1,18 +1,22 @@
+import { makeTempAudioRoot } from "./audio/audio.test-utils.ts";
 import { createApp } from "./server.ts";
 import type { Store } from "./store/store.ts";
 import { makeTempStore } from "./store/test-utils.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 let store: Store;
+let audio: ReturnType<typeof makeTempAudioRoot>;
 let app: ReturnType<typeof createApp>;
 
 beforeEach(() => {
 	store = makeTempStore();
-	app = createApp(store);
+	audio = makeTempAudioRoot();
+	app = createApp(store, { audioRoot: audio.path });
 });
 
 afterEach(() => {
 	store.close();
+	audio.dispose();
 });
 
 describe("server composition", () => {

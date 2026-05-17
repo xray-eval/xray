@@ -65,6 +65,13 @@ export const ConversationTurnSchema = v.object({
 	responseLatencyMs: v.nullable(v.number()),
 	interrupted: v.nullable(v.boolean()),
 	interruptedAtMs: v.nullable(v.number()),
+	/**
+	 * Relative on-disk path of the uploaded audio for this turn, or `null` if
+	 * none was uploaded. The client fetches the bytes lazily via
+	 * `GET /v1/sessions/:id/turns/:idx/audio` — this field only signals
+	 * playback availability.
+	 */
+	audioPath: v.nullable(v.string()),
 	toolCalls: v.array(ConversationToolCallSchema),
 });
 export type ConversationTurn = v.InferOutput<typeof ConversationTurnSchema>;

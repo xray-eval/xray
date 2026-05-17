@@ -22,6 +22,13 @@
       "when": 1779007682193,
       "tag": "0002_replay_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1779016856886,
+      "tag": "0003_add_turn_audio_path",
+      "breakpoints": true
     }
   ]
 }
