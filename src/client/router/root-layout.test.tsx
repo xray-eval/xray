@@ -32,7 +32,6 @@ describe("RootLayout", () => {
 		);
 		const { ui } = renderWithRouter({ initialEntries: ["/"] });
 		render(ui);
-		// Outlet mounts <ConversationsList> at "/". Both should be present.
 		await waitFor(() => expect(screen.getByText(/^conversations$/i)).toBeTruthy());
 		expect(screen.getByRole("heading", { name: /^xray$/i })).toBeTruthy();
 	});
@@ -41,7 +40,6 @@ describe("RootLayout", () => {
 		const { ui } = renderWithRouter({ initialEntries: ["/no-such-path"] });
 		render(ui);
 		expect(await screen.findByText(/page not found/i)).toBeTruthy();
-		// Layout chrome still mounts above the NotFoundView.
 		expect(screen.getByRole("heading", { name: /^xray$/i })).toBeTruthy();
 	});
 });

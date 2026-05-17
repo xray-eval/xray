@@ -12,7 +12,9 @@ import { afterEach, describe, expect, it } from "bun:test";
 // happy-dom must be registered before @testing-library/react evaluates — it
 // reads `document` at module load. Dynamic import preserves that ordering.
 registerHappyDom();
-const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
+const { cleanup, fireEvent, render, screen, waitFor, within } = await import(
+	"@testing-library/react"
+);
 const { renderWithRouter } = await import("../test-utils.tsx");
 
 // Bun's test runner has no auto-cleanup hook — without this, the previous
@@ -51,10 +53,8 @@ describe("ConversationsList — populated", () => {
 		const { ui } = renderWithRouter({ initialEntries: ["/"] });
 		render(ui);
 		await waitFor(() => expect(screen.getByText("agent-new")).toBeTruthy());
-		// Each row renders Agent / Duration / Source as a <dl>; the agent
-		// values are the 1st, 4th, 7th <dd> across three rows.
-		const dds = screen.getAllByRole("definition");
-		const agentValues = dds.filter((_, i) => i % 3 === 0).map((n) => n.textContent);
+		const dataRows = screen.getAllByRole("row").slice(1);
+		const agentValues = dataRows.map((r) => within(r).getAllByRole("cell")[1]?.textContent);
 		expect(agentValues).toEqual(["agent-new", "agent-mid", "agent-old"]);
 	});
 
@@ -78,9 +78,8 @@ describe("ConversationsList — populated", () => {
 		const { ui } = renderWithRouter({ initialEntries: ["/"] });
 		render(ui);
 		await waitFor(() => expect(screen.getByText("from-ingest")).toBeTruthy());
-		// The 3rd <dd> of each row is the source (Agent → Duration → Source).
-		const dds = screen.getAllByRole("definition");
-		const sources = dds.filter((_, i) => i % 3 === 2).map((n) => n.textContent);
+		const dataRows = screen.getAllByRole("row").slice(1);
+		const sources = dataRows.map((r) => within(r).getAllByRole("cell")[3]?.textContent);
 		expect(sources).toEqual(["ingest", "adapter:elevenlabs"]);
 	});
 
@@ -123,7 +122,6 @@ describe("ConversationsList — pagination", () => {
 		await waitFor(() => expect(screen.getByText("second")).toBeTruthy());
 		// The first-page row is still on screen — pagination appends, not replaces.
 		expect(screen.getByText("first")).toBeTruthy();
-		// Final page reached → no more button.
 		expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
 	});
 });
@@ -145,9 +143,6 @@ describe("ConversationsList — navigation", () => {
 		);
 		const { router, ui } = renderWithRouter({ initialEntries: ["/"] });
 		render(ui);
-		// The link's accessible name is the concatenation of its descendant
-		// text (timestamp + agent id + duration + source). agent-8 uniquely
-		// identifies the second row.
 		const row = await screen.findByRole("link", { name: /agent-8/i });
 		fireEvent.click(row);
 		await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/sess-8"));
@@ -187,10 +182,10 @@ describe("ConversationsList — navigation", () => {
 		render(ui);
 		const replay = await screen.findByRole("button", { name: /^replay session agent-7/i });
 		fireEvent.click(replay);
-		// Modal opens — its body contains the source session id.
 		await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
 		expect(screen.getByText("sess-7")).toBeTruthy();
-		// Row click was suppressed via stopPropagation so the route did not change.
+		// The row link sits in a sibling cell, so the button click never bubbles
+		// up to it — route stays put.
 		expect(router.state.location.pathname).toBe("/");
 	});
 });

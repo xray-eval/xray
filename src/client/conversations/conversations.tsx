@@ -19,6 +19,14 @@ import {
 	CardTitle,
 } from "../components/ui/card.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "../components/ui/table.tsx";
 import { formatAbsolute, formatDuration } from "../format.ts";
 import { ReplayModal } from "../replays/replay-modal.tsx";
 import { sourceBadgeVariant } from "../source-badge.ts";
@@ -45,9 +53,15 @@ export function ConversationsList() {
 
 	return (
 		<>
-			<section aria-label="Conversations" aria-busy={query.isPending} className="space-y-6">
+			<section
+				aria-labelledby="conversations-heading"
+				aria-busy={query.isPending}
+				className="space-y-6"
+			>
 				<header className="flex items-baseline justify-between gap-4">
-					<h2 className="text-2xl font-semibold tracking-tight">Conversations</h2>
+					<h2 id="conversations-heading" className="text-2xl font-semibold tracking-tight">
+						Conversations
+					</h2>
 					<SessionCount query={query} />
 				</header>
 
@@ -61,15 +75,7 @@ export function ConversationsList() {
 						if (items.length === 0) return <EmptyState />;
 						return (
 							<div className="space-y-3">
-								<ul className="space-y-3">
-									{items.map((item) => (
-										<ConversationRow
-											key={item.id}
-											session={item}
-											onReplay={(id) => setModalSource(id)}
-										/>
-									))}
-								</ul>
+								<ConversationsTable items={items} onReplay={(id) => setModalSource(id)} />
 								{q.hasNextPage && (
 									<div className="flex justify-center pt-2">
 										<Button
@@ -117,87 +123,109 @@ function SessionCount({ query }: SessionCountProps) {
 	);
 }
 
+interface ConversationsTableProps {
+	items: readonly SessionListItem[];
+	onReplay: (sessionId: string) => void;
+}
+
+function ConversationsTable({ items, onReplay }: ConversationsTableProps) {
+	return (
+		<Table>
+			<ConversationsTableHead />
+			<TableBody>
+				{items.map((item) => (
+					<ConversationRow key={item.id} session={item} onReplay={onReplay} />
+				))}
+			</TableBody>
+		</Table>
+	);
+}
+
+function ConversationsTableHead() {
+	return (
+		<TableHeader>
+			<TableRow>
+				<TableHead scope="col">Started</TableHead>
+				<TableHead scope="col">Agent</TableHead>
+				<TableHead scope="col">Duration</TableHead>
+				<TableHead scope="col">Source</TableHead>
+				<TableHead scope="col" className="w-px text-right">
+					<span className="sr-only">Actions</span>
+				</TableHead>
+			</TableRow>
+		</TableHeader>
+	);
+}
+
 interface ConversationRowProps {
 	session: SessionListItem;
 	onReplay: (sessionId: string) => void;
 }
 
 function ConversationRow({ session, onReplay }: ConversationRowProps) {
-	// One <Link> per row — wraps metadata + chevron, sits next to the Replay
-	// <button> as a sibling (not parent), so we never nest <button> in <a>.
-	// No `aria-label` on the <Link>: an aria-label would suppress the
-	// descendant text (Duration, Source badge) from the link's accessible
-	// name. Screen-reader users get the full row text instead.
+	// Wrapping <tr> in an <a> is invalid HTML, so the agent-cell <Link> uses
+	// `::after` to cover the whole row; the Replay cell sits in its own
+	// stacking context so the button stays clickable above the overlay.
 	return (
-		<li>
-			<Card className="group w-full text-left transition-colors hover:bg-accent/30">
+		<TableRow className="relative">
+			<TableCell className="text-muted-foreground">
+				<time dateTime={session.startedAt}>{formatAbsolute(session.startedAt)}</time>
+			</TableCell>
+			<TableCell className="font-medium">
 				<Link
 					to="/sessions/$sessionId"
 					params={{ sessionId: session.id }}
-					className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+					aria-label={`Open session ${session.agentId}, started ${formatAbsolute(session.startedAt)}`}
+					className="after:absolute after:inset-0 after:rounded-md focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring/50"
 				>
-					<CardHeader>
-						<CardDescription>
-							<time dateTime={session.startedAt}>{formatAbsolute(session.startedAt)}</time>
-						</CardDescription>
-						<CardTitle className="flex items-center justify-between gap-3 text-base font-medium">
-							<dl className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5">
-								<div className="flex items-baseline gap-2">
-									<dt className="sr-only">Agent</dt>
-									<dd>{session.agentId}</dd>
-								</div>
-								<div className="text-muted-foreground flex items-baseline gap-2 text-sm font-normal">
-									<dt>Duration</dt>
-									<dd>{formatDuration(session.durationMs)}</dd>
-								</div>
-								<div className="flex items-baseline gap-2 text-sm font-normal">
-									<dt className="sr-only">Source</dt>
-									<dd>
-										<Badge variant={sourceBadgeVariant(session.source)}>{session.source}</Badge>
-									</dd>
-								</div>
-							</dl>
-							<ChevronRight
-								aria-hidden="true"
-								className="text-muted-foreground size-4 shrink-0 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
-							/>
-						</CardTitle>
-					</CardHeader>
+					{session.agentId}
 				</Link>
-				<CardContent className="flex items-center justify-end gap-2">
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => onReplay(session.id)}
-						aria-label={`Replay session ${session.agentId}`}
-					>
-						<Play />
-						Replay
-					</Button>
-				</CardContent>
-			</Card>
-		</li>
+			</TableCell>
+			<TableCell className="text-muted-foreground">{formatDuration(session.durationMs)}</TableCell>
+			<TableCell>
+				<Badge variant={sourceBadgeVariant(session.source)}>{session.source}</Badge>
+			</TableCell>
+			<TableCell className="relative z-10 text-right">
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => onReplay(session.id)}
+					aria-label={`Replay session ${session.agentId}`}
+				>
+					<Play />
+					Replay
+				</Button>
+			</TableCell>
+		</TableRow>
 	);
 }
 
 function LoadingState() {
 	return (
-		<ul className="space-y-3">
-			{[0, 1, 2, 3].map((i) => (
-				<li key={i}>
-					<Card>
-						<CardHeader>
-							<Skeleton className="h-3 w-32" />
-							<div className="flex items-center gap-6">
-								<Skeleton className="h-4 w-40" />
-								<Skeleton className="h-4 w-16" />
-								<Skeleton className="h-4 w-24" />
-							</div>
-						</CardHeader>
-					</Card>
-				</li>
-			))}
-		</ul>
+		<Table>
+			<ConversationsTableHead />
+			<TableBody>
+				{[0, 1, 2, 3].map((i) => (
+					<TableRow key={i}>
+						<TableCell>
+							<Skeleton className="h-4 w-32" />
+						</TableCell>
+						<TableCell>
+							<Skeleton className="h-4 w-40" />
+						</TableCell>
+						<TableCell>
+							<Skeleton className="h-4 w-16" />
+						</TableCell>
+						<TableCell>
+							<Skeleton className="h-5 w-20 rounded-full" />
+						</TableCell>
+						<TableCell className="text-right">
+							<Skeleton className="ml-auto h-8 w-20" />
+						</TableCell>
+					</TableRow>
+				))}
+			</TableBody>
+		</Table>
 	);
 }
 
