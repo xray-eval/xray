@@ -34,21 +34,30 @@
 //                         debugging. THIS IS THE BIGGEST KNOB — a bad
 //                         default here manufactures diffs that aren't bugs.
 //   PORT                  default 4000
-// CLI flags (--port, --model, --system) override the env vars.
+//   VOICE                 "1" / "true" enables voice mode (TTS + xray audio upload, #25)
+//   OPENAI_TTS_MODEL      default "tts-1"
+//   OPENAI_TTS_VOICE      default "alloy"
+//   XRAY_URL              default "http://xray-dev:8080" (compose sibling)
+// CLI flags (--port, --model, --system, --voice, --tts-model, --tts-voice,
+// --xray-url) override the env vars.
 //
 // Why no openai SDK: keeps this contributor-only script out of package.json
 // (and out of the 7-day supply-chain cooldown). Raw fetch is enough.
 
 import * as v from "valibot";
 
-// Env codec — per boundary-validation.md, env vars get parsed once at startup
-// rather than read ad-hoc as untyped index lookups. Failing here gives the
-// operator one clear error instead of cryptic `undefined` symptoms later.
+import { isTruthy, stripTrailingSlash, synthesizeAndUpload } from "./lib/voice.ts";
+
+// Per boundary-validation.md: env parsed once at startup.
 const EnvSchema = v.object({
 	OPENAI_API_KEY: v.pipe(v.string(), v.minLength(1, "OPENAI_API_KEY is required")),
 	OPENAI_MODEL: v.optional(v.string()),
 	AGENT_SYSTEM_PROMPT: v.optional(v.string()),
 	PORT: v.optional(v.string()),
+	VOICE: v.optional(v.string()),
+	OPENAI_TTS_MODEL: v.optional(v.string()),
+	OPENAI_TTS_VOICE: v.optional(v.string()),
+	XRAY_URL: v.optional(v.string()),
 });
 
 const envResult = v.safeParse(EnvSchema, process.env);
@@ -66,11 +75,19 @@ interface ScriptArgs {
 	port?: string;
 	model?: string;
 	system?: string;
+	voice?: string;
+	"tts-model"?: string;
+	"tts-voice"?: string;
+	"xray-url"?: string;
 }
 
 const ARGS: ScriptArgs = parseArgs(process.argv.slice(2));
 const PORT = Number(ARGS.port ?? ENV.PORT ?? "4000");
 const MODEL = ARGS.model ?? ENV.OPENAI_MODEL ?? "gpt-4o-mini";
+const VOICE_ENABLED = isTruthy(ARGS.voice ?? ENV.VOICE);
+const TTS_MODEL = ARGS["tts-model"] ?? ENV.OPENAI_TTS_MODEL ?? "tts-1";
+const TTS_VOICE = ARGS["tts-voice"] ?? ENV.OPENAI_TTS_VOICE ?? "alloy";
+const XRAY_URL = stripTrailingSlash(ARGS["xray-url"] ?? ENV.XRAY_URL ?? "http://xray-dev:8080");
 // Neutral baseline — no length/format/voice constraints. Anything more
 // opinionated would bias the diff (a "two short sentences" rule manufactures
 // length divergence against a source session whose agent gave long answers).
@@ -324,6 +341,12 @@ const server = Bun.serve({
 		console.info(
 			`[${payload.sessionId}] turn ${payload.turnIdx} ${snippet(payload.userText)} → ${snippet(result.agentText)}${toolSuffix} (${responseLatencyMs}ms)`,
 		);
+
+		// Fire-and-forget: don't block the replay worker on a slow TTS provider.
+		if (VOICE_ENABLED) {
+			void runVoice(payload.sessionId, payload.turnIdx, result.agentText);
+		}
+
 		return Response.json({
 			agentText: result.agentText,
 			responseLatencyMs,
@@ -332,10 +355,32 @@ const server = Bun.serve({
 	},
 });
 
+async function runVoice(sessionId: string, turnIdx: number, text: string): Promise<void> {
+	const res = await synthesizeAndUpload({
+		apiKey: ENV.OPENAI_API_KEY,
+		xrayBase: XRAY_URL,
+		sessionId,
+		turnIdx,
+		text,
+		ttsModel: TTS_MODEL,
+		voice: TTS_VOICE,
+	});
+	if (res.ok) {
+		console.info(`[${sessionId}] turn ${turnIdx} voice uploaded (${res.bytes}B)`);
+	} else {
+		console.error(`turn ${turnIdx} voice failed: ${res.reason}`);
+	}
+}
+
 console.info(`agent-webhook listening on http://0.0.0.0:${server.port}`);
 console.info(`  POST /replay   — xray webhook target`);
 console.info(`  GET  /healthz  — liveness`);
 console.info(`  model: ${MODEL}`);
+if (VOICE_ENABLED) {
+	console.info(`  voice: ${TTS_VOICE} (${TTS_MODEL}) → ${XRAY_URL}`);
+} else {
+	console.info(`  voice: off (set --voice or VOICE=1 to enable)`);
+}
 
 function snippet(s: string): string {
 	const max = 50;
@@ -357,10 +402,18 @@ function parseArgs(argv: string[]): ScriptArgs {
 		} else {
 			value = "true";
 		}
-		if (key === "port" || key === "model" || key === "system") {
+		if (
+			key === "port" ||
+			key === "model" ||
+			key === "system" ||
+			key === "voice" ||
+			key === "tts-model" ||
+			key === "tts-voice" ||
+			key === "xray-url"
+		) {
 			out[key] = value;
 		}
-		// Unknown flags are ignored — the script only takes the three above.
+		// Unknown flags are ignored.
 	}
 	return out;
 }

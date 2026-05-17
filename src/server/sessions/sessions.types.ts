@@ -65,6 +65,9 @@ export const ConversationTurnSchema = v.object({
 	responseLatencyMs: v.nullable(v.number()),
 	interrupted: v.nullable(v.boolean()),
 	interruptedAtMs: v.nullable(v.number()),
+	/** Non-null = "audio available"; client fetches bytes lazily via the
+	 *  audio endpoint. The path itself is server-internal. */
+	audioPath: v.nullable(v.string()),
 	toolCalls: v.array(ConversationToolCallSchema),
 });
 export type ConversationTurn = v.InferOutput<typeof ConversationTurnSchema>;

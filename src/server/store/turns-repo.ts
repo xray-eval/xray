@@ -45,3 +45,21 @@ export function listTurnsForSession(db: StoreDb, sessionId: string): TurnRow[] {
 		.orderBy(asc(turns.idx))
 		.all();
 }
+
+/** Stamp `audio_path`. Returns `true` iff a row matched — the audio service
+ *  uses the `false` case to clean up an orphan file when the turn vanished
+ *  between the disk write and the DB write. */
+export function setTurnAudioPath(
+	db: StoreDb,
+	sessionId: string,
+	idx: number,
+	audioPath: string,
+): boolean {
+	const rows = db
+		.update(turns)
+		.set({ audioPath })
+		.where(and(eq(turns.sessionId, sessionId), eq(turns.idx, idx)))
+		.returning({ id: turns.id })
+		.all();
+	return rows.length > 0;
+}

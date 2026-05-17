@@ -9,6 +9,7 @@ import type {
 	ConversationTurn,
 } from "@/server/sessions/sessions.types.ts";
 
+import { turnAudioUrl } from "../api/audio-api.ts";
 import { fetchConversation } from "../api/conversation-api.ts";
 import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
@@ -70,7 +71,7 @@ function Transcript({ conversation }: { conversation: Conversation }) {
 				<ol className="space-y-4">
 					{conversation.turns.map((turn) => (
 						<li key={turn.id}>
-							<TurnCard turn={turn} />
+							<TurnCard sessionId={conversation.id} turn={turn} />
 						</li>
 					))}
 				</ol>
@@ -109,7 +110,7 @@ function TranscriptHeader({ conversation }: { conversation: Conversation }) {
 	);
 }
 
-function TurnCard({ turn }: { turn: ConversationTurn }) {
+function TurnCard({ sessionId, turn }: { sessionId: string; turn: ConversationTurn }) {
 	const interruptedSuffix = turn.interruptedAtMs !== null ? ` at ${turn.interruptedAtMs}ms` : "";
 	return (
 		<Card>
@@ -135,6 +136,7 @@ function TurnCard({ turn }: { turn: ConversationTurn }) {
 				<CardTitle className="text-base font-medium whitespace-pre-wrap break-words">
 					{turn.text}
 				</CardTitle>
+				{turn.audioPath !== null && <TurnAudio sessionId={sessionId} turn={turn} />}
 			</CardHeader>
 			{turn.toolCalls.length > 0 && (
 				<CardContent>
@@ -142,6 +144,20 @@ function TurnCard({ turn }: { turn: ConversationTurn }) {
 				</CardContent>
 			)}
 		</Card>
+	);
+}
+
+function TurnAudio({ sessionId, turn }: { sessionId: string; turn: ConversationTurn }) {
+	// `preload="none"` keeps bytes off the wire until the user clicks play —
+	// otherwise a 50-turn transcript would fire one HEAD per element on mount.
+	return (
+		<audio
+			controls
+			preload="none"
+			src={turnAudioUrl(sessionId, turn.idx)}
+			aria-label={`Audio for ${turn.role} turn ${turn.idx}`}
+			className="mt-2 w-full max-w-sm"
+		/>
 	);
 }
 

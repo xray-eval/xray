@@ -143,6 +143,72 @@ describe("Inspector — tool-heavy fixture", () => {
 	});
 });
 
+describe("Inspector — audio playback", () => {
+	it("renders an <audio controls> element with preload=none when a turn has audioPath", async () => {
+		const conv = makeConversation({
+			id: "sess-1",
+			turns: [
+				makeConversationTurn({
+					id: "t-0",
+					idx: 0,
+					role: "agent",
+					text: "hi",
+					audioPath: "sess-1/0.opus",
+				}),
+			],
+		});
+		server.use(http.get(CONVO_URL, () => HttpResponse.json(conv)));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+
+		const player = await screen.findByLabelText(/audio for agent turn 0/i);
+		// preload=none keeps the bytes off the wire until the user clicks play —
+		// the lazy-load contract spelled out in the issue.
+		expect(player.getAttribute("preload")).toBe("none");
+		expect(player.getAttribute("src")).toBe(
+			`${window.location.origin}/v1/sessions/sess-1/turns/0/audio`,
+		);
+	});
+
+	it("does not render an audio element when audioPath is null", async () => {
+		const conv = makeConversation({
+			id: "sess-1",
+			turns: [makeConversationTurn({ id: "t-0", idx: 0, role: "agent", text: "no audio here" })],
+		});
+		server.use(http.get(CONVO_URL, () => HttpResponse.json(conv)));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText("no audio here")).toBeTruthy());
+		expect(screen.queryByLabelText(/audio for /i)).toBeNull();
+	});
+
+	it("percent-encodes a session id with special characters in the audio src", async () => {
+		const sessionId = "sess.with-dots_and-dashes";
+		const conv = makeConversation({
+			id: sessionId,
+			turns: [
+				makeConversationTurn({
+					id: "t-0",
+					idx: 3,
+					role: "agent",
+					audioPath: `${sessionId}/3.wav`,
+				}),
+			],
+		});
+		server.use(
+			http.get(`http://localhost/v1/sessions/${sessionId}`, () => HttpResponse.json(conv)),
+		);
+		const { ui } = renderWithRouter({ initialEntries: [`/sessions/${sessionId}`] });
+		render(ui);
+
+		const player = await screen.findByLabelText(/audio for agent turn 3/i);
+		expect(player.getAttribute("src")).toBe(
+			`${window.location.origin}/v1/sessions/${encodeURIComponent(sessionId)}/turns/3/audio`,
+		);
+	});
+});
+
 describe("Inspector — empty transcript", () => {
 	it("renders the empty-turns hint when the session has metadata but no turns", async () => {
 		server.use(

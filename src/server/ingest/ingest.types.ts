@@ -96,4 +96,12 @@ export const SessionIdSchema = v.pipe(
 	v.nonEmpty(),
 	v.maxLength(MAX_SESSION_ID),
 	v.regex(/^[A-Za-z0-9._-]+$/),
+	// Defense in depth for any consumer that joins the id into a filesystem
+	// path (e.g. the audio slice). URL normalization currently strips `..`
+	// before route matching, but enforcing it at the schema means a non-HTTP
+	// caller can't bypass it.
+	v.check(
+		(s) => s !== "." && s !== ".." && !s.includes(".."),
+		"session id cannot be '.', '..', or contain '..'",
+	),
 );

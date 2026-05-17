@@ -1,0 +1,1 @@
+ALTER TABLE `turns` ADD `audio_path` text;

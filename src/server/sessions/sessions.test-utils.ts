@@ -71,6 +71,7 @@ export function makeConversationTurn(overrides: Partial<ConversationTurn> = {}):
 		responseLatencyMs: null,
 		interrupted: null,
 		interruptedAtMs: null,
+		audioPath: null,
 		toolCalls: [],
 		...overrides,
 	};

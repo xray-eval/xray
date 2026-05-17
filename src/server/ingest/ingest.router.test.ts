@@ -1,5 +1,6 @@
 import * as v from "valibot";
 
+import { makeTempAudioRoot } from "@/server/audio/audio.test-utils.ts";
 import { createApp } from "@/server/server.ts";
 import { getSession, listSessions } from "@/server/store/sessions-repo.ts";
 import type { Store } from "@/server/store/store.ts";
@@ -14,6 +15,7 @@ import {
 	makeToolCalledEvent,
 	makeTurnCompletedEvent,
 } from "./ingest.test-utils.ts";
+import { SessionIdSchema } from "./ingest.types.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 const IssueSchema = v.object({
@@ -37,15 +39,18 @@ const BodyTooLargeBodySchema = v.object({
 });
 
 let store: Store;
+let audio: ReturnType<typeof makeTempAudioRoot>;
 let app: ReturnType<typeof createApp>;
 
 beforeEach(() => {
 	store = makeTempStore();
-	app = createApp(store);
+	audio = makeTempAudioRoot();
+	app = createApp(store, { audioRoot: audio.path });
 });
 
 afterEach(() => {
 	store.close();
+	audio.dispose();
 });
 
 async function post(sessionId: string, event: unknown): Promise<Response> {
@@ -280,6 +285,18 @@ describe("POST /v1/sessions/:id/events — schema rejection", () => {
 		});
 		const res = await app.request(req);
 		expect(res.status).toBe(400);
+	});
+});
+
+describe("SessionIdSchema — path-traversal defense", () => {
+	it.each([".", "..", "a..b", "..a", "a..", "../etc/passwd", "./foo"])("rejects %p", (badId) => {
+		const result = v.safeParse(SessionIdSchema, badId);
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts ids with a single dot (e.g. version-like)", () => {
+		const result = v.safeParse(SessionIdSchema, "sess.v1");
+		expect(result.success).toBe(true);
 	});
 });
 

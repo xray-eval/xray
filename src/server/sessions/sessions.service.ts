@@ -124,6 +124,7 @@ function toConversationTurn(row: TurnRow, toolCalls: ConversationToolCall[]): Co
 		responseLatencyMs: row.responseLatencyMs,
 		interrupted: row.interrupted,
 		interruptedAtMs: row.interruptedAtMs,
+		audioPath: row.audioPath,
 		toolCalls,
 	};
 }

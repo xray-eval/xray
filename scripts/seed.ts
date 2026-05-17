@@ -2,8 +2,11 @@
 // something to render without a real agent loop.
 //
 // Usage:
-//   pnpm dev          # in one terminal — dev server on :8080
-//   pnpm seed         # in another — POSTs events through /v1/sessions/:id/events
+//   pnpm dev                          # in one terminal — dev server on :8080
+//   pnpm seed                         # in another — POSTs events through /v1/sessions/:id/events
+//   VOICE=1 OPENAI_API_KEY=sk-... pnpm seed
+//                                     # also synthesizes per-turn audio via OpenAI TTS and
+//                                     # POSTs it to /v1/sessions/:id/turns/:idx/audio
 //
 // Override target via env: XRAY_BASE_URL=http://otherhost:9000 pnpm seed
 //
@@ -13,13 +16,30 @@
 
 import * as v from "valibot";
 
+import { isTruthy, synthesizeAndUpload } from "./lib/voice.ts";
+
 // Env codec — parse once at startup per boundary-validation.md, not as
 // scattered untyped index lookups.
 const EnvSchema = v.object({
 	XRAY_BASE_URL: v.optional(v.string()),
+	VOICE: v.optional(v.string()),
+	OPENAI_API_KEY: v.optional(v.string()),
+	OPENAI_TTS_MODEL: v.optional(v.string()),
+	OPENAI_TTS_VOICE: v.optional(v.string()),
 });
 const ENV = v.parse(EnvSchema, process.env);
 const BASE = ENV.XRAY_BASE_URL ?? "http://localhost:8080";
+
+const VOICE_ENABLED = isTruthy(ENV.VOICE);
+const TTS_MODEL = ENV.OPENAI_TTS_MODEL ?? "tts-1";
+// Two voices so user/agent turns sound different in playback.
+const USER_VOICE = "shimmer";
+const AGENT_VOICE = ENV.OPENAI_TTS_VOICE ?? "alloy";
+
+if (VOICE_ENABLED && ENV.OPENAI_API_KEY === undefined) {
+	console.error("VOICE=1 set but OPENAI_API_KEY is missing — pass it or unset VOICE.");
+	process.exit(1);
+}
 
 type Role = "user" | "agent" | "tool" | "system";
 
@@ -301,6 +321,9 @@ async function seedSession(session: SeedSession): Promise<void> {
 				},
 			});
 		}
+		if (VOICE_ENABLED && (turn.role === "user" || turn.role === "agent")) {
+			await runVoice(session.id, turn.idx, turn.role, turn.text);
+		}
 	}
 	if (session.durationMs !== undefined) {
 		await postEvent({
@@ -314,8 +337,33 @@ async function seedSession(session: SeedSession): Promise<void> {
 	}
 }
 
+async function runVoice(
+	sessionId: string,
+	turnIdx: number,
+	role: "user" | "agent",
+	text: string,
+): Promise<void> {
+	// The guard at module init narrowed OPENAI_API_KEY to non-undefined when
+	// VOICE_ENABLED; the `?? ""` here is purely a type guard.
+	const apiKey = ENV.OPENAI_API_KEY ?? "";
+	const res = await synthesizeAndUpload({
+		apiKey,
+		xrayBase: BASE,
+		sessionId,
+		turnIdx,
+		text,
+		ttsModel: TTS_MODEL,
+		voice: role === "user" ? USER_VOICE : AGENT_VOICE,
+	});
+	if (!res.ok) {
+		console.warn(`  ! audio for ${sessionId} turn ${turnIdx} (${role}) failed: ${res.reason}`);
+	}
+}
+
 async function main(): Promise<void> {
-	console.info(`Seeding ${SESSIONS.length} sessions to ${BASE}`);
+	console.info(
+		`Seeding ${SESSIONS.length} sessions to ${BASE}${VOICE_ENABLED ? " (voice on)" : ""}`,
+	);
 	// Quick reachability check so the failure mode is obvious if the dev
 	// server isn't running, instead of N opaque fetch errors.
 	try {

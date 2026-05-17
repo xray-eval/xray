@@ -46,6 +46,9 @@ export const turns = sqliteTable(
 		responseLatencyMs: integer("response_latency_ms"),
 		interrupted: integer("interrupted", { mode: "boolean" }),
 		interruptedAtMs: integer("interrupted_at_ms"),
+		// Relative to the audio root; bytes live on the mounted volume, not
+		// in SQLite (BLOBs > a few MB are a SQLite anti-pattern).
+		audioPath: text("audio_path"),
 	},
 	(t) => [
 		index("idx_turns_session_idx").on(t.sessionId, t.idx),
