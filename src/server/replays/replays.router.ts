@@ -14,7 +14,7 @@ import {
 } from "@/server/core/types.ts";
 import { SessionIdSchema } from "@/server/ingest/ingest.types.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
-import { SessionNotFoundError } from "@/server/sessions/sessions.errors.ts";
+import { InvalidSessionIdError, SessionNotFoundError } from "@/server/sessions/sessions.errors.ts";
 import { getReplayRun } from "@/server/store/replay-runs-repo.ts";
 import type { Store } from "@/server/store/store.ts";
 
@@ -22,7 +22,6 @@ import {
 	BodyTooLargeError,
 	InvalidReplayIdError,
 	InvalidReplayRequestError,
-	InvalidSessionIdError,
 	MalformedBodyError,
 	ReplayRunNotFoundError,
 	SourceSessionNotFoundError,
