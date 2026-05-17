@@ -18,7 +18,7 @@
 		"typecheck": "tsc --noEmit",
 		"dev": "UID=$(id -u) GID=$(id -g) docker compose -f compose.dev.yaml up --build",
 		"dev:down": "docker compose -f compose.dev.yaml down -v",
-		"build": "bun build ./index.html --outdir=dist --production",
+		"build": "bun run scripts/build.ts",
 		"start": "bun src/server/main.ts",
 		"docker:build": "docker build -t xray:local .",
 		"docker:run": "docker run --rm -p 8080:8080 --env-file .env xray:local",

@@ -62,12 +62,7 @@ export function Inspector({ sessionId, apiBase, onBack }: InspectorProps) {
 			)}
 
 			{match(query)
-				.with({ status: "pending" }, () => (
-					<>
-						<span className="sr-only">Loading transcript…</span>
-						<LoadingState />
-					</>
-				))
+				.with({ status: "pending" }, () => <LoadingState />)
 				.with({ status: "error" }, (q) => (
 					<ErrorState error={q.error} onRetry={() => query.refetch()} />
 				))
@@ -218,18 +213,21 @@ function ToolCallField({ label, value }: { label: string; value: unknown }) {
 
 function LoadingState() {
 	return (
-		<div className="space-y-4" aria-hidden="true">
-			<Skeleton className="h-7 w-48" />
-			<Skeleton className="h-4 w-72" />
-			<Separator />
-			{[0, 1, 2].map((i) => (
-				<Card key={i}>
-					<CardHeader>
-						<Skeleton className="h-4 w-24" />
-						<Skeleton className="h-4 w-64" />
-					</CardHeader>
-				</Card>
-			))}
+		<div className="space-y-4">
+			<span className="sr-only">Loading transcript…</span>
+			<div aria-hidden="true" className="space-y-4">
+				<Skeleton className="h-7 w-48" />
+				<Skeleton className="h-4 w-72" />
+				<Separator />
+				{[0, 1, 2].map((i) => (
+					<Card key={i}>
+						<CardHeader>
+							<Skeleton className="h-4 w-24" />
+							<Skeleton className="h-4 w-64" />
+						</CardHeader>
+					</Card>
+				))}
+			</div>
 		</div>
 	);
 }
