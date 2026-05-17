@@ -1,8 +1,17 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { describeRoute } from "hono-openapi";
 import { match, P } from "ts-pattern";
 import * as v from "valibot";
 
+import {
+	BodyTooLargeResponseSchema,
+	OkResponseSchema,
+	openApiSchemaFromValibot,
+	StoreFailureResponseSchema,
+	UnknownTurnResponseSchema,
+	ValidationErrorResponseSchema,
+} from "@/server/core/types.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
@@ -40,6 +49,55 @@ export function createIngestRouter(store: Store): Hono {
 
 	router.post(
 		"/sessions/:id/events",
+		describeRoute({
+			tags: ["Ingest"],
+			summary: "POST a voice-agent event into a session",
+			description:
+				"Append one event (`session_started`, `turn_completed`, `tool_called`, `session_ended`) to a session. Idempotent on `session_id` + `idx` — retrying a delivered event is a no-op. The session id is part of the URL so the body never has to carry it.",
+			parameters: [
+				{
+					in: "path",
+					name: "id",
+					required: true,
+					description: "Session id chosen by the caller.",
+					schema: openApiSchemaFromValibot(SessionIdSchema),
+				},
+			],
+			requestBody: {
+				required: true,
+				content: { "application/json": { schema: openApiSchemaFromValibot(IngestEventSchema) } },
+			},
+			responses: {
+				"200": {
+					description: "Event accepted.",
+					content: { "application/json": { schema: openApiSchemaFromValibot(OkResponseSchema) } },
+				},
+				"400": {
+					description: "Session id or body failed validation.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"413": {
+					description: "Body exceeded the 1 MB cap.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(BodyTooLargeResponseSchema) },
+					},
+				},
+				"422": {
+					description: "`tool_called` referenced a turn idx with no row.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(UnknownTurnResponseSchema) },
+					},
+				},
+				"500": {
+					description: "Unhandled store-side failure.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(StoreFailureResponseSchema) },
+					},
+				},
+			},
+		}),
 		bodyLimit({
 			maxSize: MAX_BODY_BYTES,
 			onError: () => {

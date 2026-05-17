@@ -27,7 +27,7 @@ Each of these is a real cost, none of which the proposer usually accounts for:
 
 | Cost | What happens |
 |---|---|
-| **Distribution model** | `docker run ghcr.io/<owner>/xray` no longer works alone. README grows a "first set up a Postgres" section. The install funnel collapses. |
+| **Distribution model** | `docker run ghcr.io/basilebong/xray` no longer works alone. README grows a "first set up a Postgres" section. The install funnel collapses. |
 | **Operator burden** | The self-host story now requires DB provisioning, schema migrations, backup of a separate system, credentials handed to xray. |
 | **Supply chain** | A driver package (`pg`, `mysql2`, equivalent) gets pulled in — subject to the 7-day cooldown, version pins, audit. The driver was nominally for "safety" and is itself an attack surface. |
 | **Migrations** | A second tool (Prisma, Drizzle, raw SQL files + a runner) is now in the repo. SQLite migrations are usually a single `ALTER` in code at startup; Postgres migrations need orchestration. |

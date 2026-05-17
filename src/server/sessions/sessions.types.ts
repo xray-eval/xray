@@ -49,12 +49,12 @@ export const ConversationToolCallSchema = v.object({
 export type ConversationToolCall = v.InferOutput<typeof ConversationToolCallSchema>;
 
 /**
- * Wire shape of one transcript turn. Flattens the store's `TurnRow` (the
- * graph-routing columns like `activeNodeId` / `edgeFiredId` are not part of
- * the transcript view — they belong to the graph slice). Tool calls are
- * inlined under each turn rather than fetched on demand: the inspector
- * already needs them to render the expandable block, and a separate fetch
- * round-trip per turn would be a UX regression.
+ * Wire shape of one transcript turn. Flattens the store's `TurnRow` and
+ * drops the `activeNodeId` / `edgeFiredId` columns the transcript view
+ * doesn't need (they're vestigial from a deleted workflow-graph view).
+ * Tool calls are inlined under each turn rather than fetched on demand: the
+ * inspector already needs them to render the expandable block, and a separate
+ * fetch round-trip per turn would be a UX regression.
  */
 export const ConversationTurnSchema = v.object({
 	id: v.string(),

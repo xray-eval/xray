@@ -105,6 +105,6 @@ Bulk upgrades: `pnpm dlx pin-github-action` or Renovate's `helpers:pinGitHubActi
 
 ## What's not yet covered
 
-- **GHCR publish workflow.** Target registry is `ghcr.io/<owner>/xray`. Add `publish.yml` triggered on tag push: build the multi-stage Dockerfile, push to GHCR using the workflow's `GITHUB_TOKEN` (no static PAT), sign with cosign keyless (OIDC, no static cosign key), attach build-provenance attestation via `actions/attest-build-provenance`, optionally an SBOM via `actions/attest-sbom`. Pin every action to a SHA per section 4.
+- **GHCR publish workflow.** Target registry is `ghcr.io/basilebong/xray`. Add `publish.yml` triggered on tag push: build the multi-stage Dockerfile, push to GHCR using the workflow's `GITHUB_TOKEN` (no static PAT), sign with cosign keyless (OIDC, no static cosign key), attach build-provenance attestation via `actions/attest-build-provenance`, optionally an SBOM via `actions/attest-sbom`. Pin every action to a SHA per section 4.
 - **npm publish workflow** with OIDC + `--provenance` — only if/when this repo starts publishing JS packages (not currently planned).
 - **Renovate / Dependabot cooldown** mirroring `minimumReleaseAge` — add `renovate.json5` with `minimumReleaseAge: "7 days"` when bots are enabled.

@@ -38,6 +38,9 @@ const server = Bun.serve({
 		// the most-specific match, so the SPA catchall below does not shadow them.
 		"/healthz": (req) => app.fetch(req),
 		"/v1/*": (req) => app.fetch(req),
+		"/openapi.json": (req) => app.fetch(req),
+		"/asyncapi.json": (req) => app.fetch(req),
+		"/docs": (req) => app.fetch(req),
 		// SPA fallback: any other path returns the bundled HTML shell. Client-
 		// side routing (`/sessions/:id`, etc.) is handled in React.
 		"/*": index,

@@ -1,14 +1,23 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { describeRoute } from "hono-openapi";
 import { match, P } from "ts-pattern";
 import * as v from "valibot";
 
+import {
+	BodyTooLargeResponseSchema,
+	openApiSchemaFromValibot,
+	SessionNotFoundResponseSchema,
+	StoreFailureResponseSchema,
+	ValidationErrorResponseSchema,
+} from "@/server/core/types.ts";
 import {
 	BodyTooLargeError,
 	MalformedBodyError,
 	SourceSessionNotFoundError,
 } from "@/server/replays/replays.errors.ts";
 import { toReplayRunResponse } from "@/server/replays/replays.service.ts";
+import { ReplayRunResponseSchema } from "@/server/replays/replays.types.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
@@ -30,6 +39,52 @@ export function createRealtimeReplaysRouter(store: Store, audioRoot: string): Ho
 
 	router.post(
 		"/replays/realtime",
+		describeRoute({
+			tags: ["Replays"],
+			summary: "Start a realtime (V2V) replay run",
+			description:
+				"Re-runs a recorded session by streaming the source's user audio chunk-by-chunk to your webhook over a WebSocket. The webhook responds with agent audio + transcript framed by turn boundaries. The framed protocol is documented at [`/asyncapi.json`](/asyncapi.json). `webhookUrl` must use `ws:` or `wss:`. Returns 202 immediately — poll `GET /v1/replays/:id` for progress.",
+			requestBody: {
+				required: true,
+				content: {
+					"application/json": {
+						schema: openApiSchemaFromValibot(CreateRealtimeReplayRequestSchema),
+					},
+				},
+			},
+			responses: {
+				"202": {
+					description: "Replay run created; WS worker started.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ReplayRunResponseSchema) },
+					},
+				},
+				"400": {
+					description: "Body failed validation.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description: "Source session not found.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(SessionNotFoundResponseSchema) },
+					},
+				},
+				"413": {
+					description: "Body exceeded the 4 KB cap.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(BodyTooLargeResponseSchema) },
+					},
+				},
+				"500": {
+					description: "Unhandled internal failure.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(StoreFailureResponseSchema) },
+					},
+				},
+			},
+		}),
 		bodyLimit({
 			maxSize: MAX_BODY_BYTES,
 			onError: () => {

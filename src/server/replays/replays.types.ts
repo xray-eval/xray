@@ -128,3 +128,6 @@ export const WebhookResponseSchema = v.object({
 export type WebhookResponse = v.InferOutput<typeof WebhookResponseSchema>;
 
 export const REPLAY_HISTORY_CAP = MAX_HISTORY;
+
+/** Path-param schema for `GET /v1/replays/:id`. UUID v4-ish (any UUID shape works). */
+export const ReplayIdSchema = v.pipe(v.string(), v.regex(/^[0-9a-fA-F-]{36}$/, "Must be a UUID"));

@@ -61,8 +61,10 @@ export interface ToolCall {
 
 /**
  * One logical step in a conversation: a user utterance, an agent reply, a tool
- * call + return, or a system event. `activeNodeId` + `edgeFiredId` are how we
- * paint the graph for this turn.
+ * call + return, or a system event. `activeNodeId` / `edgeFiredId` are
+ * vestigial graph-routing fields from a deleted workflow-graph view; an
+ * adapter that implements `getWorkflow` may still populate them, but no UI
+ * consumes them today.
  */
 export interface Turn {
 	id: TurnId;
