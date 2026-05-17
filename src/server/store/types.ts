@@ -1,8 +1,14 @@
 import type { InferInsertModel, InferSelectModel } from "drizzle-orm";
 
-import type { sessions, toolCalls, turns } from "./schema.ts";
+import type { replayRuns, sessions, toolCalls, turns } from "./schema.ts";
 
 export type SessionSource = "adapter" | "ingest";
+
+// Single source of truth: the `as const` array is runtime-visible (used
+// by Valibot's picklist in `replays.types.ts`) AND the static type. Adding
+// a value in one place updates both.
+export const REPLAY_RUN_STATUSES = ["pending", "running", "completed", "failed"] as const;
+export type ReplayRunStatus = (typeof REPLAY_RUN_STATUSES)[number];
 
 /**
  * A unified session record. Covers provider-adapter polls (source='adapter',
@@ -31,3 +37,13 @@ export type ToolCallRow = InferSelectModel<typeof toolCalls>;
 
 /** Builder shape for `appendToolCalls` — `id` is auto-assigned, `turnId` comes from the arg. */
 export type ToolCallInput = Omit<InferInsertModel<typeof toolCalls>, "id" | "turnId">;
+
+/**
+ * Persisted replay-run row. One row per `POST /v1/replays` call; the worker
+ * walks user turns from `source_session_id` and writes the replayed agent
+ * responses into a fresh session whose id is `target_session_id`.
+ */
+export type ReplayRunRow = InferSelectModel<typeof replayRuns>;
+
+/** Builder shape for `createReplayRun`. */
+export type ReplayRunInput = InferInsertModel<typeof replayRuns>;

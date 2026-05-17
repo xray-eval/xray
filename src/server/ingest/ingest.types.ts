@@ -10,14 +10,14 @@ import * as v from "valibot";
 // ordering and the MIN-merge invariant in `sessions-repo.saveSession`.
 
 const MAX_AGENT_ID = 256;
-const MAX_TOOL_NAME = 256;
+export const MAX_TOOL_NAME = 256;
 /** Generous: ~10K words of transcript per turn covers any plausible call. */
-const MAX_TURN_TEXT = 64 * 1024;
+export const MAX_TURN_TEXT = 64 * 1024;
 const MAX_TURN_IDX = 1_000_000;
 /** Seven days in ms — durationMs and per-call latencies can't plausibly exceed this. */
-const MAX_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+export const MAX_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
-const RoleSchema = v.picklist(["user", "agent", "tool", "system"]);
+export const RoleSchema = v.picklist(["user", "agent", "tool", "system"]);
 const IsoTimestampSchema = v.pipe(
 	v.string(),
 	v.isoTimestamp(),

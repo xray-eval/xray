@@ -3,7 +3,7 @@ import { check, index, integer, sqliteTable, text, unique } from "drizzle-orm/sq
 
 import type { AgentId, ProviderId, Role } from "@/adapters/types.ts";
 
-import type { SessionSource } from "./types.ts";
+import type { ReplayRunStatus, SessionSource } from "./types.ts";
 
 // Each `.$type<...>()` narrows the column's TypeScript type without affecting
 // the stored SQL type — keeps the row shapes branded with the same identifiers
@@ -70,5 +70,40 @@ export const toolCalls = sqliteTable(
 	(t) => [
 		index("idx_tool_calls_turn_idx").on(t.turnId, t.idx),
 		unique("tool_calls_turn_idx_uk").on(t.turnId, t.idx),
+	],
+);
+
+// `target_session_id` is NOT an FK to sessions.id: the worker creates the
+// target row lazily through the ingest path on its first event. An FK would
+// force the writer to pre-insert a stub purely to satisfy referential
+// integrity, which is the opposite of how ingest's "stub on first event"
+// model works for every other session.
+//
+// On startup we sweep any `status='running'` row to `failed` — a single Bun
+// process owns the DB (per single-image-distribution.md), so any "running"
+// state on boot is by definition from a previous, now-dead worker.
+export const replayRuns = sqliteTable(
+	"replay_runs",
+	{
+		id: text("id").primaryKey(),
+		sourceSessionId: text("source_session_id")
+			.notNull()
+			.references(() => sessions.id, { onDelete: "cascade" }),
+		targetSessionId: text("target_session_id").notNull().unique(),
+		status: text("status").$type<ReplayRunStatus>().notNull(),
+		webhookUrl: text("webhook_url").notNull(),
+		progressCompleted: integer("progress_completed").notNull().default(0),
+		progressTotal: integer("progress_total").notNull(),
+		startedAt: text("started_at").notNull(),
+		finishedAt: text("finished_at"),
+		error: text("error"),
+	},
+	(t) => [
+		index("idx_replay_runs_source").on(t.sourceSessionId),
+		index("idx_replay_runs_started_at").on(t.startedAt),
+		check(
+			"replay_runs_status_ck",
+			sql`${t.status} IN ('pending', 'running', 'completed', 'failed')`,
+		),
 	],
 );

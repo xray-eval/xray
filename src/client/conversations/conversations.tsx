@@ -1,6 +1,6 @@
 import type { InfiniteData } from "@tanstack/react-query";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { AlertCircle, ChevronRight, ExternalLink } from "lucide-react";
+import { AlertCircle, ChevronRight, ExternalLink, Play } from "lucide-react";
 import type { ReactNode } from "react";
 import { match } from "ts-pattern";
 
@@ -31,11 +31,18 @@ export interface ConversationsListProps {
 	apiBase?: string;
 	/** Called with the row's session id when the user clicks one. */
 	onSelectSession?: (sessionId: string) => void;
+	/** Called when the user clicks the replay button on a row. */
+	onReplaySession?: (sessionId: string) => void;
 }
 
 type SessionsQueryKey = readonly ["sessions", { agentId: string | undefined }];
 
-export function ConversationsList({ agentId, apiBase, onSelectSession }: ConversationsListProps) {
+export function ConversationsList({
+	agentId,
+	apiBase,
+	onSelectSession,
+	onReplaySession,
+}: ConversationsListProps) {
 	const query = useInfiniteQuery<
 		ListSessionsResponse,
 		Error,
@@ -78,6 +85,7 @@ export function ConversationsList({ agentId, apiBase, onSelectSession }: Convers
 										key={item.id}
 										session={item}
 										{...(onSelectSession !== undefined ? { onSelect: onSelectSession } : {})}
+										{...(onReplaySession !== undefined ? { onReplay: onReplaySession } : {})}
 									/>
 								))}
 							</ul>
@@ -120,9 +128,10 @@ function SessionCount({ query }: SessionCountProps) {
 interface ConversationRowProps {
 	session: SessionListItem;
 	onSelect?: (sessionId: string) => void;
+	onReplay?: (sessionId: string) => void;
 }
 
-function ConversationRow({ session, onSelect }: ConversationRowProps) {
+function ConversationRow({ session, onSelect, onReplay }: ConversationRowProps) {
 	const inner = (
 		<Card className="group w-full text-left transition-colors hover:bg-accent/30">
 			<CardHeader>
@@ -148,7 +157,23 @@ function ConversationRow({ session, onSelect }: ConversationRowProps) {
 					</dl>
 				</CardTitle>
 			</CardHeader>
-			<CardContent className="flex justify-end">
+			<CardContent className="flex items-center justify-end gap-2">
+				{onReplay !== undefined && (
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={(e) => {
+							// Row is a button; stop propagation so clicking Replay
+							// doesn't also fire onSelect.
+							e.stopPropagation();
+							onReplay(session.id);
+						}}
+						aria-label={`Replay session ${session.agentId}`}
+					>
+						<Play />
+						Replay
+					</Button>
+				)}
 				<ChevronRight className="text-muted-foreground size-4 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
 			</CardContent>
 		</Card>

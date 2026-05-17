@@ -178,6 +178,75 @@ describe("ConversationsList — selection", () => {
 	});
 });
 
+describe("ConversationsList — replay", () => {
+	it("renders a Replay button on each row when onReplaySession is provided", async () => {
+		server.use(
+			http.get(SESSIONS_URL, () =>
+				HttpResponse.json(
+					makeListSessionsResponse({
+						sessions: [
+							makeSessionListItem({ id: "s-1", agentId: "agent-1" }),
+							makeSessionListItem({ id: "s-2", agentId: "agent-2" }),
+						],
+					}),
+				),
+			),
+		);
+		const onReplaySession = mock();
+		render(
+			withQueryClient(
+				<ConversationsList apiBase="http://localhost" onReplaySession={onReplaySession} />,
+			),
+		);
+		await waitFor(() => expect(screen.getByText("agent-1")).toBeTruthy());
+		const replayButtons = screen.getAllByRole("button", { name: /^replay session/i });
+		expect(replayButtons).toHaveLength(2);
+	});
+
+	it("invokes onReplaySession (not onSelectSession) when the Replay button is clicked", async () => {
+		server.use(
+			http.get(SESSIONS_URL, () =>
+				HttpResponse.json(
+					makeListSessionsResponse({
+						sessions: [makeSessionListItem({ id: "sess-7", agentId: "agent-7" })],
+					}),
+				),
+			),
+		);
+		const onSelectSession = mock();
+		const onReplaySession = mock();
+		render(
+			withQueryClient(
+				<ConversationsList
+					apiBase="http://localhost"
+					onSelectSession={onSelectSession}
+					onReplaySession={onReplaySession}
+				/>,
+			),
+		);
+		const replay = await screen.findByRole("button", { name: /^replay session agent-7/i });
+		fireEvent.click(replay);
+		expect(onReplaySession).toHaveBeenCalledWith("sess-7");
+		// Click propagation is stopped so row-open doesn't fire.
+		expect(onSelectSession).not.toHaveBeenCalled();
+	});
+
+	it("does not render the Replay button when onReplaySession is omitted", async () => {
+		server.use(
+			http.get(SESSIONS_URL, () =>
+				HttpResponse.json(
+					makeListSessionsResponse({
+						sessions: [makeSessionListItem({ id: "s-1", agentId: "agent-1" })],
+					}),
+				),
+			),
+		);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
+		await waitFor(() => expect(screen.getByText("agent-1")).toBeTruthy());
+		expect(screen.queryByRole("button", { name: /^replay session/i })).toBeNull();
+	});
+});
+
 describe("ConversationsList — error path", () => {
 	it("renders an alert when the server returns 500", async () => {
 		server.use(http.get(SESSIONS_URL, () => HttpResponse.json({ error: "boom" }, { status: 500 })));
