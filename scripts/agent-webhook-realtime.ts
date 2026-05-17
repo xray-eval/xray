@@ -459,9 +459,21 @@ const UpstreamFunctionCallDone = v.object({
 	call_id: v.optional(v.string()),
 });
 const UpstreamResponseDone = v.object({ type: v.literal("response.done") });
+/** OpenAI Realtime error events nest the human-readable message under
+ *  `error.message`, NOT top-level `message`. Pre-this-fix the schema parsed
+ *  only the top-level form, lost the actual message, and forwarded the
+ *  useless string "upstream error" to xray — masking issues like
+ *  "missing_required_parameter: session.type". */
 const UpstreamError = v.object({
 	type: v.literal("error"),
-	message: v.optional(v.string()),
+	error: v.optional(
+		v.object({
+			type: v.optional(v.string()),
+			code: v.optional(v.string()),
+			message: v.optional(v.string()),
+			param: v.nullish(v.string()),
+		}),
+	),
 });
 const UpstreamEventSchema = v.variant("type", [
 	UpstreamAudioDelta,
@@ -547,8 +559,13 @@ function handleUpstreamEvent(
 			ws.data.pcmChunks = [];
 		})
 		.with({ type: "error" }, (e) => {
-			sendError(ws, "openai_error", e.message ?? "upstream error");
-			ws.close(1011, "openai_error");
+			const code = e.error?.code ?? "openai_error";
+			const message = e.error?.message ?? "upstream sent an error event with no message";
+			const param = e.error?.param;
+			const detail =
+				param !== undefined && param !== null ? `${message} (param=${param})` : message;
+			sendError(ws, code, detail);
+			ws.close(1011, code);
 			upstream.close(1000, "client closed");
 		})
 		.exhaustive();
