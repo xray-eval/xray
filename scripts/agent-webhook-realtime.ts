@@ -140,6 +140,12 @@ interface PerSocketState {
 	 *  (the previous shape) lost every parallel function call beyond the
 	 *  first. Resets on each new awaiting turn. */
 	toolCallIdxThisTurn: number;
+	/** Turn indices that received at least one `user_audio.append`. Lets the
+	 *  commit handler distinguish audio turns from text-only source turns —
+	 *  text-only seed fixtures send `user_audio.commit` with no prior append,
+	 *  and OpenAI Realtime rejects `input_audio_buffer.commit` on an empty
+	 *  buffer (`input_audio_buffer_commit_empty`). */
+	userAudioReceivedForTurn: Set<number>;
 }
 
 function freshState(): PerSocketState {
@@ -153,6 +159,7 @@ function freshState(): PerSocketState {
 		pcmChunks: [],
 		expectingFollowupResponse: false,
 		toolCallIdxThisTurn: 0,
+		userAudioReceivedForTurn: new Set(),
 	};
 }
 
@@ -259,6 +266,7 @@ async function handleUserAudioAppend(
 ): Promise<void> {
 	const up = await waitForUpstream(ws);
 	if (up === null) return;
+	ws.data.userAudioReceivedForTurn.add(frame.turnIdx);
 	up.send(
 		JSON.stringify({
 			type: "input_audio_buffer.append",
@@ -277,7 +285,27 @@ async function handleUserAudioCommit(
 	ws.data.transcriptAccumulator = "";
 	ws.data.lastTurnStartedAtMs = Date.now();
 	ws.data.toolCallIdxThisTurn = 0;
-	up.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+	const hadAudio = ws.data.userAudioReceivedForTurn.delete(frame.turnIdx);
+	if (hadAudio) {
+		up.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+	} else {
+		// Text-only source turn (e.g. v2v seed fixtures): no append frames ever
+		// arrived, so the input audio buffer is empty and committing it would
+		// be rejected with `input_audio_buffer_commit_empty`. Inject the
+		// manifest text as a typed user message instead so the model has
+		// something to respond to.
+		const text = ws.data.manifestByIdx.get(frame.turnIdx)?.text ?? "";
+		up.send(
+			JSON.stringify({
+				type: "conversation.item.create",
+				item: {
+					type: "message",
+					role: "user",
+					content: [{ type: "input_text", text }],
+				},
+			}),
+		);
+	}
 	up.send(JSON.stringify({ type: "response.create" }));
 }
 
