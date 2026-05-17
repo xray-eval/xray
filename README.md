@@ -141,7 +141,7 @@ See [`docs/INGEST.md`](docs/INGEST.md) for the full wire contract — including 
 
 ## Replay — the differentiator
 
-The other slot is the headline. The mechanics:
+The mechanics:
 
 1. From any recorded session, click **Replay** and paste your webhook URL.
 2. xray POSTs each user turn (text + recorded tool results) to your webhook.
@@ -153,7 +153,7 @@ Two flavors:
 - **Text replay** (`POST /v1/replays`) — your webhook is an HTTP endpoint. Fastest to wire up for STT→LLM→TTS loops.
 - **Realtime (V2V) replay** (`POST /v1/replays/realtime`) — your webhook is a WebSocket server. xray streams the original user audio chunk-by-chunk; your webhook returns agent audio + transcript framed by turn boundaries. Works for OpenAI Realtime / Gemini Live / any voice-to-voice setup.
 
-Recorded tool results are forwarded with each user turn so your replay doesn't re-execute real side effects (refunds, calendar bookings, etc.). Both protocols are fully documented at [`/docs`](http://localhost:8080/docs) (HTTP + webhook) and [`/asyncapi.json`](http://localhost:8080/asyncapi.json) (realtime WS frames).
+Recorded tool results are forwarded with each user turn so your replay doesn't re-execute real side effects (refunds, calendar bookings, etc.). Both protocols are fully documented at `/docs` (HTTP + webhook) and `/asyncapi.json` (realtime WS frames) on your running xray instance.
 
 ---
 
@@ -173,6 +173,8 @@ Most teams running voice agents seriously will end up with both.
 For ElevenLabs Convai users (and other hosted providers as adapters land), xray can pull conversations directly from the provider's API instead of receiving them via ingest. Drop your API key in via `docker run -e`, point the UI at the provider, and xray syncs sessions into the same SQLite store the UI reads from.
 
 ```bash
+# Until v0.1.0 ships on GHCR, swap `ghcr.io/basilebong/xray:latest` for the
+# `xray:local` you built above. Replace `sk_...` with your real provider key.
 docker run --rm \
   -p 8080:8080 \
   -v xray-data:/data \

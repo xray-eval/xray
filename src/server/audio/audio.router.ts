@@ -30,14 +30,13 @@ import {
 	CONTENT_TYPE_TO_EXTENSION,
 	EXTENSION_TO_RESPONSE_CONTENT_TYPE,
 	MAX_AUDIO_BYTES,
+	TurnIdxParamDocSchema,
 	TurnIdxParamSchema,
 	UploadAudioResponseSchema,
 } from "./audio.types.ts";
 
-/** Raw-bytes body shape. Same for every supported audio MIME. */
 const RAW_AUDIO_SCHEMA = { type: "string", format: "binary" } as const;
 
-/** Upload accepts every content-type the storage layer aliases; response only emits the IANA-canonical ones. */
 const UPLOAD_CONTENT_MAP = Object.fromEntries(
 	Object.keys(CONTENT_TYPE_TO_EXTENSION).map((ct) => [ct, { schema: RAW_AUDIO_SCHEMA }]),
 );
@@ -74,7 +73,7 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 					name: "idx",
 					required: true,
 					description: "Turn index (`turn.idx` from the ingest event).",
-					schema: openApiSchemaFromValibot(TurnIdxParamSchema),
+					schema: openApiSchemaFromValibot(TurnIdxParamDocSchema),
 				},
 			],
 			requestBody: {
@@ -158,7 +157,7 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 					name: "idx",
 					required: true,
 					description: "Turn index (`turn.idx` from the ingest event).",
-					schema: openApiSchemaFromValibot(TurnIdxParamSchema),
+					schema: openApiSchemaFromValibot(TurnIdxParamDocSchema),
 				},
 			],
 			responses: {

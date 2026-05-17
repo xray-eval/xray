@@ -55,6 +55,17 @@ export const TurnIdxParamSchema = v.pipe(
 	v.maxValue(MAX_TURN_IDX),
 );
 
+/**
+ * Documentation-only mirror of `TurnIdxParamSchema`. The runtime schema
+ * transforms `string → number`, so feeding it through `toJsonSchema` produces
+ * `{type: "integer", pattern: "^[0-9]+$"}` — nonsensical: `pattern` is
+ * meaningless on `integer`, and OpenAPI clients would marshal the path param
+ * as a JSON number when the URL is actually a string. This sibling describes
+ * the wire shape (string, decimal digits) without the transform, so the doc
+ * matches what clients actually put on the wire.
+ */
+export const TurnIdxParamDocSchema = v.pipe(v.string(), v.regex(/^[0-9]+$/));
+
 export const UploadAudioResponseSchema = v.object({
 	ok: v.literal(true),
 	audioPath: v.string(),

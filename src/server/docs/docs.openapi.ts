@@ -36,7 +36,11 @@ export async function buildOpenApiDoc(app: Hono): Promise<unknown> {
 					url: "https://www.elastic.co/licensing/elastic-license",
 				},
 			},
-			servers: [{ url: "http://localhost:8080", description: "Local self-hosted xray" }],
+			// No `servers` entry: Scalar falls back to the doc's own origin, so
+			// operators behind a reverse proxy (https://xray.example.com) see the
+			// correct host. A hardcoded `http://localhost:8080` would make
+			// Scalar's "try it out" fire cross-origin requests to localhost on
+			// the operator's machine.
 			webhooks: {
 				textReplay: {
 					post: {

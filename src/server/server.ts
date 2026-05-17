@@ -22,8 +22,10 @@ export function createApp(store: Store, config: AppConfig): Hono {
 	app.route("/v1", createReplaysRouter(store));
 	app.route("/v1", createRealtimeReplaysRouter(store, config.audioRoot));
 	app.route("/v1", createAudioRouter(store, config.audioRoot));
-	// Docs router must be mounted LAST so it enumerates every other router's
-	// describeRoute() metadata at request time.
+	// `createDocsRouter` captures `app` by reference and `generateSpecs(app)`
+	// walks `app.routes` at request time, so mount order doesn't change the
+	// resulting spec — but keep this at the bottom so the docs surface lives
+	// next to the comment that explains how it gets built.
 	app.route("/", createDocsRouter(app));
 	return app;
 }

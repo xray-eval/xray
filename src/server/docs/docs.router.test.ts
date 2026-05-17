@@ -1,7 +1,7 @@
-import { makeTempAudioRoot } from "../audio/audio.test-utils.ts";
-import { createApp } from "../server.ts";
-import type { Store } from "../store/store.ts";
-import { makeTempStore } from "../store/test-utils.ts";
+import { makeTempAudioRoot } from "@/server/audio/audio.test-utils.ts";
+import { createApp } from "@/server/server.ts";
+import type { Store } from "@/server/store/store.ts";
+import { makeTempStore } from "@/server/store/test-utils.ts";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 // One app instance per file — the doc endpoints are pure functions of route

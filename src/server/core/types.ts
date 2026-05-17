@@ -14,11 +14,18 @@ import * as v from "valibot";
  *
  * `errorMode: "ignore"` skips `v.check(...)` predicates that have no JSON
  * Schema equivalent — the runtime validator still enforces them.
+ *
+ * `$schema` is stripped: `@valibot/to-json-schema` stamps every output with
+ * `http://json-schema.org/draft-07/schema#`, which is the wrong dialect for
+ * an OpenAPI 3.1 doc (2020-12) or AsyncAPI 3.0 doc (2020-12). Spectral and
+ * other strict validators flag every embedded schema as dialect-inconsistent
+ * with its parent otherwise.
  */
 export function openApiSchemaFromValibot(
 	schema: BaseSchema<unknown, unknown, BaseIssue<unknown>>,
 ): OpenAPIV3.SchemaObject {
-	return JSON.parse(JSON.stringify(toJsonSchema(schema, { errorMode: "ignore" })));
+	const { $schema: _, ...rest } = toJsonSchema(schema, { errorMode: "ignore" });
+	return JSON.parse(JSON.stringify(rest));
 }
 
 // Wire-error response shapes shared across every server slice.

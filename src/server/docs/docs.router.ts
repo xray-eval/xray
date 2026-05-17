@@ -42,6 +42,15 @@ export function createDocsRouter(app: Hono): Hono {
 			url: "/openapi.json",
 			pageTitle: "xray API reference",
 			theme: "default",
+			// Pin the Scalar bundle to a specific version. Without the pin,
+			// `@scalar/hono-api-reference` defaults to
+			// `https://cdn.jsdelivr.net/npm/@scalar/api-reference` (no version),
+			// resolving to whatever is `latest` at request time — a CDN/maintainer
+			// compromise of `@scalar/api-reference` would execute arbitrary JS in
+			// the operator's browser on `http://localhost:8080` with read access
+			// to every recorded session. Pinning a version doesn't remove CDN
+			// trust (no SRI), but it stops `latest` from drifting silently.
+			cdn: "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.57.2",
 		}),
 	);
 
