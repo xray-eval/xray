@@ -259,11 +259,15 @@ async function handleUserAudioCommit(
 	ws.data.awaitingTurnIdx = frame.turnIdx;
 	ws.data.transcriptAccumulator = "";
 	ws.data.lastTurnStartedAtMs = Date.now();
+	// GA Realtime auto-creates a response when `input_audio_buffer.commit`
+	// lands (server_vad's `create_response: true` is the default and is in
+	// effect even when we set `turn_detection: null` — turning it off
+	// reliably across preview/GA versions is fiddly). Issuing our own
+	// `response.create` here collides with the auto-created one on turn 2+
+	// with `conversation_already_has_active_response`. Trust auto-create on
+	// commit; the tool re-trigger path below still calls response.create
+	// because that loop continues without a fresh commit.
 	up.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-	// No per-response overrides — `output_modalities` is set once on the
-	// session in `openUpstream`. GA renamed the field from `modalities` to
-	// `output_modalities` and rejects the legacy name with `unknown_parameter`.
-	up.send(JSON.stringify({ type: "response.create" }));
 }
 
 /**
