@@ -1,13 +1,25 @@
 import { match, P } from "ts-pattern";
 
-import { listSessions } from "@/server/store/sessions-repo.ts";
+import { getSession, listSessions } from "@/server/store/sessions-repo.ts";
 import type { Store } from "@/server/store/store.ts";
-import type { Session } from "@/server/store/types.ts";
+import { listToolCallsForSession } from "@/server/store/tool-calls-repo.ts";
+import { listTurnsForSession } from "@/server/store/turns-repo.ts";
+import type { Session, ToolCallRow, TurnRow } from "@/server/store/types.ts";
 
 import { encodeCursor } from "./cursor/cursor.ts";
-import { InconsistentSessionRowError } from "./sessions.errors.ts";
+import {
+	CorruptToolCallJsonError,
+	InconsistentSessionRowError,
+	SessionNotFoundError,
+} from "./sessions.errors.ts";
 import type { ListSessionsQuery } from "./sessions.query.ts";
-import type { ListSessionsResponse, SessionListItem } from "./sessions.types.ts";
+import type {
+	Conversation,
+	ConversationToolCall,
+	ConversationTurn,
+	ListSessionsResponse,
+	SessionListItem,
+} from "./sessions.types.ts";
 
 /**
  * List sessions newest-first with optional `agentId` filter and `(startedAt, id)`
@@ -53,4 +65,89 @@ function composeSource(row: Session): SessionListItem["source"] {
 			throw new InconsistentSessionRowError(row.id);
 		})
 		.exhaustive();
+}
+
+/**
+ * Read one conversation by id: session metadata + ordered turns + per-turn
+ * tool calls. Source-agnostic — works equally for ingest- and adapter-sourced
+ * sessions. For adapter-mode the on-demand provider sync is a separate
+ * endpoint (`/v1/agents/:id/conversations`, issue #14); this route reads
+ * what's already in the store.
+ *
+ * Throws:
+ * - `SessionNotFoundError` if no row matches.
+ * - `InconsistentSessionRowError` if `source='adapter'` and `provider` is null.
+ * - `CorruptToolCallJsonError` if a `tool_calls.{args,result}_json` value
+ *   fails `JSON.parse`.
+ */
+export function getConversationForApi(store: Store, sessionId: string): Conversation {
+	const session = getSession(store.db, sessionId);
+	if (session === undefined) {
+		throw new SessionNotFoundError(sessionId);
+	}
+	const source = composeSource(session);
+	const turnRows = listTurnsForSession(store.db, sessionId);
+	const toolCallRows = listToolCallsForSession(store.db, sessionId);
+	const toolCallsByTurnId = groupToolCallsByTurnId(sessionId, toolCallRows);
+	const turns = turnRows.map((row) => toConversationTurn(row, toolCallsByTurnId.get(row.id) ?? []));
+	return {
+		id: session.id,
+		agentId: session.agentId,
+		startedAt: session.startedAt,
+		endedAt: session.endedAt,
+		durationMs: session.durationMs,
+		source,
+		turns,
+	};
+}
+
+function groupToolCallsByTurnId(
+	sessionId: string,
+	rows: ToolCallRow[],
+): Map<string, ConversationToolCall[]> {
+	const out = new Map<string, ConversationToolCall[]>();
+	for (const row of rows) {
+		const list = out.get(row.turnId) ?? [];
+		list.push(toConversationToolCall(sessionId, row));
+		out.set(row.turnId, list);
+	}
+	return out;
+}
+
+function toConversationTurn(row: TurnRow, toolCalls: ConversationToolCall[]): ConversationTurn {
+	return {
+		id: row.id,
+		idx: row.idx,
+		role: row.role,
+		text: row.text,
+		timestamp: row.ts,
+		responseLatencyMs: row.responseLatencyMs,
+		interrupted: row.interrupted,
+		interruptedAtMs: row.interruptedAtMs,
+		toolCalls,
+	};
+}
+
+function toConversationToolCall(sessionId: string, row: ToolCallRow): ConversationToolCall {
+	const ctx = { sessionId, turnId: row.turnId };
+	return {
+		idx: row.idx,
+		name: row.name,
+		args: parseJsonOrThrow(ctx, "args", row.argsJson),
+		result: row.resultJson === null ? null : parseJsonOrThrow(ctx, "result", row.resultJson),
+		latencyMs: row.latencyMs,
+	};
+}
+
+interface ParseContext {
+	readonly sessionId: string;
+	readonly turnId: string;
+}
+
+function parseJsonOrThrow(ctx: ParseContext, field: "args" | "result", raw: string): unknown {
+	try {
+		return JSON.parse(raw);
+	} catch (cause) {
+		throw new CorruptToolCallJsonError(ctx.sessionId, ctx.turnId, field, cause);
+	}
 }

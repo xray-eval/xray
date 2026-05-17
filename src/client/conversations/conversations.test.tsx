@@ -137,6 +137,47 @@ describe("ConversationsList — pagination", () => {
 	});
 });
 
+describe("ConversationsList — selection", () => {
+	it("invokes onSelectSession with the row's id when clicked", async () => {
+		server.use(
+			http.get(SESSIONS_URL, () =>
+				HttpResponse.json(
+					makeListSessionsResponse({
+						sessions: [
+							makeSessionListItem({ id: "sess-7", agentId: "agent-7" }),
+							makeSessionListItem({ id: "sess-8", agentId: "agent-8" }),
+						],
+					}),
+				),
+			),
+		);
+		const onSelectSession = mock();
+		render(
+			withQueryClient(
+				<ConversationsList apiBase="http://localhost" onSelectSession={onSelectSession} />,
+			),
+		);
+		const row = await screen.findByRole("button", { name: /open session agent-8, started/i });
+		fireEvent.click(row);
+		expect(onSelectSession).toHaveBeenCalledWith("sess-8");
+	});
+
+	it("renders rows as static cards (no button) when onSelectSession is omitted", async () => {
+		server.use(
+			http.get(SESSIONS_URL, () =>
+				HttpResponse.json(
+					makeListSessionsResponse({
+						sessions: [makeSessionListItem({ id: "sess-x", agentId: "agent-x" })],
+					}),
+				),
+			),
+		);
+		render(withQueryClient(<ConversationsList apiBase="http://localhost" />));
+		await waitFor(() => expect(screen.getByText("agent-x")).toBeTruthy());
+		expect(screen.queryByRole("button", { name: /open session/i })).toBeNull();
+	});
+});
+
 describe("ConversationsList — error path", () => {
 	it("renders an alert when the server returns 500", async () => {
 		server.use(http.get(SESSIONS_URL, () => HttpResponse.json({ error: "boom" }, { status: 500 })));

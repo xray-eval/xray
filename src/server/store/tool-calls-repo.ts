@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 
-import { toolCalls } from "./schema.ts";
+import { toolCalls, turns } from "./schema.ts";
 import type { StoreDb } from "./store.ts";
 import type { ToolCallInput, ToolCallRow } from "./types.ts";
 
@@ -35,5 +35,28 @@ export function listToolCallsForTurn(db: StoreDb, turnId: string): ToolCallRow[]
 		.from(toolCalls)
 		.where(eq(toolCalls.turnId, turnId))
 		.orderBy(asc(toolCalls.idx))
+		.all();
+}
+
+/**
+ * All tool calls for every turn in a session, ordered by (turn.idx, tool_call.idx).
+ * The transcript view needs the full set in one round-trip — fetching per turn
+ * would scale with turn count for what is always a fixed-cost UI render.
+ */
+export function listToolCallsForSession(db: StoreDb, sessionId: string): ToolCallRow[] {
+	return db
+		.select({
+			id: toolCalls.id,
+			turnId: toolCalls.turnId,
+			idx: toolCalls.idx,
+			name: toolCalls.name,
+			argsJson: toolCalls.argsJson,
+			resultJson: toolCalls.resultJson,
+			latencyMs: toolCalls.latencyMs,
+		})
+		.from(toolCalls)
+		.innerJoin(turns, eq(toolCalls.turnId, turns.id))
+		.where(eq(turns.sessionId, sessionId))
+		.orderBy(asc(turns.idx), asc(toolCalls.idx))
 		.all();
 }

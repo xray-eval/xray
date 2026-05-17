@@ -3,10 +3,17 @@ import * as v from "valibot";
 import { createApp } from "@/server/server.ts";
 import { saveSession } from "@/server/store/sessions-repo.ts";
 import type { Store } from "@/server/store/store.ts";
-import { makeSession, makeTempStore } from "@/server/store/test-utils.ts";
+import {
+	makeSession,
+	makeTempStore,
+	makeToolCallInput,
+	makeTurnInput,
+} from "@/server/store/test-utils.ts";
+import { appendToolCalls } from "@/server/store/tool-calls-repo.ts";
+import { appendTurns } from "@/server/store/turns-repo.ts";
 
-import { makeCursor, makeListRequest } from "./sessions.test-utils.ts";
-import { ListSessionsResponseSchema } from "./sessions.types.ts";
+import { makeCursor, makeGetConversationRequest, makeListRequest } from "./sessions.test-utils.ts";
+import { ConversationSchema, ListSessionsResponseSchema } from "./sessions.types.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 const InvalidQueryBodySchema = v.object({
@@ -177,5 +184,105 @@ describe("GET /v1/sessions — query validation", () => {
 		expect(res.status).toBe(400);
 		const text = await res.text();
 		expect(text).not.toContain(big);
+	});
+});
+
+describe("GET /v1/sessions/:id — happy path", () => {
+	it("returns a session with no turns as an empty conversation", async () => {
+		saveSession(store.db, makeSession({ id: "sess-A" }));
+		const res = await app.request(makeGetConversationRequest("sess-A"));
+		expect(res.status).toBe(200);
+		const body = v.parse(ConversationSchema, await res.json());
+		expect(body.id).toBe("sess-A");
+		expect(body.turns).toEqual([]);
+	});
+
+	it("returns turns in idx order with tool calls inlined", async () => {
+		saveSession(store.db, makeSession({ id: "sess-A" }));
+		appendTurns(store.db, "sess-A", [
+			makeTurnInput({ id: "t-1", idx: 1, role: "agent", text: "hi back" }),
+			makeTurnInput({ id: "t-0", idx: 0, role: "user", text: "hi" }),
+		]);
+		appendToolCalls(store.db, "t-1", [
+			makeToolCallInput({ idx: 0, name: "search", argsJson: '{"q":"hi"}' }),
+		]);
+		const res = await app.request(makeGetConversationRequest("sess-A"));
+		const body = v.parse(ConversationSchema, await res.json());
+		expect(body.turns.map((t) => t.id)).toEqual(["t-0", "t-1"]);
+		expect(body.turns[0]?.toolCalls).toEqual([]);
+		expect(body.turns[1]?.toolCalls).toHaveLength(1);
+		expect(body.turns[1]?.toolCalls[0]?.args).toEqual({ q: "hi" });
+	});
+
+	it("returns barge-in fields on the turn shape", async () => {
+		saveSession(store.db, makeSession({ id: "sess-A" }));
+		appendTurns(store.db, "sess-A", [
+			makeTurnInput({
+				id: "t-0",
+				idx: 0,
+				role: "agent",
+				interrupted: true,
+				interruptedAtMs: 800,
+				responseLatencyMs: 420,
+			}),
+		]);
+		const res = await app.request(makeGetConversationRequest("sess-A"));
+		const body = v.parse(ConversationSchema, await res.json());
+		expect(body.turns[0]).toMatchObject({
+			interrupted: true,
+			interruptedAtMs: 800,
+			responseLatencyMs: 420,
+		});
+	});
+
+	it("composes `adapter:<provider>` for an adapter-sourced session", async () => {
+		saveSession(store.db, makeSession({ id: "sess-A", source: "adapter", provider: "elevenlabs" }));
+		const res = await app.request(makeGetConversationRequest("sess-A"));
+		const body = v.parse(ConversationSchema, await res.json());
+		expect(body.source).toBe("adapter:elevenlabs");
+	});
+});
+
+describe("GET /v1/sessions/:id — error paths", () => {
+	it("returns 404 with a typed body when the session does not exist", async () => {
+		const res = await app.request(makeGetConversationRequest("missing"));
+		expect(res.status).toBe(404);
+		const body = v.parse(
+			v.object({ error: v.literal("session_not_found"), sessionId: v.string() }),
+			await res.json(),
+		);
+		expect(body.sessionId).toBe("missing");
+	});
+
+	it("returns 400 for a session id with disallowed characters", async () => {
+		// `bad id` contains a space — SessionIdSchema's regex rejects it.
+		const res = await app.request(
+			new Request("http://test.local/v1/sessions/bad%20id", { method: "GET" }),
+		);
+		expect(res.status).toBe(400);
+		const body = v.parse(
+			v.object({ error: v.literal("invalid_session_id"), issues: v.array(v.unknown()) }),
+			await res.json(),
+		);
+		expect(body.issues.length).toBeGreaterThan(0);
+	});
+
+	it("returns 400 for an oversized session id", async () => {
+		const big = "x".repeat(2000);
+		const res = await app.request(
+			new Request(`http://test.local/v1/sessions/${big}`, { method: "GET" }),
+		);
+		expect(res.status).toBe(400);
+	});
+
+	it("returns 500 with a generic body for a data-integrity failure (adapter row with null provider)", async () => {
+		// `getConversationForApi` throws InconsistentSessionRowError when source='adapter'
+		// but provider=null. The router maps it to 500 explicitly — proves the data-
+		// integrity arm of the onError match is reachable.
+		saveSession(store.db, makeSession({ id: "broken", source: "adapter", provider: null }));
+		const res = await app.request(makeGetConversationRequest("broken"));
+		expect(res.status).toBe(500);
+		const body = v.parse(v.object({ error: v.literal("store_failure") }), await res.json());
+		expect(body.error).toBe("store_failure");
 	});
 });

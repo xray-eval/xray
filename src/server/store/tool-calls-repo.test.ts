@@ -4,6 +4,7 @@ import { makeSession, makeTempStore, makeToolCallInput, makeTurnInput } from "./
 import {
 	appendToolCallIdempotent,
 	appendToolCalls,
+	listToolCallsForSession,
 	listToolCallsForTurn,
 } from "./tool-calls-repo.ts";
 import { appendTurns } from "./turns-repo.ts";
@@ -104,6 +105,40 @@ describe("tool-calls-repo", () => {
 		appendToolCalls(store.db, "turn-A", [makeToolCallInput({ idx: 0 })]);
 		store.db.delete(turns).run();
 		expect(listToolCallsForTurn(store.db, "turn-A")).toEqual([]);
+		store.close();
+	});
+
+	it("listToolCallsForSession orders by (turn.idx, tool_call.idx) across turns", () => {
+		const store = makeTempStore();
+		saveSession(store.db, makeSession({ id: "sess-X" }));
+		appendTurns(store.db, "sess-X", [
+			makeTurnInput({ id: "t-1", idx: 1 }),
+			makeTurnInput({ id: "t-0", idx: 0 }),
+		]);
+		appendToolCalls(store.db, "t-1", [
+			makeToolCallInput({ idx: 0, name: "t1-c0" }),
+			makeToolCallInput({ idx: 1, name: "t1-c1" }),
+		]);
+		appendToolCalls(store.db, "t-0", [
+			makeToolCallInput({ idx: 1, name: "t0-c1" }),
+			makeToolCallInput({ idx: 0, name: "t0-c0" }),
+		]);
+		const rows = listToolCallsForSession(store.db, "sess-X");
+		expect(rows.map((r) => r.name)).toEqual(["t0-c0", "t0-c1", "t1-c0", "t1-c1"]);
+		store.close();
+	});
+
+	it("listToolCallsForSession returns an empty array for a session with no tool calls", () => {
+		const store = makeTempStore();
+		saveSession(store.db, makeSession({ id: "sess-Y" }));
+		appendTurns(store.db, "sess-Y", [makeTurnInput({ id: "t-0", idx: 0 })]);
+		expect(listToolCallsForSession(store.db, "sess-Y")).toEqual([]);
+		store.close();
+	});
+
+	it("listToolCallsForSession returns an empty array for a missing session", () => {
+		const store = makeTempStore();
+		expect(listToolCallsForSession(store.db, "missing")).toEqual([]);
 		store.close();
 	});
 });

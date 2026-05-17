@@ -39,3 +39,57 @@ export class InconsistentSessionRowError extends SessionsError {
 		this.sessionId = sessionId;
 	}
 }
+
+/**
+ * Session id from the URL path failed `SessionIdSchema` (charset, length,
+ * non-empty). Mirrors `InvalidQueryError` for `?cursor=…` failures — same
+ * 400 shape so a client parser doesn't need to branch on which input
+ * failed.
+ */
+export class InvalidSessionIdError extends SessionsError {
+	readonly issues: readonly BaseIssue<unknown>[];
+
+	constructor(issues: readonly BaseIssue<unknown>[]) {
+		super("Invalid session id in path");
+		this.name = "InvalidSessionIdError";
+		this.issues = issues;
+	}
+}
+
+/**
+ * `GET /v1/sessions/:id` looked up a row that does not exist. Carries the id
+ * so a route handler can echo it back in the 404 body without parsing the
+ * message.
+ */
+export class SessionNotFoundError extends SessionsError {
+	readonly sessionId: string;
+
+	constructor(sessionId: string) {
+		super(`Session "${sessionId}" not found`);
+		this.name = "SessionNotFoundError";
+		this.sessionId = sessionId;
+	}
+}
+
+/**
+ * A stored `tool_calls.args_json` or `tool_calls.result_json` failed
+ * `JSON.parse`. The columns are written exclusively via `JSON.stringify` in
+ * the ingest path, so this fires only on data-integrity failures (manual DB
+ * edits, a migration that mangled the column). Throwing loudly beats
+ * silently emitting `null` and confusing a UI that's debugging tool calls.
+ */
+export class CorruptToolCallJsonError extends SessionsError {
+	readonly sessionId: string;
+	readonly turnId: string;
+	readonly field: "args" | "result";
+
+	constructor(sessionId: string, turnId: string, field: "args" | "result", cause: unknown) {
+		super(`Session "${sessionId}" turn "${turnId}" has unparseable tool_calls.${field}_json`, {
+			cause,
+		});
+		this.name = "CorruptToolCallJsonError";
+		this.sessionId = sessionId;
+		this.turnId = turnId;
+		this.field = field;
+	}
+}

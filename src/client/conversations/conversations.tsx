@@ -17,6 +17,8 @@ import {
 	CardTitle,
 } from "../components/ui/card.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
+import { formatAbsolute, formatDuration } from "../format.ts";
+import { sourceBadgeVariant } from "../source-badge.ts";
 
 export interface ConversationsListProps {
 	/** Optional `agentId` filter passed through as `?agentId=` to the server. */
@@ -27,11 +29,13 @@ export interface ConversationsListProps {
 	 * the relative path.
 	 */
 	apiBase?: string;
+	/** Called with the row's session id when the user clicks one. */
+	onSelectSession?: (sessionId: string) => void;
 }
 
 type SessionsQueryKey = readonly ["sessions", { agentId: string | undefined }];
 
-export function ConversationsList({ agentId, apiBase }: ConversationsListProps) {
+export function ConversationsList({ agentId, apiBase, onSelectSession }: ConversationsListProps) {
 	const query = useInfiniteQuery<
 		ListSessionsResponse,
 		Error,
@@ -70,7 +74,11 @@ export function ConversationsList({ agentId, apiBase }: ConversationsListProps) 
 						<div className="space-y-3">
 							<ul className="space-y-3">
 								{items.map((item) => (
-									<ConversationRow key={item.id} session={item} />
+									<ConversationRow
+										key={item.id}
+										session={item}
+										{...(onSelectSession !== undefined ? { onSelect: onSelectSession } : {})}
+									/>
 								))}
 							</ul>
 							{q.hasNextPage && (
@@ -111,40 +119,54 @@ function SessionCount({ query }: SessionCountProps) {
 
 interface ConversationRowProps {
 	session: SessionListItem;
+	onSelect?: (sessionId: string) => void;
 }
 
-function ConversationRow({ session }: ConversationRowProps) {
-	const badgeVariant = session.source === "ingest" ? "default" : "secondary";
+function ConversationRow({ session, onSelect }: ConversationRowProps) {
+	const inner = (
+		<Card className="group w-full text-left transition-colors hover:bg-accent/30">
+			<CardHeader>
+				<CardDescription>
+					<time dateTime={session.startedAt}>{formatAbsolute(session.startedAt)}</time>
+				</CardDescription>
+				<CardTitle className="text-base font-medium">
+					<dl className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5">
+						<div className="flex items-baseline gap-2">
+							<dt className="sr-only">Agent</dt>
+							<dd>{session.agentId}</dd>
+						</div>
+						<div className="text-muted-foreground flex items-baseline gap-2 text-sm font-normal">
+							<dt>Duration</dt>
+							<dd>{formatDuration(session.durationMs)}</dd>
+						</div>
+						<div className="flex items-baseline gap-2 text-sm font-normal">
+							<dt className="sr-only">Source</dt>
+							<dd>
+								<Badge variant={sourceBadgeVariant(session.source)}>{session.source}</Badge>
+							</dd>
+						</div>
+					</dl>
+				</CardTitle>
+			</CardHeader>
+			<CardContent className="flex justify-end">
+				<ChevronRight className="text-muted-foreground size-4 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+			</CardContent>
+		</Card>
+	);
 	return (
 		<li>
-			<Card className="group transition-colors hover:bg-accent/30">
-				<CardHeader>
-					<CardDescription>
-						<time dateTime={session.startedAt}>{formatStartedAt(session.startedAt)}</time>
-					</CardDescription>
-					<CardTitle className="text-base font-medium">
-						<dl className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5">
-							<div className="flex items-baseline gap-2">
-								<dt className="sr-only">Agent</dt>
-								<dd>{session.agentId}</dd>
-							</div>
-							<div className="text-muted-foreground flex items-baseline gap-2 text-sm font-normal">
-								<dt>Duration</dt>
-								<dd>{formatDuration(session.durationMs)}</dd>
-							</div>
-							<div className="flex items-baseline gap-2 text-sm font-normal">
-								<dt className="sr-only">Source</dt>
-								<dd>
-									<Badge variant={badgeVariant}>{session.source}</Badge>
-								</dd>
-							</div>
-						</dl>
-					</CardTitle>
-				</CardHeader>
-				<CardContent className="flex justify-end">
-					<ChevronRight className="text-muted-foreground size-4 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-				</CardContent>
-			</Card>
+			{onSelect !== undefined ? (
+				<button
+					type="button"
+					onClick={() => onSelect(session.id)}
+					aria-label={`Open session ${session.agentId}, started ${formatAbsolute(session.startedAt)}`}
+					className="block w-full cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded-xl"
+				>
+					{inner}
+				</button>
+			) : (
+				inner
+			)}
 		</li>
 	);
 }
@@ -177,7 +199,7 @@ interface ErrorStateProps {
 
 function ErrorState({ error, onRetry }: ErrorStateProps) {
 	return (
-		<Card>
+		<Card role="alert">
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2 text-base">
 					<AlertCircle className="text-destructive size-4" />
@@ -185,7 +207,7 @@ function ErrorState({ error, onRetry }: ErrorStateProps) {
 				</CardTitle>
 				<CardDescription className="break-all">{error.message}</CardDescription>
 			</CardHeader>
-			<CardContent role="alert" className="flex justify-end">
+			<CardContent className="flex justify-end">
 				<Button size="sm" variant="outline" onClick={onRetry}>
 					Try again
 				</Button>
@@ -243,18 +265,4 @@ function Code({ children }: { children: ReactNode }) {
 			{children}
 		</code>
 	);
-}
-
-function formatStartedAt(iso: string): string {
-	return new Date(iso).toLocaleString();
-}
-
-function formatDuration(ms: number | null): string {
-	if (ms === null) return "in progress";
-	if (ms < 1000) return `${ms}ms`;
-	const secs = Math.round(ms / 1000);
-	if (secs < 60) return `${secs}s`;
-	const m = Math.floor(secs / 60);
-	const s = secs % 60;
-	return `${m}m${s.toString().padStart(2, "0")}s`;
 }
