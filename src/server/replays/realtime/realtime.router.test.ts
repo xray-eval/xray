@@ -8,7 +8,7 @@ import { getReplayRun } from "@/server/store/replay-runs-repo.ts";
 import type { Store } from "@/server/store/store.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
-import { makeTempAudioRoot } from "./realtime-replay.test-utils.ts";
+import { makeTempAudioRoot } from "./realtime.test-utils.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 const ErrorBodySchema = v.object({

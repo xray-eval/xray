@@ -1,32 +1,24 @@
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 
-import { and, count, eq } from "drizzle-orm";
 import { match } from "ts-pattern";
-import type { BaseIssue } from "valibot";
 import * as v from "valibot";
 
 import { uploadTurnAudio } from "@/server/audio/audio.service.ts";
 import type { AudioContentType } from "@/server/audio/audio.types.ts";
 import { applyEvent } from "@/server/ingest/ingest.service.ts";
 import {
-	CorruptToolCallJsonError,
-	ReplayRunNotFoundError,
-	SourceSessionNotFoundError,
-} from "@/server/replays/replays.errors.ts";
-import {
-	createReplayRun,
-	finishReplayRun,
-	getReplayRun,
-	markReplayRunRunning,
-	updateReplayRunProgress,
-} from "@/server/store/replay-runs-repo.ts";
-import { turns } from "@/server/store/schema.ts";
-import { getSession } from "@/server/store/sessions-repo.ts";
+	createReplayRow,
+	errorMessage,
+	groupToolCallsByTurnId,
+	parseToolJson,
+	runReplayWorker,
+} from "@/server/replays/replays.service.ts";
+import { updateReplayRunProgress } from "@/server/store/replay-runs-repo.ts";
 import type { Store } from "@/server/store/store.ts";
-import { listToolCallsForTurn } from "@/server/store/tool-calls-repo.ts";
-import { listTurnsForSession } from "@/server/store/turns-repo.ts";
-import type { ReplayRunRow, TurnRow } from "@/server/store/types.ts";
+import { listToolCallsForSession } from "@/server/store/tool-calls-repo.ts";
+import { deleteTurnByIdx, listTurnsForSession } from "@/server/store/turns-repo.ts";
+import type { ReplayRunRow, ToolCallRow, TurnRow } from "@/server/store/types.ts";
 
 import {
 	AgentTurnTooLargeError,
@@ -39,21 +31,21 @@ import {
 	WebhookInvalidFrameError,
 	WebhookMalformedFrameError,
 	WebhookReportedError,
-} from "./realtime-replay.errors.ts";
+} from "./realtime.errors.ts";
 import type {
 	ClientFrame,
 	CreateRealtimeReplayRequest,
 	RecordedToolResult,
 	ServerFrame,
 	TurnManifestEntry,
-} from "./realtime-replay.types.ts";
+} from "./realtime.types.ts";
 import {
 	MAX_REALTIME_AGENT_AUDIO_BYTES_PER_TURN,
 	MAX_REALTIME_AUDIO_CHUNK_BYTES,
 	MAX_REALTIME_TOOL_CALLS_PER_TURN,
 	REALTIME_REPLAY_PROTOCOL_VERSION,
 	ServerFrameSchema,
-} from "./realtime-replay.types.ts";
+} from "./realtime.types.ts";
 
 const EXTENSION_TO_CONTENT_TYPE: Record<string, AudioContentType> = {
 	opus: "audio/opus",
@@ -64,44 +56,17 @@ const EXTENSION_TO_CONTENT_TYPE: Record<string, AudioContentType> = {
 };
 
 /**
- * Insert a `replay_runs` row with `mode='realtime'` and return it. Mirrors
- * `createReplay` from the text-replay slice but writes the realtime mode
- * marker. The WS worker that actually drives the run is kicked off
- * separately by the router (fire-and-forget).
- *
- * Throws `SourceSessionNotFoundError` if `req.sourceSessionId` doesn't exist.
+ * Insert a `replay_runs` row with `mode='realtime'` and return it. Thin
+ * wrapper over the shared `createReplayRow` helper so the row shape stays
+ * consistent across transports — adding a column to `replay_runs` happens
+ * in one place, not two.
  */
 export function createRealtimeReplay(store: Store, req: CreateRealtimeReplayRequest): ReplayRunRow {
-	if (getSession(store.db, req.sourceSessionId) === undefined) {
-		throw new SourceSessionNotFoundError(req.sourceSessionId);
-	}
-	const id = crypto.randomUUID();
-	const targetSessionId = `replay-${crypto.randomUUID()}`;
-	const userTurnCount = countUserTurns(store, req.sourceSessionId);
-	const row: ReplayRunRow = {
-		id,
+	return createReplayRow(store, {
 		sourceSessionId: req.sourceSessionId,
-		targetSessionId,
-		status: "pending",
-		mode: "realtime",
 		webhookUrl: req.webhookUrl,
-		progressCompleted: 0,
-		progressTotal: userTurnCount,
-		startedAt: new Date().toISOString(),
-		finishedAt: null,
-		error: null,
-	};
-	createReplayRun(store.db, row);
-	return row;
-}
-
-function countUserTurns(store: Store, sessionId: string): number {
-	const row = store.db
-		.select({ n: count() })
-		.from(turns)
-		.where(and(eq(turns.sessionId, sessionId), eq(turns.role, "user")))
-		.get();
-	return row?.n ?? 0;
+		mode: "realtime",
+	});
 }
 
 /**
@@ -120,51 +85,20 @@ export interface RunRealtimeReplayOptions {
 }
 
 /**
- * Drive one realtime replay run end-to-end.
- *
- * 1. Open a WebSocket to the run's `webhookUrl`.
- * 2. Send `session.start` with the per-turn manifest (text + audio content-type
- *    + recorded tool results).
- * 3. For each source user turn, stream `user_audio.append` chunks + a
- *    `user_audio.commit`, then drain server frames until `turn.done` —
- *    writing tool_called and the agent turn + audio file along the way.
- * 4. Send `session.end`, then a clean `session_ended` to the target.
- *
- * On any failure the run is marked `failed` with the error message and the
- * throw propagates so the caller can log it. The accumulated turns in the
- * target session are NOT rolled back — they're the surviving evidence the
- * UI can show ("got 3 of 5 turns before the webhook crashed").
+ * Drive one realtime replay run end-to-end via the shared `runReplayWorker`
+ * — the wrapper owns row lifecycle (`pending → running → completed|failed`)
+ * + `session_ended` bookend so this function only describes the WS
+ * transport: open a socket, send the manifest, stream per-turn audio,
+ * collect frames until `turn.done`.
  */
 export async function runRealtimeReplay(opts: RunRealtimeReplayOptions): Promise<void> {
-	const { store, audioRoot, runId } = opts;
 	const factory: WebSocketFactory = opts.webSocketFactory ?? ((url) => new WebSocket(url));
-	const now = opts.now ?? (() => new Date().toISOString());
-
-	const run = getReplayRun(store.db, runId);
-	if (run === undefined) {
-		throw new ReplayRunNotFoundError(runId);
-	}
-
-	markReplayRunRunning(store.db, runId);
-
-	const startedAtMs = Date.now();
-	try {
-		await driveRealtimeReplay({ store, run, audioRoot, factory, now });
-		const finishedAt = now();
-		applyEvent(store, run.targetSessionId, {
-			type: "session_ended",
-			endedAt: finishedAt,
-			durationMs: Date.now() - startedAtMs,
-		});
-		finishReplayRun(store.db, runId, "completed", { finishedAt });
-	} catch (err) {
-		const finishedAt = now();
-		finishReplayRun(store.db, runId, "failed", {
-			finishedAt,
-			error: errorMessage(err),
-		});
-		throw err;
-	}
+	await runReplayWorker(
+		{ store: opts.store, runId: opts.runId, ...(opts.now ? { now: opts.now } : {}) },
+		async ({ store, run, now }) => {
+			await driveRealtimeReplay({ store, run, audioRoot: opts.audioRoot, factory, now });
+		},
+	);
 }
 
 interface DriveOptions {
@@ -183,58 +117,74 @@ async function driveRealtimeReplay(opts: DriveOptions): Promise<void> {
 	const manifest = buildManifest(store, run.sourceSessionId, sourceTurns);
 
 	const session = await openWebhookSession(factory, run.webhookUrl);
+	let completed = 0;
 	try {
-		session.send({
-			type: "session.start",
-			protocolVersion: REALTIME_REPLAY_PROTOCOL_VERSION,
-			sourceSessionId: run.sourceSessionId,
-			targetSessionId: run.targetSessionId,
-			turns: manifest,
-		});
-
-		if (userIndices.length === 0) {
-			session.send({ type: "session.end" });
-			updateReplayRunProgress(store.db, run.id, { completed: 0, total: 0 });
-			return;
-		}
-
-		applyEvent(store, run.targetSessionId, {
-			type: "session_started",
-			agentId: `replay:${run.sourceSessionId}`,
-			startedAt: now(),
-		});
-
-		let completed = 0;
-		let targetIdx = 0;
-
-		for (const userIdx of userIndices) {
-			const userTurn = sourceTurns[userIdx];
-			if (userTurn === undefined) continue;
-
-			await streamUserAudio(session, audioRoot, userTurn);
-
-			// Atomic semantics: wait for the agent response BEFORE writing the
-			// user row so a half-written turn never leaks into the diff view.
-			session.setProgress(completed, userIndices.length);
-			const collected = await collectAgentTurn(session, userTurn.idx);
-
-			applyEvent(store, run.targetSessionId, {
-				type: "turn_completed",
-				idx: targetIdx,
-				role: "user",
-				text: userTurn.text,
-				timestamp: now(),
+		try {
+			session.send({
+				type: "session.start",
+				protocolVersion: REALTIME_REPLAY_PROTOCOL_VERSION,
+				sourceSessionId: run.sourceSessionId,
+				targetSessionId: run.targetSessionId,
+				turns: manifest,
 			});
 
-			const agentIdx = targetIdx + 1;
-			await writeAgentTurn(store, audioRoot, run.targetSessionId, agentIdx, collected, now);
+			if (userIndices.length === 0) {
+				session.send({ type: "session.end" });
+				updateReplayRunProgress(store.db, run.id, { completed: 0, total: 0 });
+				return;
+			}
 
-			targetIdx += 2;
-			completed += 1;
-			updateReplayRunProgress(store.db, run.id, { completed });
+			applyEvent(store, run.targetSessionId, {
+				type: "session_started",
+				agentId: `replay:${run.sourceSessionId}`,
+				startedAt: now(),
+			});
+
+			let targetIdx = 0;
+
+			for (const userIdx of userIndices) {
+				const userTurn = sourceTurns[userIdx];
+				if (userTurn === undefined) continue;
+
+				await streamUserAudio(session, audioRoot, userTurn);
+
+				// Atomic semantics: wait for the agent response BEFORE writing the
+				// user row so a half-written turn never leaks into the diff view.
+				const collected = await collectAgentTurn(session, userTurn.idx);
+
+				applyEvent(store, run.targetSessionId, {
+					type: "turn_completed",
+					idx: targetIdx,
+					role: "user",
+					text: userTurn.text,
+					timestamp: now(),
+				});
+
+				const agentIdx = targetIdx + 1;
+				await writeAgentTurn(store, audioRoot, run.targetSessionId, agentIdx, collected, now);
+
+				targetIdx += 2;
+				completed += 1;
+				updateReplayRunProgress(store.db, run.id, { completed });
+			}
+
+			session.send({ type: "session.end" });
+		} catch (err) {
+			// `WebhookSession` throws `WebhookClosedEarlyError` with sentinel
+			// counters because it doesn't own the drive loop's progress. Re-stamp
+			// with the real `(completed, total)` here — the drive loop is the
+			// only call site that has them.
+			if (err instanceof WebhookClosedEarlyError) {
+				const info = session.closeInfo();
+				throw new WebhookClosedEarlyError(
+					completed,
+					userIndices.length,
+					info?.code ?? err.code,
+					info?.reason ?? err.reason,
+				);
+			}
+			throw err;
 		}
-
-		session.send({ type: "session.end" });
 	} finally {
 		session.close();
 	}
@@ -245,13 +195,18 @@ function buildManifest(
 	sourceSessionId: string,
 	sourceTurns: TurnRow[],
 ): TurnManifestEntry[] {
+	// One query for all tool calls in the source, grouped by turnId, to avoid
+	// N+1 lookups while building the manifest.
+	const callsByTurnId = groupToolCallsByTurnId(listToolCallsForSession(store.db, sourceSessionId));
 	return sourceTurns.map((t) => ({
 		turnIdx: t.idx,
 		role: t.role,
 		text: t.text,
 		audioContentType: t.audioPath !== null ? contentTypeFromAudioPath(t.audioPath) : null,
 		recordedToolResults:
-			t.role === "agent" ? readRecordedToolResults(store, sourceSessionId, t) : [],
+			t.role === "agent"
+				? toRecordedToolResults(sourceSessionId, t, callsByTurnId.get(t.id) ?? [])
+				: [],
 	}));
 }
 
@@ -266,12 +221,12 @@ function contentTypeFromAudioPath(path: string): AudioContentType {
 	return ct;
 }
 
-function readRecordedToolResults(
-	store: Store,
+function toRecordedToolResults(
 	sourceSessionId: string,
 	agentTurn: TurnRow,
+	calls: ToolCallRow[],
 ): RecordedToolResult[] {
-	return listToolCallsForTurn(store.db, agentTurn.id).map((tc) => ({
+	return calls.map((tc) => ({
 		name: tc.name,
 		args: parseToolJson(sourceSessionId, agentTurn.id, "args", tc.argsJson),
 		result:
@@ -281,27 +236,25 @@ function readRecordedToolResults(
 	}));
 }
 
-function parseToolJson(
-	sessionId: string,
-	turnId: string,
-	field: "args" | "result",
-	raw: string,
-): unknown {
-	try {
-		return JSON.parse(raw);
-	} catch (cause) {
-		throw new CorruptToolCallJsonError(sessionId, turnId, field, cause);
-	}
-}
+/** `error` frames are intercepted by the WS message handler and rethrown
+ *  through the iterator as `WebhookReportedError`; they never appear as a
+ *  yielded frame, so the iterator's element type narrows them out. The
+ *  consumer's `match` then needs only the four real protocol frames. */
+type DeliverableFrame = Exclude<ServerFrame, { type: "error" }>;
 
 interface WebhookSession {
 	send(frame: ClientFrame): void;
 	close(): void;
-	/** Updates the progress numbers used to annotate a `WebhookClosedEarlyError`. */
-	setProgress(completed: number, total: number): void;
-	nextFrame<K extends ServerFrame["type"]>(
-		types: readonly K[],
-	): Promise<Extract<ServerFrame, { type: K }>>;
+	/** Async iterator over server frames. Returns when the WS closes cleanly;
+	 *  throws the typed reason (`WebhookReportedError`,
+	 *  `WebhookInvalidFrameError`, `WebhookMalformedFrameError`) when an error
+	 *  frame or malformed input arrived. The consumer constructs
+	 *  `WebhookClosedEarlyError` itself when the iterator returns before its
+	 *  expected terminal frame — only the consumer knows what "early" means. */
+	frames(): AsyncIterableIterator<DeliverableFrame>;
+	/** Latched close info, queryable so the drive loop can construct
+	 *  `WebhookClosedEarlyError` with the right turns-completed counter. */
+	closeInfo(): { code: number; reason: string } | null;
 }
 
 async function openWebhookSession(
@@ -315,106 +268,53 @@ async function openWebhookSession(
 		throw new WebhookConnectError(webhookUrl, errorMessage(cause), { cause });
 	}
 
-	interface Pending {
-		readonly types: ReadonlySet<ServerFrame["type"]>;
-		readonly resolve: (frame: ServerFrame) => void;
-		readonly reject: (err: unknown) => void;
-	}
-
-	const queue: ServerFrame[] = [];
-	const waiters: Pending[] = [];
-	let closeInfo: { code: number; reason: string } | null = null;
+	const queue: DeliverableFrame[] = [];
+	let closedAt: { code: number; reason: string } | null = null;
 	let firstError: unknown = null;
-	const progress = { completed: 0, total: 1 };
-
-	const drainWaiterUsingClose = (w: Pending): void => {
-		const info = closeInfo;
-		const cause =
-			firstError ??
-			new WebhookClosedEarlyError(
-				progress.completed,
-				progress.total,
-				info?.code ?? 1006,
-				info?.reason ?? "closed early",
-			);
-		w.reject(cause);
-	};
-
-	const tryDeliver = (): void => {
-		while (waiters.length > 0 && queue.length > 0) {
-			const w = waiters[0];
-			const frame = queue[0];
-			if (w === undefined || frame === undefined) return;
-			if (w.types.has(frame.type)) {
-				queue.shift();
-				waiters.shift();
-				w.resolve(frame);
-			} else {
-				// Out-of-order frame for this waiter — surface as an error rather
-				// than silently drop. The protocol orders strictly.
-				queue.shift();
-				waiters.shift();
-				w.reject(
-					new WebhookInvalidFrameError([
-						{
-							kind: "schema",
-							type: "frame_order",
-							input: frame,
-							expected: [...w.types].join("|"),
-							received: frame.type,
-							message: `expected one of [${[...w.types].join(", ")}], got ${frame.type}`,
-						} satisfies BaseIssue<unknown>,
-					]),
-				);
-			}
-		}
-		if (closeInfo !== null) {
-			while (waiters.length > 0) {
-				const w = waiters.shift();
-				if (w === undefined) break;
-				drainWaiterUsingClose(w);
-			}
-		}
-	};
-
-	const enqueueError = (err: unknown): void => {
-		if (firstError === null) firstError = err;
-		while (waiters.length > 0) {
-			const w = waiters.shift();
-			if (w === undefined) break;
-			w.reject(err);
+	let pendingWake: (() => void) | null = null;
+	const wake = (): void => {
+		if (pendingWake !== null) {
+			const resume = pendingWake;
+			pendingWake = null;
+			resume();
 		}
 	};
 
 	ws.addEventListener("message", (event) => {
 		const text = typeof event.data === "string" ? event.data : null;
 		if (text === null) {
-			enqueueError(new WebhookMalformedFrameError());
+			if (firstError === null) firstError = new WebhookMalformedFrameError();
+			wake();
 			return;
 		}
 		let json: unknown;
 		try {
 			json = JSON.parse(text);
 		} catch (cause) {
-			enqueueError(new WebhookMalformedFrameError({ cause }));
+			if (firstError === null) firstError = new WebhookMalformedFrameError({ cause });
+			wake();
 			return;
 		}
 		const parsed = v.safeParse(ServerFrameSchema, json);
 		if (!parsed.success) {
-			enqueueError(new WebhookInvalidFrameError(parsed.issues));
+			if (firstError === null) firstError = new WebhookInvalidFrameError(parsed.issues);
+			wake();
 			return;
 		}
 		if (parsed.output.type === "error") {
-			enqueueError(new WebhookReportedError(parsed.output.code, parsed.output.message));
+			if (firstError === null) {
+				firstError = new WebhookReportedError(parsed.output.code, parsed.output.message);
+			}
+			wake();
 			return;
 		}
 		queue.push(parsed.output);
-		tryDeliver();
+		wake();
 	});
 
 	ws.addEventListener("close", (event) => {
-		closeInfo = { code: event.code, reason: event.reason };
-		tryDeliver();
+		closedAt = { code: event.code, reason: event.reason };
+		wake();
 	});
 
 	ws.addEventListener("error", () => {
@@ -449,6 +349,21 @@ async function openWebhookSession(
 		);
 	});
 
+	async function* iter(): AsyncIterableIterator<DeliverableFrame> {
+		for (;;) {
+			if (firstError !== null) throw firstError;
+			const next = queue.shift();
+			if (next !== undefined) {
+				yield next;
+				continue;
+			}
+			if (closedAt !== null) return;
+			await new Promise<void>((resolve) => {
+				pendingWake = resolve;
+			});
+		}
+	}
+
 	return {
 		send(frame: ClientFrame): void {
 			// Guard readyState: if the webhook closed between two engine sends,
@@ -458,10 +373,10 @@ async function openWebhookSession(
 			// `WebhookReportedError`, not as the generic close-early.
 			if (ws.readyState !== WebSocket.OPEN) {
 				if (firstError !== null) throw firstError;
-				const info = closeInfo;
+				const info = closedAt;
 				throw new WebhookClosedEarlyError(
-					progress.completed,
-					progress.total,
+					0,
+					0,
 					info?.code ?? 1006,
 					info?.reason ?? "send on closed socket",
 				);
@@ -473,37 +388,8 @@ async function openWebhookSession(
 				ws.close(1000, "session complete");
 			}
 		},
-		setProgress(completed, total) {
-			progress.completed = completed;
-			progress.total = total;
-		},
-		nextFrame<K extends ServerFrame["type"]>(
-			types: readonly K[],
-		): Promise<Extract<ServerFrame, { type: K }>> {
-			return new Promise<Extract<ServerFrame, { type: K }>>((resolve, reject) => {
-				const allowed: ReadonlySet<ServerFrame["type"]> = new Set<ServerFrame["type"]>(types);
-				waiters.push({
-					types: allowed,
-					// `tryDeliver` only forwards frames whose `type` is in `allowed`,
-					// so the inner `match` is exhaustive at runtime and the throw
-					// path is unreachable. The throw stays to satisfy the no-`as`
-					// rule (per .claude/rules/no-lint-suppressions.md).
-					resolve: (frame) =>
-						resolve(
-							match(frame)
-								.when(
-									(f): f is Extract<ServerFrame, { type: K }> => allowed.has(f.type),
-									(f) => f,
-								)
-								.otherwise(() => {
-									throw new WebhookInvalidFrameError([]);
-								}),
-						),
-					reject,
-				});
-				tryDeliver();
-			});
-		},
+		frames: iter,
+		closeInfo: () => closedAt,
 	};
 }
 
@@ -557,6 +443,10 @@ async function streamUserAudio(
  * `agent_transcript.delta` text is intentionally NOT accumulated — the
  * `turn.done.transcript` field is authoritative; deltas are a progress-UI
  * signal that we forward but don't persist.
+ *
+ * Throws `WebhookClosedEarlyError` with sentinel (0,0) counters when the
+ * frame iterator returns without yielding a `turn.done` — the drive loop
+ * catches and re-stamps with real (completed, total) counters.
  */
 async function collectAgentTurn(
 	session: WebhookSession,
@@ -571,17 +461,10 @@ async function collectAgentTurn(
 	const chunks: Uint8Array[] = [];
 	let totalBytes = 0;
 
-	for (;;) {
-		const frame = await session.nextFrame([
-			"agent_audio.delta",
-			"agent_transcript.delta",
-			"tool_called",
-			"turn.done",
-		] as const);
+	for await (const frame of session.frames()) {
 		if (frame.turnIdx !== expectedTurnIdx) {
 			throw new UnknownTurnIdxError(frame.turnIdx);
 		}
-
 		const done = match(frame)
 			.with({ type: "agent_audio.delta" }, (f) => {
 				if (collected.audioContentType === null) {
@@ -626,21 +509,23 @@ async function collectAgentTurn(
 				return true;
 			})
 			.exhaustive();
-
-		if (done) break;
-	}
-
-	if (chunks.length > 0) {
-		const merged = new Uint8Array(totalBytes);
-		let offset = 0;
-		for (const c of chunks) {
-			merged.set(c, offset);
-			offset += c.byteLength;
+		if (done) {
+			if (chunks.length > 0) {
+				const merged = new Uint8Array(totalBytes);
+				let offset = 0;
+				for (const c of chunks) {
+					merged.set(c, offset);
+					offset += c.byteLength;
+				}
+				collected.audioBytes = merged;
+			}
+			return collected;
 		}
-		collected.audioBytes = merged;
 	}
 
-	return collected;
+	// Iterator exhausted without `turn.done` — webhook closed mid-turn.
+	const info = session.closeInfo();
+	throw new WebhookClosedEarlyError(0, 0, info?.code ?? 1006, info?.reason ?? "closed mid-turn");
 }
 
 async function writeAgentTurn(
@@ -651,6 +536,13 @@ async function writeAgentTurn(
 	collected: CollectedAgentTurn,
 	now: () => string,
 ): Promise<void> {
+	// Atomicity: a partially-written agent turn (text row exists but audio
+	// upload failed) used to leave the diff view rendering text without
+	// playback AND the run "stuck" because the progress counter wouldn't
+	// advance. Insert text + tool calls first, then upload audio; if the
+	// upload throws, delete the row (FK CASCADE removes the tool_calls)
+	// so the caller's failure surfaces as "no agent turn N" instead of
+	// "agent turn N is text-only despite the webhook sending bytes."
 	applyEvent(store, targetSessionId, {
 		type: "turn_completed",
 		idx: agentIdx,
@@ -676,14 +568,19 @@ async function writeAgentTurn(
 	}
 
 	if (collected.audioBytes.byteLength > 0 && collected.audioContentType !== null) {
-		// Reuse the audio service's writer so file naming + audio_path stamping
-		// stays in one place per single-image-distribution.md.
-		await uploadTurnAudio(store, audioRoot, {
-			sessionId: targetSessionId,
-			turnIdx: agentIdx,
-			contentType: collected.audioContentType,
-			bytes: ensureArrayBufferBacked(collected.audioBytes),
-		});
+		try {
+			// Reuse the audio service's writer so file naming + audio_path stamping
+			// stays in one place per single-image-distribution.md.
+			await uploadTurnAudio(store, audioRoot, {
+				sessionId: targetSessionId,
+				turnIdx: agentIdx,
+				contentType: collected.audioContentType,
+				bytes: ensureArrayBufferBacked(collected.audioBytes),
+			});
+		} catch (err) {
+			deleteTurnByIdx(store.db, targetSessionId, agentIdx);
+			throw err;
+		}
 	}
 }
 
@@ -694,8 +591,4 @@ function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 	const copy = new Uint8Array(new ArrayBuffer(bytes.byteLength));
 	copy.set(bytes);
 	return copy;
-}
-
-function errorMessage(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
 }

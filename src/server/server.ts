@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { createAudioRouter } from "./audio/audio.router.ts";
 import { healthz } from "./healthz/healthz.ts";
 import { createIngestRouter } from "./ingest/ingest.router.ts";
-import { createRealtimeReplaysRouter } from "./realtime-replay/realtime-replay.router.ts";
+import { createRealtimeReplaysRouter } from "./replays/realtime/realtime.router.ts";
 import { createReplaysRouter } from "./replays/replays.router.ts";
 import { createSessionsRouter } from "./sessions/sessions.router.ts";
 import type { Store } from "./store/store.ts";

@@ -19,16 +19,16 @@ import {
 	WebhookClosedEarlyError,
 	WebhookInvalidFrameError,
 	WebhookReportedError,
-} from "./realtime-replay.errors.ts";
-import { createRealtimeReplay, runRealtimeReplay } from "./realtime-replay.service.ts";
+} from "./realtime.errors.ts";
+import { createRealtimeReplay, runRealtimeReplay } from "./realtime.service.ts";
 import {
 	bytesToBase64,
 	fakeAudioBytes,
 	makeTempAudioRoot,
 	passthroughWebhookUrl,
 	startMockWebhook,
-} from "./realtime-replay.test-utils.ts";
-import type { ClientFrame } from "./realtime-replay.types.ts";
+} from "./realtime.test-utils.ts";
+import type { ClientFrame } from "./realtime.types.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 let store: Store;

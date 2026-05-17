@@ -8,12 +8,8 @@ import { safeParse } from "valibot";
 
 import { server as mswServer } from "@/test-server.ts";
 
-import type {
-	ClientFrame,
-	CreateRealtimeReplayRequest,
-	ServerFrame,
-} from "./realtime-replay.types.ts";
-import { ClientFrameSchema } from "./realtime-replay.types.ts";
+import type { ClientFrame, CreateRealtimeReplayRequest, ServerFrame } from "./realtime.types.ts";
+import { ClientFrameSchema } from "./realtime.types.ts";
 
 export function makeCreateRealtimeReplayRequest(
 	overrides: Partial<CreateRealtimeReplayRequest> = {},

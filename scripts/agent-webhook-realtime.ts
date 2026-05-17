@@ -67,11 +67,11 @@ import type {
 	ClientFrame,
 	ServerFrame,
 	TurnManifestEntry,
-} from "@/server/realtime-replay/realtime-replay.types.ts";
+} from "@/server/replays/realtime/realtime.types.ts";
 import {
 	ClientFrameSchema,
 	REALTIME_REPLAY_PROTOCOL_VERSION,
-} from "@/server/realtime-replay/realtime-replay.types.ts";
+} from "@/server/replays/realtime/realtime.types.ts";
 
 // Per boundary-validation.md: env parsed once at startup.
 const EnvSchema = v.object({

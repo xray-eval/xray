@@ -12,9 +12,9 @@ import { toReplayRunResponse } from "@/server/replays/replays.service.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
-import { InvalidRealtimeReplayRequestError } from "./realtime-replay.errors.ts";
-import { createRealtimeReplay, runRealtimeReplay } from "./realtime-replay.service.ts";
-import { CreateRealtimeReplayRequestSchema } from "./realtime-replay.types.ts";
+import { InvalidRealtimeReplayRequestError } from "./realtime.errors.ts";
+import { createRealtimeReplay, runRealtimeReplay } from "./realtime.service.ts";
+import { CreateRealtimeReplayRequestSchema } from "./realtime.types.ts";
 
 /** Body is `{sourceSessionId, webhookUrl}`; same shape as the text path, same cap. */
 const MAX_BODY_BYTES = 4 * 1024;

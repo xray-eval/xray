@@ -13,7 +13,7 @@ import {
 	WebhookInvalidFrameError,
 	WebhookMalformedFrameError,
 	WebhookReportedError,
-} from "./realtime-replay.errors.ts";
+} from "./realtime.errors.ts";
 import { describe, expect, it } from "bun:test";
 
 function fakeIssues(message: string): readonly BaseIssue<unknown>[] {

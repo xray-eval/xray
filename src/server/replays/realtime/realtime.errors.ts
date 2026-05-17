@@ -1,6 +1,6 @@
 import type { BaseIssue } from "valibot";
 
-/** Base class for every error thrown by the realtime-replay slice. */
+/** Base class for every error thrown by the realtime replay transport. */
 export class RealtimeReplayError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
