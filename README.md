@@ -1,51 +1,32 @@
 # xray
 
-![status: alpha — early access](https://img.shields.io/badge/status-alpha%20%E2%80%94%20early%20access-orange)
+![status: alpha](https://img.shields.io/badge/status-alpha-orange)
 
-> **The only voice-agent debugger that lets you replay a broken call through your own code.**
+A self-hosted, single-session debugger for voice agents. One Docker image, SQLite on a mounted volume.
 
-**Status: alpha / early access.** Pre-v1, no published Docker image yet, APIs and the ingest wire format may change before v1. Build from source today (see [Install](#install)); a tagged GHCR release is the v0.1.0 milestone. If you're trying it out, please open issues — that's the most useful contribution right now.
+![xray replay diff — source session and replay rendered side by side, turn by turn](docs/assets/hero.png)
 
-![xray replay diff view — source vs replay side-by-side with a latency regression and shape changes flagged](docs/assets/hero.png)
+**Status: alpha.** Pre-v1. The HTTP ingest wire format and the realtime-replay WebSocket protocol may change before v1. Issues and feedback are the most useful contribution right now.
 
 ---
 
-## Why it exists
+## What it does
 
-If you're building a custom voice loop — Pipecat, LiveKit Agents, OpenAI Realtime, Gemini Live, raw STT→LLM→TTS — you have nothing today. Print statements, scattered log files, a stopwatch in your head. Fleet observability tools were designed for text agents and treat audio, latency-per-stage, and barge-in as afterthoughts.
+xray records voice-agent sessions, renders the transcript with tool calls inlined and per-turn audio playback, and lets you replay a recorded session through an updated version of your agent over a webhook — text or WebSocket. Replays write a fresh session so the source and the replay can be diffed turn by turn.
 
-xray is the **single-session voice-agent debugger** built for the long tail of homegrown voice stacks.
-
-- **Four `fetch` calls** in your loop and one `docker run` give you a structured, voice-native view of every session: turns, tool calls, latency per stage, barge-in — all first-class.
-- **Take any recorded session, click Replay, and xray walks the user-side inputs through your updated agent code** via a webhook. See old behavior vs new, turn by turn, without picking up the microphone.
-- **No SDK. No SaaS. No external database.** One Docker image, SQLite on a mounted volume.
-
-Hosted-provider agents (ElevenLabs Convai, Vapi, Retell, Voiceflow) are supported through optional adapters — but the product is built for the long tail of homegrown voice stacks that have nothing else.
+There are two ways to get sessions into xray: an HTTP ingest endpoint your loop POSTs events to, or a provider adapter that polls a hosted agent platform. One ElevenLabs Convai adapter ships today.
 
 ---
 
 ## Install
 
-> **Heads up — early access.** No published image on GHCR yet. The publish workflow ([`.github/workflows/publish.yml`](.github/workflows/publish.yml)) is wired and fires on `v*.*.*` tag push (multi-arch, cosign keyless + build-provenance attestations), but no tag has been cut. Until v0.1.0 ships, build the image yourself — same Dockerfile, one command.
-
-### Build it yourself (today)
+The image is published to GHCR:
 
 ```bash
-git clone https://github.com/basilebong/xray.git
-cd xray
-docker build -t xray:local .
+docker pull ghcr.io/basilebong/xray:0.0.1-alpha
 ```
 
-Or via the bundled pnpm scripts (these are what CI runs):
-
-```bash
-pnpm docker:build      # build the multi-stage image as xray:local
-pnpm docker:smoke      # build, run, curl /healthz, kill — sanity check
-```
-
-### Once v0.1.0 ships
-
-The image will live at `ghcr.io/basilebong/xray` on GitHub Container Registry, pulled with `docker pull ghcr.io/basilebong/xray:<tag>`. Tagged releases will be signed with cosign keyless (OIDC) and carry build-provenance attestations — verify before running with:
+Tagged releases are signed with cosign keyless (OIDC). If you want to verify:
 
 ```bash
 cosign verify ghcr.io/basilebong/xray:<tag> \
@@ -53,43 +34,63 @@ cosign verify ghcr.io/basilebong/xray:<tag> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-Watch the [packages page](https://github.com/basilebong/xray/pkgs/container/xray) — it'll populate the first time a `v*` tag lands.
+Or build from source:
+
+```bash
+git clone https://github.com/basilebong/xray.git
+cd xray
+docker build -t xray:local .
+```
+
+---
 
 ## Quickstart
 
-Operators bring API keys; nothing is baked into the image (per [`.claude/rules/public-repo.md`](.claude/rules/public-repo.md) §2). The `-v xray-data:/data` flag mounts the SQLite store so conversations survive container restarts.
+xray is designed to sit in the same Docker network as your voice agent so your loop can POST events to it over the internal DNS name. Drop xray into your existing compose stack:
 
-```bash
-# Until v0.1.0 ships, use the local build from above:
-docker run --rm \
-  -p 8080:8080 \
-  -v xray-data:/data \
-  xray:local
+```yaml
+# compose.yaml
+services:
+  xray:
+    image: ghcr.io/basilebong/xray:0.0.1-alpha
+    ports:
+      - "8080:8080"          # only expose if you want the UI reachable from the host
+    volumes:
+      - xray-data:/data      # SQLite + audio files survive container restarts
 
-# Once published, this is the one-liner:
-# docker run --rm -p 8080:8080 -v xray-data:/data ghcr.io/basilebong/xray:latest
+  my-voice-agent:
+    build: .
+    environment:
+      XRAY_URL: http://xray:8080
+    depends_on:
+      - xray
+
+volumes:
+  xray-data:
 ```
 
-Then open <http://localhost:8080>. The API reference (HTTP routes, text-replay webhook, realtime-replay WS protocol) is at <http://localhost:8080/docs>.
+`docker compose up`, then open <http://localhost:8080>. The API reference is at <http://localhost:8080/docs>.
 
-### From your custom voice loop — four `fetch` calls
+### From your voice loop — four `fetch` calls
 
 Any language with an HTTP client works. Stream events as they happen; the UI updates as new turns arrive.
 
 ```js
+const XRAY = process.env.XRAY_URL;
+
 // 1. Session starts
-await fetch("http://localhost:8080/v1/sessions/sess-42/events", {
+await fetch(`${XRAY}/v1/sessions/sess-42/events`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     type: "session_started",
-    agentId: "concierge-v2v",
+    agentId: "concierge",
     startedAt: new Date().toISOString(),
   }),
 });
 
 // 2. A user turn completes
-await fetch("http://localhost:8080/v1/sessions/sess-42/events", {
+await fetch(`${XRAY}/v1/sessions/sess-42/events`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -102,7 +103,7 @@ await fetch("http://localhost:8080/v1/sessions/sess-42/events", {
 });
 
 // 3. An agent turn completes — include the latency-to-first-output
-await fetch("http://localhost:8080/v1/sessions/sess-42/events", {
+await fetch(`${XRAY}/v1/sessions/sess-42/events`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -116,7 +117,7 @@ await fetch("http://localhost:8080/v1/sessions/sess-42/events", {
 });
 
 // 4. Session ends
-await fetch("http://localhost:8080/v1/sessions/sess-42/events", {
+await fetch(`${XRAY}/v1/sessions/sess-42/events`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -127,73 +128,56 @@ await fetch("http://localhost:8080/v1/sessions/sess-42/events", {
 });
 ```
 
-See [`docs/INGEST.md`](docs/INGEST.md) for the full wire contract — including voice-to-voice (OpenAI Realtime, Gemini Live), pipeline (STT→LLM→TTS), tool calls, barge-in, and per-turn audio upload.
+See [`docs/INGEST.md`](docs/INGEST.md) for the full wire contract — tool calls, barge-in, voice-to-voice events, and per-turn audio upload.
 
 ---
 
-## What you see
+## Replay
 
-<!-- Add screenshots as the UI lands: list view, transcript+inspector, replay diff. -->
+From any recorded session, you can re-run the user-side inputs through your updated agent code and render the result next to the original.
 
-- **Conversation list** — every ingested session, source-tagged (ingest vs adapter), filterable by agent.
-- **Transcript + inspector** — every turn in order, with tool calls inlined, per-turn audio playback, latency-per-stage tags, barge-in indicators.
-- **Replay diff** — re-run any session through your updated webhook and see source vs replay side-by-side, turn by turn, with latency regressions and shape changes flagged.
-
-## Replay — the differentiator
-
-The mechanics:
-
-1. From any recorded session, click **Replay** and paste your webhook URL.
+1. Click **Replay** on a recorded session and paste a webhook URL.
 2. xray POSTs each user turn (text + recorded tool results) to your webhook.
-3. Your webhook returns the new agent text (and optionally tool calls and latency).
-4. xray writes a fresh session and renders the diff against the original.
+3. Your webhook returns the new agent text (and optionally tool calls + latency).
+4. xray writes a fresh session and renders it next to the original.
 
-Two flavors:
+Two flavors, both documented at `/docs` on your running instance:
 
-- **Text replay** (`POST /v1/replays`) — your webhook is an HTTP endpoint. Fastest to wire up for STT→LLM→TTS loops.
-- **Realtime (V2V) replay** (`POST /v1/replays/realtime`) — your webhook is a WebSocket server. xray streams the original user audio chunk-by-chunk; your webhook returns agent audio + transcript framed by turn boundaries. Works for OpenAI Realtime / Gemini Live / any voice-to-voice setup.
+- **Text replay** (`POST /v1/replays`) — your webhook is an HTTP endpoint.
+- **Realtime / V2V replay** (`POST /v1/replays/realtime`) — your webhook is a WebSocket server. xray streams the recorded user audio chunk-by-chunk and consumes your agent's audio + transcript frames. Frame protocol is at `/asyncapi.json`.
 
-Recorded tool results are forwarded with each user turn so your replay doesn't re-execute real side effects (refunds, calendar bookings, etc.). Both protocols are fully documented at `/docs` (HTTP + webhook) and `/asyncapi.json` (realtime WS frames) on your running xray instance.
-
----
-
-## vs Langfuse / Helicone / observability tools
-
-xray is a **single-session debugger**; Langfuse and Helicone are **fleet observability**. Different jobs.
-
-- If you're shipping text agents and want dashboards, traces, eval pipelines, and prompt analytics across thousands of conversations — use Langfuse or Helicone. They were built for that.
-- If you're debugging *one specific broken call* on a voice agent — playing back the audio, inspecting tool args, finding where the latency snuck in, re-running the conversation through a fix — xray is built for that. Voice-specific surfaces (per-turn audio, barge-in, per-stage latency, V2V replay) are first-class, not afterthoughts.
-
-Most teams running voice agents seriously will end up with both.
+Recorded tool results are forwarded so the replay doesn't re-execute real side effects.
 
 ---
 
-## Adapter mode (secondary)
+## Adapter mode
 
-For ElevenLabs Convai users (and other hosted providers as adapters land), xray can pull conversations directly from the provider's API instead of receiving them via ingest. Drop your API key in via `docker run -e`, point the UI at the provider, and xray syncs sessions into the same SQLite store the UI reads from.
+If you use ElevenLabs Convai, you can skip the ingest step entirely. Set `ELEVENLABS_API_KEY` and xray pulls conversations from ElevenLabs' API into the same SQLite store the UI reads from:
 
-```bash
-# Until v0.1.0 ships on GHCR, swap `ghcr.io/basilebong/xray:latest` for the
-# `xray:local` you built above. Replace `sk_...` with your real provider key.
-docker run --rm \
-  -p 8080:8080 \
-  -v xray-data:/data \
-  -e ELEVENLABS_API_KEY=sk_... \
-  ghcr.io/basilebong/xray:latest
+```yaml
+services:
+  xray:
+    image: ghcr.io/basilebong/xray:0.0.1-alpha
+    ports:
+      - "8080:8080"
+    volumes:
+      - xray-data:/data
+    environment:
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY}
 ```
 
-Adapters live in [`src/adapters/<provider>/`](src/adapters/). PRs welcome for new providers — see [CONTRIBUTING.md](CONTRIBUTING.md).
+ElevenLabs is the only adapter today. New adapters live under [`src/adapters/<provider>/`](src/adapters/) — PRs welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
-## Architecture & self-hosting
+## Architecture
 
-One Bun process serves both the SPA shell and the API. One SQLite file at `/data/xray.db` on a mounted volume. No external database, no second container, no managed service required. The single-image distribution model is load-bearing — read [`.claude/rules/single-image-distribution.md`](.claude/rules/single-image-distribution.md) for why SQLite is the right fit, not a placeholder.
+One Bun process serves both the SPA shell and the API. One SQLite file at `/data/xray.db` on a mounted volume. No external database, no second container, no managed service required. See [`.claude/rules/single-image-distribution.md`](.claude/rules/single-image-distribution.md) for why SQLite is the right fit here.
 
 ```
-                ┌─ src/adapters/<provider>/   (REST poll: ElevenLabs Convai, etc.)
+                ┌─ src/adapters/<provider>/   (REST poll: ElevenLabs Convai)
    sources  ────┤
-                └─ POST /v1/sessions/:id/events   (HTTP ingest: custom loops)
+                └─ POST /v1/sessions/:id/events   (HTTP ingest)
                          │
                          ▼
                 ┌────────────────────────┐
@@ -202,17 +186,15 @@ One Bun process serves both the SPA shell and the API. One SQLite file at `/data
                          │
                          ▼
                 ┌────────────────────────┐
-                │   one source-agnostic  │   list • transcript • inspector • replay
-                │           UI           │
+                │           UI           │   list • transcript • inspector • replay
                 └────────────────────────┘
 ```
 
-### Security stance
+### Security
 
-- **Open source = audit surface.** The Hono proxy is small enough to read in one sitting. That's what justifies handing it credentials that could drain a provider account.
-- **Secrets are runtime-only.** API keys enter via `docker run -e` or `--env-file` — never baked into the image. See [`.claude/rules/public-repo.md`](.claude/rules/public-repo.md) §2.
-- **Supply chain is paranoid by default.** 7-day cooldown on npm releases, deny-by-default lifecycle scripts, every GitHub Action pinned to a 40-char commit SHA. See [`.claude/rules/supply-chain.md`](.claude/rules/supply-chain.md).
-- **Releases are signed.** GHCR images are built by GitHub Actions with cosign keyless signing (OIDC) and `actions/attest-build-provenance` attestation. Verify with `cosign verify ghcr.io/basilebong/xray:<tag> --certificate-identity=...`.
+- Secrets are runtime-only — API keys are passed at run time (compose `environment:` / `env_file:`, or `docker run -e`), never baked into the image.
+- 7-day cooldown on npm releases, deny-by-default lifecycle scripts, every GitHub Action pinned to a 40-char commit SHA. See [`.claude/rules/supply-chain.md`](.claude/rules/supply-chain.md).
+- Releases are signed with cosign keyless (OIDC) and carry build-provenance attestations.
 
 ---
 
@@ -225,12 +207,10 @@ pnpm dev                    # single Bun process via compose.dev.yaml (HMR for S
 pnpm docker:smoke           # build image, run it, curl /healthz, kill — same check CI runs
 ```
 
-Every CI step runs locally with one pnpm script — if something only works in GitHub Actions, that's a bug. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full loop and [CLAUDE.md](CLAUDE.md) + [`.claude/rules/`](.claude/rules/) for the design constraints code reviewers will hold you to.
+Every CI step runs locally with one pnpm script. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md).
 
 ---
 
 ## License
 
-[Elastic License 2.0](LICENSE). Free to use, copy, modify, and self-host — including for commercial use inside your own organization. The one thing you may **not** do is offer xray to third parties as a hosted or managed service ("xray-as-a-SaaS"). Contributions back to this repo remain under the same license.
-
-If you have a use case that doesn't fit those limits, open an issue and we'll talk.
+[Elastic License 2.0](LICENSE). Free to use, copy, modify, and self-host, including commercially inside your own organization. You may not offer xray to third parties as a hosted or managed service.
