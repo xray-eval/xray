@@ -1,6 +1,6 @@
 import type { Store } from "./store.ts";
 import { openStore } from "./store.ts";
-import type { Session, ToolCallInput, TurnInput } from "./types.ts";
+import type { ReplayRunInput, Session, ToolCallInput, TurnInput } from "./types.ts";
 
 /**
  * In-memory store for a single test. Each call returns a fresh DB — no
@@ -12,6 +12,7 @@ export function makeTempStore(): Store {
 
 let sessionCounter = 0;
 let turnCounter = 0;
+let replayCounter = 0;
 
 export function makeSession(overrides: Partial<Session> = {}): Session {
 	sessionCounter += 1;
@@ -53,6 +54,23 @@ export function makeToolCallInput(overrides: Partial<ToolCallInput> = {}): ToolC
 		argsJson: '{"q":"hello"}',
 		resultJson: null,
 		latencyMs: null,
+		...overrides,
+	};
+}
+
+export function makeReplayRunInput(overrides: Partial<ReplayRunInput> = {}): ReplayRunInput {
+	replayCounter += 1;
+	return {
+		id: `replay-${replayCounter}`,
+		sourceSessionId: "sess-1",
+		targetSessionId: `target-${replayCounter}`,
+		status: "pending",
+		webhookUrl: "https://example.test/webhook",
+		progressCompleted: 0,
+		progressTotal: 0,
+		startedAt: "2026-05-16T12:00:00.000Z",
+		finishedAt: null,
+		error: null,
 		...overrides,
 	};
 }

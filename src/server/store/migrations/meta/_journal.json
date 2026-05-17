@@ -15,6 +15,13 @@
       "when": 1778961339341,
       "tag": "0001_turn_response_latency_and_interrupt",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779007682193,
+      "tag": "0002_replay_runs",
+      "breakpoints": true
     }
   ]
 }

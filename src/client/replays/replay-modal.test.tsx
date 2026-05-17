@@ -1,0 +1,203 @@
+import { HttpResponse, http } from "msw";
+
+import { makeReplayRunResponse } from "@/server/replays/replays.test-utils.ts";
+import { server } from "@/test-server.ts";
+
+import { registerHappyDom } from "../test-happy-dom.ts";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+
+registerHappyDom();
+const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
+const { ReplayModal } = await import("./replay-modal.tsx");
+const { withQueryClient } = await import("../test-utils.tsx");
+
+afterEach(() => cleanup());
+
+beforeEach(() => {
+	// Wipe the localStorage key between tests so prefill doesn't leak across tests.
+	try {
+		window.localStorage.removeItem("xray.replay.webhookUrl");
+	} catch {
+		// ignore
+	}
+});
+
+const REPLAYS_URL = "http://localhost/v1/replays";
+
+describe("ReplayModal — render", () => {
+	it("renders with the source session id in the body", () => {
+		render(
+			withQueryClient(
+				<ReplayModal
+					sourceSessionId="sess-source"
+					apiBase="http://localhost"
+					onClose={mock()}
+					onStarted={mock()}
+				/>,
+			),
+		);
+		expect(screen.getByText("sess-source")).toBeTruthy();
+		expect(screen.getByRole("dialog")).toBeTruthy();
+	});
+
+	it("disables submit until a webhook URL is typed", () => {
+		render(
+			withQueryClient(
+				<ReplayModal
+					sourceSessionId="s"
+					apiBase="http://localhost"
+					onClose={mock()}
+					onStarted={mock()}
+				/>,
+			),
+		);
+		const submit = screen.getByRole("button", { name: /run replay/i });
+		if (!(submit instanceof HTMLButtonElement)) throw new Error("expected button");
+		expect(submit.disabled).toBe(true);
+		const input = screen.getByLabelText(/webhook url/i);
+		if (!(input instanceof HTMLInputElement)) throw new Error("expected input");
+		fireEvent.change(input, { target: { value: "https://example.test/wh" } });
+		expect(submit.disabled).toBe(false);
+	});
+});
+
+describe("ReplayModal — submit", () => {
+	it("POSTs to /v1/replays and calls onStarted with the run", async () => {
+		server.use(
+			http.post(REPLAYS_URL, () =>
+				HttpResponse.json(makeReplayRunResponse({ id: "r-99" }), { status: 202 }),
+			),
+		);
+		const onStarted = mock();
+		render(
+			withQueryClient(
+				<ReplayModal
+					sourceSessionId="sess-1"
+					apiBase="http://localhost"
+					onClose={mock()}
+					onStarted={onStarted}
+				/>,
+			),
+		);
+		fireEvent.change(screen.getByLabelText(/webhook url/i), {
+			target: { value: "https://example.test/wh" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /run replay/i }));
+		await waitFor(() => expect(onStarted).toHaveBeenCalled());
+		expect(onStarted.mock.calls[0]?.[0].id).toBe("r-99");
+	});
+
+	it("sends sourceSessionId and webhookUrl in the request body", async () => {
+		const seen = mock();
+		server.use(
+			http.post(REPLAYS_URL, async ({ request }) => {
+				seen(await request.json());
+				return HttpResponse.json(makeReplayRunResponse(), { status: 202 });
+			}),
+		);
+		render(
+			withQueryClient(
+				<ReplayModal
+					sourceSessionId="sess-1"
+					apiBase="http://localhost"
+					onClose={mock()}
+					onStarted={mock()}
+				/>,
+			),
+		);
+		fireEvent.change(screen.getByLabelText(/webhook url/i), {
+			target: { value: "https://example.test/wh" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /run replay/i }));
+		await waitFor(() => expect(seen).toHaveBeenCalled());
+		expect(seen.mock.calls[0]?.[0]).toEqual({
+			sourceSessionId: "sess-1",
+			webhookUrl: "https://example.test/wh",
+		});
+	});
+
+	it("renders an alert when the server returns 4xx and does not call onStarted", async () => {
+		server.use(
+			http.post(REPLAYS_URL, () =>
+				HttpResponse.json({ error: "source_session_not_found" }, { status: 404 }),
+			),
+		);
+		const onStarted = mock();
+		render(
+			withQueryClient(
+				<ReplayModal
+					sourceSessionId="missing"
+					apiBase="http://localhost"
+					onClose={mock()}
+					onStarted={onStarted}
+				/>,
+			),
+		);
+		fireEvent.change(screen.getByLabelText(/webhook url/i), {
+			target: { value: "https://example.test/wh" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /run replay/i }));
+		await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+		expect(onStarted).not.toHaveBeenCalled();
+	});
+
+	it("persists the webhook URL on successful submit", async () => {
+		server.use(
+			http.post(REPLAYS_URL, () => HttpResponse.json(makeReplayRunResponse(), { status: 202 })),
+		);
+		render(
+			withQueryClient(
+				<ReplayModal
+					sourceSessionId="s"
+					apiBase="http://localhost"
+					onClose={mock()}
+					onStarted={mock()}
+				/>,
+			),
+		);
+		fireEvent.change(screen.getByLabelText(/webhook url/i), {
+			target: { value: "https://persisted.example/wh" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /run replay/i }));
+		await waitFor(() =>
+			expect(window.localStorage.getItem("xray.replay.webhookUrl")).toBe(
+				"https://persisted.example/wh",
+			),
+		);
+	});
+});
+
+describe("ReplayModal — close", () => {
+	it("fires onClose when the shadcn close button is clicked", () => {
+		const onClose = mock();
+		render(
+			withQueryClient(
+				<ReplayModal
+					sourceSessionId="s"
+					apiBase="http://localhost"
+					onClose={onClose}
+					onStarted={mock()}
+				/>,
+			),
+		);
+		// shadcn's DialogContent renders a built-in close button with `<span class="sr-only">Close</span>`.
+		fireEvent.click(screen.getByRole("button", { name: /close/i }));
+		expect(onClose).toHaveBeenCalled();
+	});
+
+	it("fires onClose when Cancel is clicked", () => {
+		const onClose = mock();
+		render(
+			withQueryClient(
+				<ReplayModal
+					sourceSessionId="s"
+					apiBase="http://localhost"
+					onClose={onClose}
+					onStarted={mock()}
+				/>,
+			),
+		);
+		fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+		expect(onClose).toHaveBeenCalled();
+	});
+});

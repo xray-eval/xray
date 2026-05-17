@@ -4,12 +4,22 @@
 import index from "../../index.html";
 import { loadEnv } from "./env/env.ts";
 import { createApp } from "./server.ts";
+import { sweepOrphanedReplayRuns } from "./store/replay-runs-repo.ts";
 import { openStoreFromEnv } from "./store/store.ts";
 
 const env = loadEnv();
 // Open the store at boot so migrations run before the first request and any
 // misconfiguration fails-fast instead of surfacing on a route handler.
 const store = openStoreFromEnv(env);
+
+// Single-writer model: any replay row in `running` is from a process that
+// died holding it. Mark them failed so the UI shows them broken instead of
+// stuck "in progress" forever.
+const orphaned = sweepOrphanedReplayRuns(store.db, new Date().toISOString());
+if (orphaned > 0) {
+	console.warn(`Marked ${orphaned} orphaned replay run(s) as failed`);
+}
+
 const app = createApp(store);
 
 const server = Bun.serve({
