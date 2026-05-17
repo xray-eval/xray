@@ -17,29 +17,18 @@ import {
 
 export interface DiffPanelProps {
 	run: ReplayRunResponse;
-	apiBase?: string;
 }
 
 type SessionQueryKey = readonly ["conversation", { sessionId: string }];
 
-export function DiffPanel({ run, apiBase }: DiffPanelProps) {
+export function DiffPanel({ run }: DiffPanelProps) {
 	const sourceQuery = useQuery<Conversation, Error, Conversation, SessionQueryKey>({
 		queryKey: ["conversation", { sessionId: run.sourceSessionId }] as const,
-		queryFn: ({ signal }) =>
-			fetchConversation({
-				sessionId: run.sourceSessionId,
-				signal,
-				...(apiBase !== undefined ? { apiBase } : {}),
-			}),
+		queryFn: ({ signal }) => fetchConversation({ sessionId: run.sourceSessionId, signal }),
 	});
 	const targetQuery = useQuery<Conversation, Error, Conversation, SessionQueryKey>({
 		queryKey: ["conversation", { sessionId: run.targetSessionId }] as const,
-		queryFn: ({ signal }) =>
-			fetchConversation({
-				sessionId: run.targetSessionId,
-				signal,
-				...(apiBase !== undefined ? { apiBase } : {}),
-			}),
+		queryFn: ({ signal }) => fetchConversation({ sessionId: run.targetSessionId, signal }),
 	});
 
 	return match([sourceQuery, targetQuery] as const)

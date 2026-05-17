@@ -9,7 +9,6 @@ export interface FetchSessionsParams {
 	agentId?: string;
 	cursor?: string;
 	signal: AbortSignal;
-	apiBase?: string;
 }
 
 /**
@@ -22,10 +21,8 @@ export async function fetchSessions({
 	agentId,
 	cursor,
 	signal,
-	apiBase,
 }: FetchSessionsParams): Promise<ListSessionsResponse> {
-	const base = apiBase ?? window.location.origin;
-	const url = new URL("/v1/sessions", base);
+	const url = new URL("/v1/sessions", window.location.origin);
 	if (agentId !== undefined) url.searchParams.set("agentId", agentId);
 	if (cursor !== undefined) url.searchParams.set("cursor", cursor);
 	const res = await fetch(url, { signal });

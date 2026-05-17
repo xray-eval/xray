@@ -17,7 +17,6 @@ import {
 
 export interface ReplayModalProps {
 	sourceSessionId: string;
-	apiBase?: string;
 	onClose: () => void;
 	onStarted: (run: ReplayRunResponse) => void;
 }
@@ -43,16 +42,12 @@ function writeWebhookToStorage(url: string): void {
 	}
 }
 
-export function ReplayModal({ sourceSessionId, apiBase, onClose, onStarted }: ReplayModalProps) {
+export function ReplayModal({ sourceSessionId, onClose, onStarted }: ReplayModalProps) {
 	const urlInputId = useId();
 	const [webhookUrl, setWebhookUrl] = useState<string>(readWebhookFromStorage);
 
 	const mutation = useMutation<ReplayRunResponse, Error, void>({
-		mutationFn: () =>
-			createReplay({
-				body: { sourceSessionId, webhookUrl },
-				...(apiBase !== undefined ? { apiBase } : {}),
-			}),
+		mutationFn: () => createReplay({ body: { sourceSessionId, webhookUrl } }),
 		onSuccess: (run) => {
 			writeWebhookToStorage(webhookUrl);
 			onStarted(run);

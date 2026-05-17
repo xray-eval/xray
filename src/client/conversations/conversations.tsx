@@ -1,7 +1,9 @@
 import type { InfiniteData } from "@tanstack/react-query";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { AlertCircle, ChevronRight, ExternalLink, Play } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { match } from "ts-pattern";
 
 import type { ListSessionsResponse, SessionListItem } from "@/server/sessions/sessions.types.ts";
@@ -18,31 +20,15 @@ import {
 } from "../components/ui/card.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
 import { formatAbsolute, formatDuration } from "../format.ts";
+import { ReplayModal } from "../replays/replay-modal.tsx";
 import { sourceBadgeVariant } from "../source-badge.ts";
 
-export interface ConversationsListProps {
-	/** Optional `agentId` filter passed through as `?agentId=` to the server. */
-	agentId?: string;
-	/**
-	 * API base URL override. Defaults to `window.location.origin` (set inside
-	 * `fetchSessions`). Tests pass `http://localhost` so happy-dom can resolve
-	 * the relative path.
-	 */
-	apiBase?: string;
-	/** Called with the row's session id when the user clicks one. */
-	onSelectSession?: (sessionId: string) => void;
-	/** Called when the user clicks the replay button on a row. */
-	onReplaySession?: (sessionId: string) => void;
-}
+type SessionsQueryKey = readonly ["sessions", Record<string, never>];
 
-type SessionsQueryKey = readonly ["sessions", { agentId: string | undefined }];
+export function ConversationsList() {
+	const navigate = useNavigate();
+	const [modalSource, setModalSource] = useState<string | null>(null);
 
-export function ConversationsList({
-	agentId,
-	apiBase,
-	onSelectSession,
-	onReplaySession,
-}: ConversationsListProps) {
 	const query = useInfiniteQuery<
 		ListSessionsResponse,
 		Error,
@@ -50,62 +36,68 @@ export function ConversationsList({
 		SessionsQueryKey,
 		string | undefined
 	>({
-		queryKey: ["sessions", { agentId }] as const,
+		queryKey: ["sessions", {}] as const,
 		queryFn: ({ pageParam, signal }) =>
-			fetchSessions({
-				signal,
-				...(agentId !== undefined ? { agentId } : {}),
-				...(pageParam !== undefined ? { cursor: pageParam } : {}),
-				...(apiBase !== undefined ? { apiBase } : {}),
-			}),
+			fetchSessions({ signal, ...(pageParam !== undefined ? { cursor: pageParam } : {}) }),
 		initialPageParam: undefined,
 		getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
 	});
 
 	return (
-		<section aria-label="Conversations" aria-busy={query.isPending} className="space-y-6">
-			<header className="flex items-baseline justify-between gap-4">
-				<h2 className="text-2xl font-semibold tracking-tight">Conversations</h2>
-				<SessionCount query={query} />
-			</header>
+		<>
+			<section aria-label="Conversations" aria-busy={query.isPending} className="space-y-6">
+				<header className="flex items-baseline justify-between gap-4">
+					<h2 className="text-2xl font-semibold tracking-tight">Conversations</h2>
+					<SessionCount query={query} />
+				</header>
 
-			{match(query)
-				.with({ status: "pending" }, () => <LoadingState />)
-				.with({ status: "error" }, (q) => (
-					<ErrorState error={q.error} onRetry={() => query.refetch()} />
-				))
-				.with({ status: "success" }, (q) => {
-					const items = q.data.pages.flatMap((p) => p.sessions);
-					if (items.length === 0) return <EmptyState />;
-					return (
-						<div className="space-y-3">
-							<ul className="space-y-3">
-								{items.map((item) => (
-									<ConversationRow
-										key={item.id}
-										session={item}
-										{...(onSelectSession !== undefined ? { onSelect: onSelectSession } : {})}
-										{...(onReplaySession !== undefined ? { onReplay: onReplaySession } : {})}
-									/>
-								))}
-							</ul>
-							{q.hasNextPage && (
-								<div className="flex justify-center pt-2">
-									<Button
-										variant="outline"
-										onClick={() => q.fetchNextPage()}
-										disabled={q.isFetchingNextPage}
-									>
-										{q.isFetchingNextPage ? "Loading…" : "Load more"}
-										<ChevronRight />
-									</Button>
-								</div>
-							)}
-						</div>
-					);
-				})
-				.exhaustive()}
-		</section>
+				{match(query)
+					.with({ status: "pending" }, () => <LoadingState />)
+					.with({ status: "error" }, (q) => (
+						<ErrorState error={q.error} onRetry={() => query.refetch()} />
+					))
+					.with({ status: "success" }, (q) => {
+						const items = q.data.pages.flatMap((p) => p.sessions);
+						if (items.length === 0) return <EmptyState />;
+						return (
+							<div className="space-y-3">
+								<ul className="space-y-3">
+									{items.map((item) => (
+										<ConversationRow
+											key={item.id}
+											session={item}
+											onReplay={(id) => setModalSource(id)}
+										/>
+									))}
+								</ul>
+								{q.hasNextPage && (
+									<div className="flex justify-center pt-2">
+										<Button
+											variant="outline"
+											onClick={() => q.fetchNextPage()}
+											disabled={q.isFetchingNextPage}
+										>
+											{q.isFetchingNextPage ? "Loading…" : "Load more"}
+											<ChevronRight />
+										</Button>
+									</div>
+								)}
+							</div>
+						);
+					})
+					.exhaustive()}
+			</section>
+			{modalSource !== null && (
+				<ReplayModal
+					sourceSessionId={modalSource}
+					onClose={() => setModalSource(null)}
+					onStarted={(run) => {
+						setModalSource(null);
+						void navigate({ to: "/replays/$replayId", params: { replayId: run.id } });
+					}}
+				/>
+			)}
+		</>
 	);
 }
 
@@ -127,71 +119,63 @@ function SessionCount({ query }: SessionCountProps) {
 
 interface ConversationRowProps {
 	session: SessionListItem;
-	onSelect?: (sessionId: string) => void;
-	onReplay?: (sessionId: string) => void;
+	onReplay: (sessionId: string) => void;
 }
 
-function ConversationRow({ session, onSelect, onReplay }: ConversationRowProps) {
-	const inner = (
-		<Card className="group w-full text-left transition-colors hover:bg-accent/30">
-			<CardHeader>
-				<CardDescription>
-					<time dateTime={session.startedAt}>{formatAbsolute(session.startedAt)}</time>
-				</CardDescription>
-				<CardTitle className="text-base font-medium">
-					<dl className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5">
-						<div className="flex items-baseline gap-2">
-							<dt className="sr-only">Agent</dt>
-							<dd>{session.agentId}</dd>
-						</div>
-						<div className="text-muted-foreground flex items-baseline gap-2 text-sm font-normal">
-							<dt>Duration</dt>
-							<dd>{formatDuration(session.durationMs)}</dd>
-						</div>
-						<div className="flex items-baseline gap-2 text-sm font-normal">
-							<dt className="sr-only">Source</dt>
-							<dd>
-								<Badge variant={sourceBadgeVariant(session.source)}>{session.source}</Badge>
-							</dd>
-						</div>
-					</dl>
-				</CardTitle>
-			</CardHeader>
-			<CardContent className="flex items-center justify-end gap-2">
-				{onReplay !== undefined && (
+function ConversationRow({ session, onReplay }: ConversationRowProps) {
+	// One <Link> per row — wraps metadata + chevron, sits next to the Replay
+	// <button> as a sibling (not parent), so we never nest <button> in <a>.
+	// No `aria-label` on the <Link>: an aria-label would suppress the
+	// descendant text (Duration, Source badge) from the link's accessible
+	// name. Screen-reader users get the full row text instead.
+	return (
+		<li>
+			<Card className="group w-full text-left transition-colors hover:bg-accent/30">
+				<Link
+					to="/sessions/$sessionId"
+					params={{ sessionId: session.id }}
+					className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+				>
+					<CardHeader>
+						<CardDescription>
+							<time dateTime={session.startedAt}>{formatAbsolute(session.startedAt)}</time>
+						</CardDescription>
+						<CardTitle className="flex items-center justify-between gap-3 text-base font-medium">
+							<dl className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5">
+								<div className="flex items-baseline gap-2">
+									<dt className="sr-only">Agent</dt>
+									<dd>{session.agentId}</dd>
+								</div>
+								<div className="text-muted-foreground flex items-baseline gap-2 text-sm font-normal">
+									<dt>Duration</dt>
+									<dd>{formatDuration(session.durationMs)}</dd>
+								</div>
+								<div className="flex items-baseline gap-2 text-sm font-normal">
+									<dt className="sr-only">Source</dt>
+									<dd>
+										<Badge variant={sourceBadgeVariant(session.source)}>{session.source}</Badge>
+									</dd>
+								</div>
+							</dl>
+							<ChevronRight
+								aria-hidden="true"
+								className="text-muted-foreground size-4 shrink-0 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
+							/>
+						</CardTitle>
+					</CardHeader>
+				</Link>
+				<CardContent className="flex items-center justify-end gap-2">
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={(e) => {
-							// Row is a button; stop propagation so clicking Replay
-							// doesn't also fire onSelect.
-							e.stopPropagation();
-							onReplay(session.id);
-						}}
+						onClick={() => onReplay(session.id)}
 						aria-label={`Replay session ${session.agentId}`}
 					>
 						<Play />
 						Replay
 					</Button>
-				)}
-				<ChevronRight className="text-muted-foreground size-4 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-			</CardContent>
-		</Card>
-	);
-	return (
-		<li>
-			{onSelect !== undefined ? (
-				<button
-					type="button"
-					onClick={() => onSelect(session.id)}
-					aria-label={`Open session ${session.agentId}, started ${formatAbsolute(session.startedAt)}`}
-					className="block w-full cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded-xl"
-				>
-					{inner}
-				</button>
-			) : (
-				inner
-			)}
+				</CardContent>
+			</Card>
 		</li>
 	);
 }

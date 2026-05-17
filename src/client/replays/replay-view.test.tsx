@@ -5,12 +5,11 @@ import { makeConversation, makeConversationTurn } from "@/server/sessions/sessio
 import { server } from "@/test-server.ts";
 
 import { registerHappyDom } from "../test-happy-dom.ts";
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
 const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
-const { ReplayView } = await import("./replay-view.tsx");
-const { withQueryClient } = await import("../test-utils.tsx");
+const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
 
@@ -31,9 +30,8 @@ describe("ReplayView — terminal states", () => {
 				),
 			),
 		);
-		render(
-			withQueryClient(<ReplayView replayId="r-1" apiBase="http://localhost" onBack={mock()} />),
-		);
+		const { ui } = renderWithRouter({ initialEntries: ["/replays/r-1"] });
+		render(ui);
 		await waitFor(() => expect(screen.getByText(/replaying turns/i)).toBeTruthy());
 		expect(screen.getByText(/2 of 5 user turns processed/i)).toBeTruthy();
 		const bar = screen.getByRole("progressbar");
@@ -52,9 +50,8 @@ describe("ReplayView — terminal states", () => {
 				),
 			),
 		);
-		render(
-			withQueryClient(<ReplayView replayId="r-1" apiBase="http://localhost" onBack={mock()} />),
-		);
+		const { ui } = renderWithRouter({ initialEntries: ["/replays/r-1"] });
+		render(ui);
 		await waitFor(() => expect(screen.getByText(/replay failed/i)).toBeTruthy());
 		expect(screen.getByText(/Webhook returned HTTP 500/i)).toBeTruthy();
 	});
@@ -97,9 +94,8 @@ describe("ReplayView — completed diff", () => {
 				),
 			),
 		);
-		render(
-			withQueryClient(<ReplayView replayId="r-1" apiBase="http://localhost" onBack={mock()} />),
-		);
+		const { ui } = renderWithRouter({ initialEntries: ["/replays/r-1"] });
+		render(ui);
 		await waitFor(() => expect(screen.getByText(/replay complete/i)).toBeTruthy());
 		// Both texts appear (source: "hi back", target: "hi there")
 		expect(screen.getByText("hi back")).toBeTruthy();
@@ -141,9 +137,8 @@ describe("ReplayView — completed diff", () => {
 				),
 			),
 		);
-		render(
-			withQueryClient(<ReplayView replayId="r-1" apiBase="http://localhost" onBack={mock()} />),
-		);
+		const { ui } = renderWithRouter({ initialEntries: ["/replays/r-1"] });
+		render(ui);
 		await waitFor(() =>
 			expect(screen.getAllByText(/no turn at this position/i).length).toBeGreaterThan(0),
 		);
@@ -151,20 +146,21 @@ describe("ReplayView — completed diff", () => {
 });
 
 describe("ReplayView — back navigation", () => {
-	it("calls onBack when the back button is clicked", async () => {
+	it("navigates to / when the back button is clicked", async () => {
 		server.use(
 			http.get(REPLAY_URL, () =>
 				HttpResponse.json(makeReplayRunResponse({ id: "r-1", status: "completed" })),
 			),
 			http.get(SOURCE_URL, () => HttpResponse.json(makeConversation({ id: "sess-source" }))),
 			http.get(TARGET_URL, () => HttpResponse.json(makeConversation({ id: "sess-target" }))),
+			http.get("http://localhost/v1/sessions", () =>
+				HttpResponse.json({ sessions: [], nextCursor: null }),
+			),
 		);
-		const onBack = mock();
-		render(
-			withQueryClient(<ReplayView replayId="r-1" apiBase="http://localhost" onBack={onBack} />),
-		);
-		const back = await screen.findByRole("button", { name: /all sessions/i });
+		const { router, ui } = renderWithRouter({ initialEntries: ["/replays/r-1"] });
+		render(ui);
+		const back = await screen.findByRole("link", { name: /all sessions/i });
 		fireEvent.click(back);
-		expect(onBack).toHaveBeenCalled();
+		await waitFor(() => expect(router.state.location.pathname).toBe("/"));
 	});
 });

@@ -8,28 +8,28 @@ import {
 import { server } from "@/test-server.ts";
 
 import { registerHappyDom } from "../test-happy-dom.ts";
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
 const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
-const { Inspector } = await import("./inspector.tsx");
-const { withQueryClient } = await import("../test-utils.tsx");
+const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
 
 const CONVO_URL = "http://localhost/v1/sessions/sess-1";
 
 describe("Inspector — pending state", () => {
-	it("marks the section as aria-busy while loading", () => {
+	it("marks the section as aria-busy while loading", async () => {
 		// MSW handler that never resolves so we observe the pending state. We
-		// can't await the eventual render here — that's why this is a sync
-		// assertion, not an `await screen.findBy*`.
+		// can't await the eventual render here — we wait for the section to
+		// mount, then assert synchronously.
 		const never = new Promise<Response>(() => {
 			// noop: intentionally never resolves to keep the query in `pending`.
 		});
 		server.use(http.get(CONVO_URL, () => never));
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
-		const section = screen.getByLabelText(/transcript/i);
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+		const section = await screen.findByLabelText(/transcript/i);
 		expect(section.getAttribute("aria-busy")).toBe("true");
 	});
 });
@@ -40,12 +40,7 @@ describe("Inspector — pipeline-style fixture", () => {
 			id: "sess-1",
 			agentId: "agent-pipe",
 			turns: [
-				makeConversationTurn({
-					id: "t-0",
-					idx: 0,
-					role: "user",
-					text: "hi",
-				}),
+				makeConversationTurn({ id: "t-0", idx: 0, role: "user", text: "hi" }),
 				makeConversationTurn({
 					id: "t-1",
 					idx: 1,
@@ -56,7 +51,8 @@ describe("Inspector — pipeline-style fixture", () => {
 			],
 		});
 		server.use(http.get(CONVO_URL, () => HttpResponse.json(conv)));
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
 
 		await waitFor(() => expect(screen.getByText("agent-pipe")).toBeTruthy());
 		expect(screen.getByText("hi")).toBeTruthy();
@@ -82,7 +78,8 @@ describe("Inspector — voice-to-voice fixture", () => {
 			],
 		});
 		server.use(http.get(CONVO_URL, () => HttpResponse.json(conv)));
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
 
 		await waitFor(() => expect(screen.getByText(/interrupted at 800ms/i)).toBeTruthy());
 	});
@@ -101,7 +98,8 @@ describe("Inspector — voice-to-voice fixture", () => {
 			],
 		});
 		server.use(http.get(CONVO_URL, () => HttpResponse.json(conv)));
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
 
 		await waitFor(() => {
 			const badge = screen.getByLabelText(/^interrupted$/i);
@@ -133,7 +131,8 @@ describe("Inspector — tool-heavy fixture", () => {
 			],
 		});
 		server.use(http.get(CONVO_URL, () => HttpResponse.json(conv)));
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
 
 		await waitFor(() => expect(screen.getByText("weather_lookup")).toBeTruthy());
 		expect(screen.getByText("123ms")).toBeTruthy();
@@ -149,7 +148,8 @@ describe("Inspector — empty transcript", () => {
 		server.use(
 			http.get(CONVO_URL, () => HttpResponse.json(makeConversation({ id: "sess-1", turns: [] }))),
 		);
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
 		await waitFor(() => expect(screen.getByText(/no turns yet/i)).toBeTruthy());
 	});
 });
@@ -161,7 +161,8 @@ describe("Inspector — error paths", () => {
 				HttpResponse.json({ error: "session_not_found", sessionId: "sess-1" }, { status: 404 }),
 			),
 		);
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
 		expect(await screen.findByText(/session not found/i)).toBeTruthy();
 		// 404 is terminal — no point retrying the same id.
 		expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
@@ -171,34 +172,32 @@ describe("Inspector — error paths", () => {
 		server.use(
 			http.get(CONVO_URL, () => HttpResponse.json({ error: "store_failure" }, { status: 500 })),
 		);
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
 		expect(await screen.findByRole("alert")).toBeTruthy();
 		expect(screen.getByRole("button", { name: /try again/i })).toBeTruthy();
 	});
 
 	it("renders an alert when the body has the wrong shape", async () => {
 		server.use(http.get(CONVO_URL, () => HttpResponse.json({ nope: 1 })));
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
 		expect(await screen.findByRole("alert")).toBeTruthy();
 	});
 });
 
 describe("Inspector — back navigation", () => {
-	it("invokes onBack when the back button is clicked", async () => {
-		const onBack = mock();
-		server.use(http.get(CONVO_URL, () => HttpResponse.json(makeConversation({ id: "sess-1" }))));
-		render(
-			withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" onBack={onBack} />),
+	it("navigates to / when the back button is clicked", async () => {
+		server.use(
+			http.get(CONVO_URL, () => HttpResponse.json(makeConversation({ id: "sess-1" }))),
+			http.get("http://localhost/v1/sessions", () =>
+				HttpResponse.json({ sessions: [], nextCursor: null }),
+			),
 		);
-		const back = await screen.findByRole("button", { name: /all sessions/i });
+		const { router, ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+		const back = await screen.findByRole("link", { name: /all sessions/i });
 		fireEvent.click(back);
-		expect(onBack).toHaveBeenCalledTimes(1);
-	});
-
-	it("renders no back button when onBack is omitted", async () => {
-		server.use(http.get(CONVO_URL, () => HttpResponse.json(makeConversation({ id: "sess-1" }))));
-		render(withQueryClient(<Inspector sessionId="sess-1" apiBase="http://localhost" />));
-		await waitFor(() => expect(screen.getByText("agent-1")).toBeTruthy());
-		expect(screen.queryByRole("button", { name: /all sessions/i })).toBeNull();
+		await waitFor(() => expect(router.state.location.pathname).toBe("/"));
 	});
 });

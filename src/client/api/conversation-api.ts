@@ -8,7 +8,6 @@ import { ConversationInvalidResponseError, ConversationLoadError } from "../insp
 export interface FetchConversationParams {
 	sessionId: string;
 	signal: AbortSignal;
-	apiBase?: string;
 }
 
 /**
@@ -21,10 +20,8 @@ export interface FetchConversationParams {
 export async function fetchConversation({
 	sessionId,
 	signal,
-	apiBase,
 }: FetchConversationParams): Promise<Conversation> {
-	const base = apiBase ?? window.location.origin;
-	const url = new URL(`/v1/sessions/${encodeURIComponent(sessionId)}`, base);
+	const url = new URL(`/v1/sessions/${encodeURIComponent(sessionId)}`, window.location.origin);
 	const res = await fetch(url, { signal });
 	if (!res.ok) throw new ConversationLoadError(res.status);
 	const parsed = v.safeParse(ConversationSchema, await res.json());

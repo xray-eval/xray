@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, ChevronRight, Zap, ZapOff } from "lucide-react";
+import { getRouteApi } from "@tanstack/react-router";
+import { AlertCircle, ChevronRight, Zap, ZapOff } from "lucide-react";
 import { match } from "ts-pattern";
 
 import type {
@@ -21,28 +22,19 @@ import {
 import { Separator } from "../components/ui/separator.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
 import { formatAbsolute, formatDuration } from "../format.ts";
+import { BackToSessionsLink } from "../router/back-to-sessions-link.tsx";
 import { sourceBadgeVariant } from "../source-badge.ts";
 import { ConversationLoadError } from "./errors.ts";
 
-export interface InspectorProps {
-	sessionId: string;
-	/** Optional API base URL override; defaults to `window.location.origin`. */
-	apiBase?: string;
-	/** Optional callback when the user clicks the back button. */
-	onBack?: () => void;
-}
+const route = getRouteApi("/sessions/$sessionId");
 
 type ConversationQueryKey = readonly ["conversation", { sessionId: string }];
 
-export function Inspector({ sessionId, apiBase, onBack }: InspectorProps) {
+export function Inspector() {
+	const { sessionId } = route.useParams();
 	const query = useQuery<Conversation, Error, Conversation, ConversationQueryKey>({
 		queryKey: ["conversation", { sessionId }] as const,
-		queryFn: ({ signal }) =>
-			fetchConversation({
-				sessionId,
-				signal,
-				...(apiBase !== undefined ? { apiBase } : {}),
-			}),
+		queryFn: ({ signal }) => fetchConversation({ sessionId, signal }),
 	});
 
 	return (
@@ -52,14 +44,9 @@ export function Inspector({ sessionId, apiBase, onBack }: InspectorProps) {
 			aria-live="polite"
 			className="space-y-6"
 		>
-			{onBack && (
-				<header className="flex items-baseline justify-between gap-4">
-					<Button variant="ghost" size="sm" onClick={onBack}>
-						<ArrowLeft />
-						All sessions
-					</Button>
-				</header>
-			)}
+			<header className="flex items-baseline justify-between gap-4">
+				<BackToSessionsLink />
+			</header>
 
 			{match(query)
 				.with({ status: "pending" }, () => <LoadingState />)

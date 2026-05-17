@@ -9,17 +9,14 @@ export interface CreateReplayParams {
 	body: CreateReplayRequest;
 	/** Optional — POST is a mutation; useMutation doesn't provide a signal and there's nothing to cancel. */
 	signal?: AbortSignal;
-	apiBase?: string;
 }
 
 /** POST /v1/replays — start a new replay run. */
 export async function createReplay({
 	body,
 	signal,
-	apiBase,
 }: CreateReplayParams): Promise<ReplayRunResponse> {
-	const base = apiBase ?? window.location.origin;
-	const url = new URL("/v1/replays", base);
+	const url = new URL("/v1/replays", window.location.origin);
 	const res = await fetch(url, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -38,17 +35,11 @@ export async function createReplay({
 export interface FetchReplayParams {
 	id: string;
 	signal: AbortSignal;
-	apiBase?: string;
 }
 
 /** GET /v1/replays/:id — read current state, progress, error. */
-export async function fetchReplay({
-	id,
-	signal,
-	apiBase,
-}: FetchReplayParams): Promise<ReplayRunResponse> {
-	const base = apiBase ?? window.location.origin;
-	const url = new URL(`/v1/replays/${encodeURIComponent(id)}`, base);
+export async function fetchReplay({ id, signal }: FetchReplayParams): Promise<ReplayRunResponse> {
+	const url = new URL(`/v1/replays/${encodeURIComponent(id)}`, window.location.origin);
 	const res = await fetch(url, { signal });
 	if (!res.ok) throw new ReplayLoadError(res.status);
 	const parsed = v.safeParse(ReplayRunResponseSchema, await res.json());

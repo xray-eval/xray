@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, Loader2 } from "lucide-react";
+import { getRouteApi } from "@tanstack/react-router";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { match } from "ts-pattern";
 
 import type { ReplayRunResponse } from "@/server/replays/replays.types.ts";
 
 import { fetchReplay } from "../api/replays-api.ts";
 import { Badge } from "../components/ui/badge.tsx";
-import { Button } from "../components/ui/button.tsx";
 import {
 	Card,
 	CardContent,
@@ -15,13 +15,10 @@ import {
 	CardTitle,
 } from "../components/ui/card.tsx";
 import { Separator } from "../components/ui/separator.tsx";
+import { BackToSessionsLink } from "../router/back-to-sessions-link.tsx";
 import { DiffPanel } from "./replay-diff.tsx";
 
-export interface ReplayViewProps {
-	replayId: string;
-	apiBase?: string;
-	onBack: () => void;
-}
+const route = getRouteApi("/replays/$replayId");
 
 const ACTIVE_POLL_INTERVAL_MS = 750;
 /** TanStack-Query sentinel meaning "stop polling" — distinct from a number interval. */
@@ -29,11 +26,11 @@ const STOP_POLLING = false as const;
 
 type ReplayQueryKey = readonly ["replay", { id: string }];
 
-export function ReplayView({ replayId, apiBase, onBack }: ReplayViewProps) {
+export function ReplayView() {
+	const { replayId } = route.useParams();
 	const replayQuery = useQuery<ReplayRunResponse, Error, ReplayRunResponse, ReplayQueryKey>({
 		queryKey: ["replay", { id: replayId }] as const,
-		queryFn: ({ signal }) =>
-			fetchReplay({ id: replayId, signal, ...(apiBase !== undefined ? { apiBase } : {}) }),
+		queryFn: ({ signal }) => fetchReplay({ id: replayId, signal }),
 		refetchInterval: (q) => {
 			const status = q.state.data?.status;
 			return status === "pending" || status === "running" ? ACTIVE_POLL_INTERVAL_MS : STOP_POLLING;
@@ -43,29 +40,19 @@ export function ReplayView({ replayId, apiBase, onBack }: ReplayViewProps) {
 	return (
 		<section aria-label="Replay" aria-busy={replayQuery.isPending} className="space-y-6">
 			<header className="flex items-baseline justify-between gap-4">
-				<Button variant="ghost" size="sm" onClick={onBack}>
-					<ArrowLeft />
-					All sessions
-				</Button>
+				<BackToSessionsLink />
 			</header>
 
 			{match(replayQuery)
 				.with({ status: "pending" }, () => <LoadingState />)
 				.with({ status: "error" }, (q) => <ErrorState error={q.error} />)
-				.with({ status: "success" }, (q) => (
-					<ReplayBody run={q.data} {...(apiBase !== undefined ? { apiBase } : {})} />
-				))
+				.with({ status: "success" }, (q) => <ReplayBody run={q.data} />)
 				.exhaustive()}
 		</section>
 	);
 }
 
-interface ReplayBodyProps {
-	run: ReplayRunResponse;
-	apiBase?: string;
-}
-
-function ReplayBody({ run, apiBase }: ReplayBodyProps) {
+function ReplayBody({ run }: { run: ReplayRunResponse }) {
 	return (
 		<div className="space-y-6">
 			<ReplayHeader run={run} />
@@ -73,9 +60,7 @@ function ReplayBody({ run, apiBase }: ReplayBodyProps) {
 			{match(run.status)
 				.with("pending", "running", () => <RunningPanel run={run} />)
 				.with("failed", () => <FailedPanel run={run} />)
-				.with("completed", () => (
-					<DiffPanel run={run} {...(apiBase !== undefined ? { apiBase } : {})} />
-				))
+				.with("completed", () => <DiffPanel run={run} />)
 				.exhaustive()}
 		</div>
 	);
@@ -134,6 +119,7 @@ function RunningPanel({ run }: { run: ReplayRunResponse }) {
 						className="h-full bg-primary transition-[width] duration-300"
 						style={{ width: `${pct}%` }}
 						role="progressbar"
+						aria-label="Replay progress"
 						aria-valuemin={0}
 						aria-valuemax={100}
 						aria-valuenow={pct}

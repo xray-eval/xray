@@ -12,15 +12,17 @@ const { render, screen } = await import("@testing-library/react");
 const { App } = await import("./app.tsx");
 
 describe("App", () => {
-	it("renders the xray heading", () => {
-		// App mounts <ConversationsList /> which fires GET /v1/sessions on mount.
-		// MSW's onUnhandledRequest is "error", so a stub handler must exist.
+	it("renders the xray heading", async () => {
+		// App mounts the list route at "/" which fires GET /v1/sessions on
+		// mount. MSW's onUnhandledRequest is "error", so a stub handler must
+		// exist. The router's initial route load is async, so the heading
+		// appears after a tick — use findByRole, not getByRole.
 		server.use(
 			http.get("http://localhost/v1/sessions", () =>
 				HttpResponse.json({ sessions: [], nextCursor: null }),
 			),
 		);
 		render(<App />);
-		expect(screen.getByRole("heading", { name: /xray/i })).toBeTruthy();
+		expect(await screen.findByRole("heading", { name: /xray/i })).toBeTruthy();
 	});
 });

@@ -28,12 +28,7 @@ describe("ReplayModal — render", () => {
 	it("renders with the source session id in the body", () => {
 		render(
 			withQueryClient(
-				<ReplayModal
-					sourceSessionId="sess-source"
-					apiBase="http://localhost"
-					onClose={mock()}
-					onStarted={mock()}
-				/>,
+				<ReplayModal sourceSessionId="sess-source" onClose={mock()} onStarted={mock()} />,
 			),
 		);
 		expect(screen.getByText("sess-source")).toBeTruthy();
@@ -42,14 +37,7 @@ describe("ReplayModal — render", () => {
 
 	it("disables submit until a webhook URL is typed", () => {
 		render(
-			withQueryClient(
-				<ReplayModal
-					sourceSessionId="s"
-					apiBase="http://localhost"
-					onClose={mock()}
-					onStarted={mock()}
-				/>,
-			),
+			withQueryClient(<ReplayModal sourceSessionId="s" onClose={mock()} onStarted={mock()} />),
 		);
 		const submit = screen.getByRole("button", { name: /run replay/i });
 		if (!(submit instanceof HTMLButtonElement)) throw new Error("expected button");
@@ -71,12 +59,7 @@ describe("ReplayModal — submit", () => {
 		const onStarted = mock();
 		render(
 			withQueryClient(
-				<ReplayModal
-					sourceSessionId="sess-1"
-					apiBase="http://localhost"
-					onClose={mock()}
-					onStarted={onStarted}
-				/>,
+				<ReplayModal sourceSessionId="sess-1" onClose={mock()} onStarted={onStarted} />,
 			),
 		);
 		fireEvent.change(screen.getByLabelText(/webhook url/i), {
@@ -96,14 +79,7 @@ describe("ReplayModal — submit", () => {
 			}),
 		);
 		render(
-			withQueryClient(
-				<ReplayModal
-					sourceSessionId="sess-1"
-					apiBase="http://localhost"
-					onClose={mock()}
-					onStarted={mock()}
-				/>,
-			),
+			withQueryClient(<ReplayModal sourceSessionId="sess-1" onClose={mock()} onStarted={mock()} />),
 		);
 		fireEvent.change(screen.getByLabelText(/webhook url/i), {
 			target: { value: "https://example.test/wh" },
@@ -125,12 +101,7 @@ describe("ReplayModal — submit", () => {
 		const onStarted = mock();
 		render(
 			withQueryClient(
-				<ReplayModal
-					sourceSessionId="missing"
-					apiBase="http://localhost"
-					onClose={mock()}
-					onStarted={onStarted}
-				/>,
+				<ReplayModal sourceSessionId="missing" onClose={mock()} onStarted={onStarted} />,
 			),
 		);
 		fireEvent.change(screen.getByLabelText(/webhook url/i), {
@@ -146,14 +117,7 @@ describe("ReplayModal — submit", () => {
 			http.post(REPLAYS_URL, () => HttpResponse.json(makeReplayRunResponse(), { status: 202 })),
 		);
 		render(
-			withQueryClient(
-				<ReplayModal
-					sourceSessionId="s"
-					apiBase="http://localhost"
-					onClose={mock()}
-					onStarted={mock()}
-				/>,
-			),
+			withQueryClient(<ReplayModal sourceSessionId="s" onClose={mock()} onStarted={mock()} />),
 		);
 		fireEvent.change(screen.getByLabelText(/webhook url/i), {
 			target: { value: "https://persisted.example/wh" },
@@ -171,14 +135,7 @@ describe("ReplayModal — close", () => {
 	it("fires onClose when the shadcn close button is clicked", () => {
 		const onClose = mock();
 		render(
-			withQueryClient(
-				<ReplayModal
-					sourceSessionId="s"
-					apiBase="http://localhost"
-					onClose={onClose}
-					onStarted={mock()}
-				/>,
-			),
+			withQueryClient(<ReplayModal sourceSessionId="s" onClose={onClose} onStarted={mock()} />),
 		);
 		// shadcn's DialogContent renders a built-in close button with `<span class="sr-only">Close</span>`.
 		fireEvent.click(screen.getByRole("button", { name: /close/i }));
@@ -188,14 +145,7 @@ describe("ReplayModal — close", () => {
 	it("fires onClose when Cancel is clicked", () => {
 		const onClose = mock();
 		render(
-			withQueryClient(
-				<ReplayModal
-					sourceSessionId="s"
-					apiBase="http://localhost"
-					onClose={onClose}
-					onStarted={mock()}
-				/>,
-			),
+			withQueryClient(<ReplayModal sourceSessionId="s" onClose={onClose} onStarted={mock()} />),
 		);
 		fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
 		expect(onClose).toHaveBeenCalled();
