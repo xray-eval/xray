@@ -66,8 +66,7 @@ export function createSessionsRouter(store: Store): Hono {
 					return c.json({ error: "store_failure" }, 500);
 				},
 			)
-			// `.otherwise` re-throws per pattern-matching.md §1 — an unknown error
-			// here isn't ours to map, so Hono's default handler emits a 500.
+			// Unknown errors aren't ours to map; let Hono's default 500 take over.
 			.otherwise((e) => {
 				throw e;
 			}),

@@ -62,7 +62,6 @@ describe("Inspector — pipeline-style fixture", () => {
 		expect(screen.getByText("hi")).toBeTruthy();
 		expect(screen.getByText("hi back")).toBeTruthy();
 		expect(screen.getByText("420ms")).toBeTruthy();
-		// No barge-in chip on a pipeline-style fixture.
 		expect(screen.queryByText(/interrupted/i)).toBeNull();
 	});
 });

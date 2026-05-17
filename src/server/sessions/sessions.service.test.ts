@@ -159,10 +159,8 @@ describe("getConversationForApi — happy path", () => {
 		expect(conv.turns.map((t) => t.id)).toEqual(["t-0", "t-1"]);
 		expect(conv.turns[0]?.toolCalls).toEqual([]);
 		expect(conv.turns[1]?.toolCalls.map((c) => c.name)).toEqual(["lookup", "store"]);
-		// args / result are JSON-parsed before they cross the wire.
 		expect(conv.turns[1]?.toolCalls[0]?.args).toEqual({ q: "hi" });
 		expect(conv.turns[1]?.toolCalls[1]?.result).toEqual({ ok: true });
-		// Pending tool call (no result yet) emits null.
 		expect(conv.turns[1]?.toolCalls[0]?.result).toBeNull();
 	});
 
