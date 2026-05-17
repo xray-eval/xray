@@ -33,6 +33,14 @@ FROM oven/bun@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc
 # Non-root user. The image carries code + production deps; secrets are
 # runtime-only (.claude/rules/public-repo.md §2) — never ARG/ENV them here.
 RUN useradd --system --create-home --uid 10001 --gid users xray
+
+# Pre-create the default XRAY_DATA_DIR and hand ownership to the non-root user.
+# Without this, `openStoreFromEnv` calls `mkdirSync('/data')` at boot and gets
+# EACCES because `/` is owned by root. An operator mounting a volume here
+# overrides this, but the unmounted case still has to work for `docker run`
+# without flags (and for `pnpm docker:smoke`).
+RUN mkdir -p /data && chown xray:users /data
+
 USER xray
 WORKDIR /home/xray/app
 

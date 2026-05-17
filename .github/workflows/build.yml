@@ -112,3 +112,43 @@ jobs:
           path: dist/
           retention-days: 7
           if-no-files-found: error
+
+  smoke:
+    # Build the production Docker image, run it, wait for HEALTHCHECK.
+    # Same `pnpm docker:smoke` developers run locally (CLAUDE.md "Local-first").
+    # Catches regressions like the unmounted-default `/data` permission bug
+    # that `pnpm build` alone can't see — bundling succeeds, container boot
+    # is its own surface.
+    name: pnpm docker:smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5  # v2.19.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node (pinned via .nvmrc)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: '.nvmrc'
+
+      # pnpm is only needed to invoke the `docker:smoke` script via the same
+      # command developers run locally. The script itself shells out to docker;
+      # nothing inside the host needs node_modules.
+      - name: Activate the pinned pnpm version via corepack
+        run: |
+          corepack enable
+          corepack prepare --activate
+          pnpm --version
+
+      - name: Build + run + healthcheck
+        run: pnpm docker:smoke
