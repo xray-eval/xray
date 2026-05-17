@@ -17,8 +17,9 @@ import {
 	makeCreateReplayRequest,
 	makeCreateReplayRequestObject,
 	makeGetReplayRequest,
+	makeListSessionReplaysRequest,
 } from "./replays.test-utils.ts";
-import { ReplayRunResponseSchema } from "./replays.types.ts";
+import { ListReplayRunsResponseSchema, ReplayRunResponseSchema } from "./replays.types.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 const ErrorBodySchema = v.object({
@@ -156,6 +157,80 @@ describe("POST /v1/replays — validation", () => {
 		expect(res.status).toBe(400);
 		const text = await res.text();
 		expect(text).not.toContain(big);
+	});
+});
+
+describe("GET /v1/sessions/:sessionId/replays", () => {
+	it("returns 404 when the session doesn't exist", async () => {
+		const res = await app.request(makeListSessionReplaysRequest("missing"));
+		expect(res.status).toBe(404);
+		const body = v.parse(ErrorBodySchema, await res.json());
+		expect(body.error).toBe("session_not_found");
+		expect(body.sessionId).toBe("missing");
+	});
+
+	it("returns 400 when the session id violates the schema", async () => {
+		const res = await app.request(
+			new Request("http://test.local/v1/sessions/bad..id/replays", { method: "GET" }),
+		);
+		expect(res.status).toBe(400);
+		const body = v.parse(ErrorBodySchema, await res.json());
+		expect(body.error).toBe("invalid_session_id");
+	});
+
+	it("returns 200 with an empty items array when no replays exist", async () => {
+		seedSource("src-1");
+		const res = await app.request(makeListSessionReplaysRequest("src-1"));
+		expect(res.status).toBe(200);
+		const body = v.parse(ListReplayRunsResponseSchema, await res.json());
+		expect(body.items).toEqual([]);
+	});
+
+	it("lists replays for the session newest-first", async () => {
+		seedSource("src-1");
+		server.use(
+			http.post("https://example.test/webhook", () => HttpResponse.json({ agentText: "ok" })),
+		);
+		const ids: string[] = [];
+		for (let i = 0; i < 3; i++) {
+			const createRes = await app.request(
+				makeCreateReplayRequestObject(makeCreateReplayRequest({ sourceSessionId: "src-1" })),
+			);
+			const created = v.parse(ReplayRunResponseSchema, await createRes.json());
+			ids.push(created.id);
+		}
+
+		const res = await app.request(makeListSessionReplaysRequest("src-1"));
+		expect(res.status).toBe(200);
+		const body = v.parse(ListReplayRunsResponseSchema, await res.json());
+		expect(body.items).toHaveLength(3);
+		expect(new Set(body.items.map((r) => r.id))).toEqual(new Set(ids));
+		// Pairwise check: each row's startedAt must be >= the next row's. Asserts
+		// the order contract without depending on a JS sort over potentially-tied
+		// timestamps.
+		for (let i = 0; i < body.items.length - 1; i++) {
+			const current = body.items[i];
+			const next = body.items[i + 1];
+			if (current === undefined || next === undefined) continue;
+			expect(current.startedAt >= next.startedAt).toBe(true);
+		}
+	});
+
+	it("does not include replays whose source is a different session", async () => {
+		seedSource("src-1");
+		seedSource("src-2");
+		server.use(
+			http.post("https://example.test/webhook", () => HttpResponse.json({ agentText: "ok" })),
+		);
+		const createRes = await app.request(
+			makeCreateReplayRequestObject(makeCreateReplayRequest({ sourceSessionId: "src-2" })),
+		);
+		expect(createRes.status).toBe(202);
+
+		const res = await app.request(makeListSessionReplaysRequest("src-1"));
+		expect(res.status).toBe(200);
+		const body = v.parse(ListReplayRunsResponseSchema, await res.json());
+		expect(body.items).toEqual([]);
 	});
 });
 

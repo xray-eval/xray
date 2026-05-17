@@ -5,6 +5,7 @@ import {
 	CorruptToolCallJsonError,
 	InvalidReplayIdError,
 	InvalidReplayRequestError,
+	InvalidSessionIdError,
 	MalformedBodyError,
 	ReplayError,
 	ReplayRunNotFoundError,
@@ -97,6 +98,19 @@ describe("SourceSessionNotFoundError", () => {
 		expect(err).toBeInstanceOf(ReplayError);
 		expect(err.name).toBe("SourceSessionNotFoundError");
 		expect(err.sessionId).toBe("sess-missing");
+	});
+});
+
+describe("InvalidSessionIdError", () => {
+	it("is catchable as ReplayError and exposes issues", () => {
+		const issues = (() => {
+			const r = v.safeParse(v.string(), 42);
+			return r.success ? [] : r.issues;
+		})();
+		const err = new InvalidSessionIdError(issues);
+		expect(err).toBeInstanceOf(ReplayError);
+		expect(err.name).toBe("InvalidSessionIdError");
+		expect(err.issues).toEqual(issues);
 	});
 });
 

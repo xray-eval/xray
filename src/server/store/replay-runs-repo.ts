@@ -1,4 +1,4 @@
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 
 import { replayRuns } from "./schema.ts";
 import type { StoreDb } from "./store.ts";
@@ -15,6 +15,17 @@ export function createReplayRun(db: StoreDb, input: ReplayRunInput): void {
 
 export function getReplayRun(db: StoreDb, id: string): ReplayRunRow | undefined {
 	return db.select().from(replayRuns).where(eq(replayRuns.id, id)).get();
+}
+
+/** All replay runs whose source is `sessionId`, newest-first. Used by the
+ *  inspector's Replays tab. Replay counts per session are small; no pagination. */
+export function listReplayRunsBySourceSession(db: StoreDb, sessionId: string): ReplayRunRow[] {
+	return db
+		.select()
+		.from(replayRuns)
+		.where(eq(replayRuns.sourceSessionId, sessionId))
+		.orderBy(desc(replayRuns.startedAt), desc(replayRuns.id))
+		.all();
 }
 
 export interface UpdateProgressOptions {

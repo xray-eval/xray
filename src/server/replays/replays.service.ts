@@ -2,10 +2,12 @@ import { and, count, eq } from "drizzle-orm";
 import * as v from "valibot";
 
 import { applyEvent } from "@/server/ingest/ingest.service.ts";
+import { SessionNotFoundError } from "@/server/sessions/sessions.errors.ts";
 import {
 	createReplayRun,
 	finishReplayRun,
 	getReplayRun,
+	listReplayRunsBySourceSession,
 	markReplayRunRunning,
 	updateReplayRunProgress,
 } from "@/server/store/replay-runs-repo.ts";
@@ -27,6 +29,7 @@ import {
 } from "./replays.errors.ts";
 import type {
 	CreateReplayRequest,
+	ListReplayRunsResponse,
 	ReplayRunResponse,
 	WebhookRequest,
 	WebhookResponse,
@@ -350,6 +353,20 @@ async function callWebhook(
  *  shape regardless of which path failed. */
 export function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * List every replay whose source is `sessionId`, newest-first. Throws
+ * `SessionNotFoundError` (from the sessions slice — same shape, same 404
+ * envelope as `GET /v1/sessions/:id`) when the session itself doesn't exist.
+ * Empty list for an existing session is a successful 200 with `items: []`.
+ */
+export function listReplaysForSession(store: Store, sessionId: string): ListReplayRunsResponse {
+	if (getSession(store.db, sessionId) === undefined) {
+		throw new SessionNotFoundError(sessionId);
+	}
+	const rows = listReplayRunsBySourceSession(store.db, sessionId);
+	return { items: rows.map(toReplayRunResponse) };
 }
 
 /** Wire-shape projection: `replay_runs` row → `ReplayRunResponse`. */

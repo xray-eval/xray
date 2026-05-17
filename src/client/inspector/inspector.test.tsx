@@ -31,7 +31,7 @@ describe("Inspector — pending state", () => {
 		server.use(http.get(CONVO_URL, () => never));
 		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
 		render(ui);
-		const section = await screen.findByLabelText(/transcript/i);
+		const section = await screen.findByLabelText(/^session$/i);
 		expect(section.getAttribute("aria-busy")).toBe("true");
 	});
 });
@@ -278,7 +278,7 @@ describe("Inspector — replay", () => {
 		server.use(http.get(CONVO_URL, () => never));
 		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
 		render(ui);
-		await screen.findByLabelText(/transcript/i);
+		await screen.findByLabelText(/^session$/i);
 		expect(screen.queryByRole("button", { name: /^replay session/i })).toBeNull();
 	});
 

@@ -6,7 +6,6 @@ import { match } from "ts-pattern";
 import type { ReplayRunResponse } from "@/server/replays/replays.types.ts";
 
 import { fetchReplay } from "../api/replays-api.ts";
-import { Badge } from "../components/ui/badge.tsx";
 import {
 	Card,
 	CardContent,
@@ -17,6 +16,7 @@ import {
 import { Separator } from "../components/ui/separator.tsx";
 import { BackToSessionsLink } from "../router/back-to-sessions-link.tsx";
 import { DiffPanel } from "./replay-diff.tsx";
+import { ReplayStatusBadge } from "./replay-status-badge.tsx";
 
 const route = getRouteApi("/replays/$replayId");
 
@@ -82,21 +82,12 @@ function ReplayHeader({ run }: { run: ReplayRunResponse }) {
 				<div className="flex items-baseline gap-2">
 					<dt className="sr-only">Status</dt>
 					<dd>
-						<StatusBadge status={run.status} />
+						<ReplayStatusBadge status={run.status} />
 					</dd>
 				</div>
 			</dl>
 		</div>
 	);
-}
-
-function StatusBadge({ status }: { status: ReplayRunResponse["status"] }) {
-	return match(status)
-		.with("pending", () => <Badge variant="outline">pending</Badge>)
-		.with("running", () => <Badge variant="secondary">running</Badge>)
-		.with("completed", () => <Badge variant="default">completed</Badge>)
-		.with("failed", () => <Badge variant="destructive">failed</Badge>)
-		.exhaustive();
 }
 
 function RunningPanel({ run }: { run: ReplayRunResponse }) {

@@ -131,3 +131,13 @@ export const REPLAY_HISTORY_CAP = MAX_HISTORY;
 
 /** Path-param schema for `GET /v1/replays/:id`. UUID v4-ish (any UUID shape works). */
 export const ReplayIdSchema = v.pipe(v.string(), v.regex(/^[0-9a-fA-F-]{36}$/, "Must be a UUID"));
+
+/**
+ * Response of `GET /v1/sessions/:sessionId/replays`. Wraps `items` so a future
+ * `nextCursor` can slot in without breaking clients — pagination isn't required
+ * for v1 (replay counts per session are small) but the envelope is.
+ */
+export const ListReplayRunsResponseSchema = v.object({
+	items: v.array(ReplayRunResponseSchema),
+});
+export type ListReplayRunsResponse = v.InferOutput<typeof ListReplayRunsResponseSchema>;

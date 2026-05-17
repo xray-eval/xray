@@ -2,10 +2,14 @@ import * as v from "valibot";
 
 import type {
 	CreateReplayRequest,
+	ListReplayRunsResponse,
 	ReplayMode,
 	ReplayRunResponse,
 } from "@/server/replays/replays.types.ts";
-import { ReplayRunResponseSchema } from "@/server/replays/replays.types.ts";
+import {
+	ListReplayRunsResponseSchema,
+	ReplayRunResponseSchema,
+} from "@/server/replays/replays.types.ts";
 
 import { ReplayInvalidResponseError, ReplayLoadError } from "../replays/errors.ts";
 
@@ -55,6 +59,27 @@ export async function fetchReplay({ id, signal }: FetchReplayParams): Promise<Re
 	const res = await fetch(url, { signal });
 	if (!res.ok) throw new ReplayLoadError(res.status);
 	const parsed = v.safeParse(ReplayRunResponseSchema, await res.json());
+	if (!parsed.success) throw new ReplayInvalidResponseError(parsed.issues);
+	return parsed.output;
+}
+
+export interface FetchReplaysForSessionParams {
+	sessionId: string;
+	signal: AbortSignal;
+}
+
+/** GET /v1/sessions/:sessionId/replays — list every replay of one source session. */
+export async function fetchReplaysForSession({
+	sessionId,
+	signal,
+}: FetchReplaysForSessionParams): Promise<ListReplayRunsResponse> {
+	const url = new URL(
+		`/v1/sessions/${encodeURIComponent(sessionId)}/replays`,
+		window.location.origin,
+	);
+	const res = await fetch(url, { signal });
+	if (!res.ok) throw new ReplayLoadError(res.status);
+	const parsed = v.safeParse(ListReplayRunsResponseSchema, await res.json());
 	if (!parsed.success) throw new ReplayInvalidResponseError(parsed.issues);
 	return parsed.output;
 }

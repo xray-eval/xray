@@ -67,6 +67,17 @@ export class InvalidReplayIdError extends ReplayError {
 	}
 }
 
+/** The path-param session id failed `SessionIdSchema`. */
+export class InvalidSessionIdError extends ReplayError {
+	readonly issues: readonly BaseIssue<unknown>[];
+
+	constructor(issues: readonly BaseIssue<unknown>[]) {
+		super("Invalid session id in path");
+		this.name = "InvalidSessionIdError";
+		this.issues = issues;
+	}
+}
+
 /** `GET /v1/replays/:id` looked up an id that doesn't exist. */
 export class ReplayRunNotFoundError extends ReplayError {
 	readonly replayId: string;

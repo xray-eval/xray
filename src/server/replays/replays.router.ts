@@ -12,7 +12,9 @@ import {
 	StoreFailureResponseSchema,
 	ValidationErrorResponseSchema,
 } from "@/server/core/types.ts";
+import { SessionIdSchema } from "@/server/ingest/ingest.types.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
+import { SessionNotFoundError } from "@/server/sessions/sessions.errors.ts";
 import { getReplayRun } from "@/server/store/replay-runs-repo.ts";
 import type { Store } from "@/server/store/store.ts";
 
@@ -20,13 +22,20 @@ import {
 	BodyTooLargeError,
 	InvalidReplayIdError,
 	InvalidReplayRequestError,
+	InvalidSessionIdError,
 	MalformedBodyError,
 	ReplayRunNotFoundError,
 	SourceSessionNotFoundError,
 } from "./replays.errors.ts";
-import { createReplay, runReplay, toReplayRunResponse } from "./replays.service.ts";
+import {
+	createReplay,
+	listReplaysForSession,
+	runReplay,
+	toReplayRunResponse,
+} from "./replays.service.ts";
 import {
 	CreateReplayRequestSchema,
+	ListReplayRunsResponseSchema,
 	ReplayIdSchema,
 	ReplayRunResponseSchema,
 } from "./replays.types.ts";
@@ -120,6 +129,53 @@ export function createReplaysRouter(store: Store): Hono {
 	);
 
 	router.get(
+		"/sessions/:sessionId/replays",
+		describeRoute({
+			tags: ["Replays"],
+			summary: "List replay runs for a session",
+			description:
+				"Returns every replay whose `sourceSessionId` matches this session, newest-first. Powers the inspector's Replays tab. No pagination — replay counts per session are small.",
+			parameters: [
+				{
+					in: "path",
+					name: "sessionId",
+					required: true,
+					schema: openApiSchemaFromValibot(SessionIdSchema),
+				},
+			],
+			responses: {
+				"200": {
+					description: "Replay runs for the session (possibly empty).",
+					content: {
+						"application/json": {
+							schema: openApiSchemaFromValibot(ListReplayRunsResponseSchema),
+						},
+					},
+				},
+				"400": {
+					description: "Session id failed validation.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description: "Session not found.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(SessionNotFoundResponseSchema) },
+					},
+				},
+			},
+		}),
+		(c) => {
+			const idCheck = v.safeParse(SessionIdSchema, c.req.param("sessionId"));
+			if (!idCheck.success) {
+				throw new InvalidSessionIdError(idCheck.issues);
+			}
+			return c.json(listReplaysForSession(store, idCheck.output));
+		},
+	);
+
+	router.get(
 		"/replays/:id",
 		describeRoute({
 			tags: ["Replays"],
@@ -182,8 +238,14 @@ export function createReplaysRouter(store: Store): Hono {
 			.with(P.instanceOf(InvalidReplayIdError), (e) =>
 				c.json({ error: "invalid_replay_id", issues: sanitizeIssues(e.issues) }, 400),
 			)
+			.with(P.instanceOf(InvalidSessionIdError), (e) =>
+				c.json({ error: "invalid_session_id", issues: sanitizeIssues(e.issues) }, 400),
+			)
 			.with(P.instanceOf(SourceSessionNotFoundError), (e) =>
 				c.json({ error: "source_session_not_found", sessionId: e.sessionId }, 404),
+			)
+			.with(P.instanceOf(SessionNotFoundError), (e) =>
+				c.json({ error: "session_not_found", sessionId: e.sessionId }, 404),
 			)
 			.with(P.instanceOf(ReplayRunNotFoundError), (e) =>
 				c.json({ error: "replay_not_found", replayId: e.replayId }, 404),

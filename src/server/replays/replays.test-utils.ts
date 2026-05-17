@@ -48,3 +48,10 @@ export function makeCreateReplayRequestObject(body: unknown): Request {
 export function makeGetReplayRequest(id: string): Request {
 	return new Request(`http://test.local/v1/replays/${id}`, { method: "GET" });
 }
+
+/** Builds a `Request` for `GET /v1/sessions/:sessionId/replays`. */
+export function makeListSessionReplaysRequest(sessionId: string): Request {
+	return new Request(`http://test.local/v1/sessions/${encodeURIComponent(sessionId)}/replays`, {
+		method: "GET",
+	});
+}

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { AlertCircle, ChevronRight, Play, Zap, ZapOff } from "lucide-react";
 import { useState } from "react";
@@ -23,11 +23,13 @@ import {
 } from "../components/ui/card.tsx";
 import { Separator } from "../components/ui/separator.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs.tsx";
 import { formatAbsolute, formatDuration } from "../format.ts";
 import { ReplayModal } from "../replays/replay-modal.tsx";
 import { BackToSessionsLink } from "../router/back-to-sessions-link.tsx";
 import { sourceBadgeVariant } from "../source-badge.ts";
 import { ConversationLoadError } from "./errors.ts";
+import { ReplaysTab } from "./replays-tab/replays-tab.tsx";
 
 const route = getRouteApi("/sessions/$sessionId");
 
@@ -36,6 +38,7 @@ type ConversationQueryKey = readonly ["conversation", { sessionId: string }];
 export function Inspector() {
 	const { sessionId } = route.useParams();
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const [replayOpen, setReplayOpen] = useState(false);
 	const query = useQuery<Conversation, Error, Conversation, ConversationQueryKey>({
 		queryKey: ["conversation", { sessionId }] as const,
@@ -45,7 +48,7 @@ export function Inspector() {
 	return (
 		<>
 			<section
-				aria-label="Transcript"
+				aria-label="Session"
 				aria-busy={query.isPending}
 				aria-live="polite"
 				className="space-y-6"
@@ -70,7 +73,9 @@ export function Inspector() {
 					.with({ status: "error" }, (q) => (
 						<ErrorState error={q.error} onRetry={() => query.refetch()} />
 					))
-					.with({ status: "success" }, (q) => <Transcript conversation={q.data} />)
+					.with({ status: "success" }, (q) => (
+						<InspectorTabs conversation={q.data} sessionId={sessionId} />
+					))
 					.exhaustive()}
 			</section>
 			{replayOpen && (
@@ -79,11 +84,35 @@ export function Inspector() {
 					onClose={() => setReplayOpen(false)}
 					onStarted={(run) => {
 						setReplayOpen(false);
+						void queryClient.invalidateQueries({ queryKey: ["replays", { sessionId }] });
 						void navigate({ to: "/replays/$replayId", params: { replayId: run.id } });
 					}}
 				/>
 			)}
 		</>
+	);
+}
+
+function InspectorTabs({
+	conversation,
+	sessionId,
+}: {
+	conversation: Conversation;
+	sessionId: string;
+}) {
+	return (
+		<Tabs defaultValue="transcript" className="space-y-6">
+			<TabsList>
+				<TabsTrigger value="transcript">Transcript</TabsTrigger>
+				<TabsTrigger value="replays">Replays</TabsTrigger>
+			</TabsList>
+			<TabsContent value="transcript">
+				<Transcript conversation={conversation} />
+			</TabsContent>
+			<TabsContent value="replays">
+				<ReplaysTab sessionId={sessionId} />
+			</TabsContent>
+		</Tabs>
 	);
 }
 
