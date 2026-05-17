@@ -18,7 +18,7 @@ beforeEach(() => {
 	try {
 		window.localStorage.removeItem("xray.replay.webhookUrl");
 	} catch {
-		// ignore
+		// happy-dom may throw when storage is disabled; test isolation still holds.
 	}
 });
 

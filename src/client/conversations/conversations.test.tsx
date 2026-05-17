@@ -122,7 +122,6 @@ describe("ConversationsList — pagination", () => {
 		await waitFor(() => expect(screen.getByText("second")).toBeTruthy());
 		// The first-page row is still on screen — pagination appends, not replaces.
 		expect(screen.getByText("first")).toBeTruthy();
-		// Final page reached → no more button.
 		expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
 	});
 });
