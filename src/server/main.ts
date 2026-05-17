@@ -15,8 +15,6 @@ const env = loadEnv();
 // misconfiguration fails-fast instead of surfacing on a route handler.
 const store = openStoreFromEnv(env);
 
-// Audio uploads share the mounted volume with `xray.db` so the single-image
-// promise (`.claude/rules/single-image-distribution.md`) still holds.
 const audioRoot = join(env.XRAY_DATA_DIR, "audio");
 mkdirSync(audioRoot, { recursive: true });
 

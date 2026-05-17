@@ -15,6 +15,7 @@ import {
 	makeToolCalledEvent,
 	makeTurnCompletedEvent,
 } from "./ingest.test-utils.ts";
+import { SessionIdSchema } from "./ingest.types.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 const IssueSchema = v.object({
@@ -284,6 +285,18 @@ describe("POST /v1/sessions/:id/events — schema rejection", () => {
 		});
 		const res = await app.request(req);
 		expect(res.status).toBe(400);
+	});
+});
+
+describe("SessionIdSchema — path-traversal defense", () => {
+	it.each([".", "..", "a..b", "..a", "a..", "../etc/passwd", "./foo"])("rejects %p", (badId) => {
+		const result = v.safeParse(SessionIdSchema, badId);
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts ids with a single dot (e.g. version-like)", () => {
+		const result = v.safeParse(SessionIdSchema, "sess.v1");
+		expect(result.success).toBe(true);
 	});
 });
 

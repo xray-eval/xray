@@ -7,7 +7,7 @@ import type { Store } from "@/server/store/store.ts";
 import { getTurnByIdx, setTurnAudioPath } from "@/server/store/turns-repo.ts";
 
 import { AudioNotUploadedError, AudioTurnNotFoundError } from "./audio.errors.ts";
-import type { AudioContentType, AudioExtension } from "./audio.types.ts";
+import type { AudioContentType, AudioExtension, AudioStream } from "./audio.types.ts";
 import {
 	AudioExtensionSchema,
 	CONTENT_TYPE_TO_EXTENSION,
@@ -15,12 +15,11 @@ import {
 } from "./audio.types.ts";
 
 /**
- * Upload a turn's audio. Writes the bytes to
- * `<audioRoot>/<sessionId>/<turnIdx>.<ext>` then stamps the relative path
- * on `turns.audio_path` in a single UPDATE that's guarded on the turn's
- * existence — if the row vanished between writes, the file is removed and
- * `AudioTurnNotFoundError` propagates. Idempotent on the (sessionId, turnIdx)
- * pair: re-uploading overwrites the file and updates the column.
+ * Upload a turn's audio. Writes the file then UPDATEs `turns.audio_path`
+ * guarded on the turn's existence; if the row vanished mid-write, the new
+ * file is rm'd and `AudioTurnNotFoundError` propagates. On a re-upload that
+ * changes the extension, the previous file is removed once the new one
+ * lands so on-disk state matches the column.
  */
 export async function uploadTurnAudio(
 	store: Store,
@@ -36,31 +35,29 @@ export async function uploadTurnAudio(
 	const extension = CONTENT_TYPE_TO_EXTENSION[contentType];
 	const relativePath = audioRelativePath(sessionId, turnIdx, extension);
 	const absolutePath = join(audioRoot, relativePath);
+
+	const previous = getTurnByIdx(store.db, sessionId, turnIdx);
+	const previousAudioPath = previous?.audioPath ?? null;
+
 	await mkdir(dirname(absolutePath), { recursive: true });
 	await writeFile(absolutePath, bytes);
 
 	const stamped = setTurnAudioPath(store.db, sessionId, turnIdx, relativePath);
 	if (!stamped) {
-		// The turn was deleted between our write and our DB update (or never
-		// existed). Remove the orphan file so the on-disk footprint matches.
 		await rm(absolutePath, { force: true });
 		throw new AudioTurnNotFoundError(sessionId, turnIdx);
+	}
+
+	if (previousAudioPath !== null && previousAudioPath !== relativePath) {
+		await rm(join(audioRoot, previousAudioPath), { force: true });
 	}
 	return relativePath;
 }
 
-export interface AudioStream {
-	readonly stream: ReadableStream<Uint8Array>;
-	readonly contentLength: number;
-	readonly contentType: string;
-}
-
 /**
- * Read a turn's uploaded audio as a streaming response. Throws
- * `AudioTurnNotFoundError` when no turn row matches, `AudioNotUploadedError`
- * when the turn exists but has no audio (or the file is missing). Both map
- * to 404; the distinction lives in logs. Bun streams the file off disk a
- * chunk at a time so a 50MB upload never lands fully in the process heap.
+ * Read a turn's uploaded audio. Returns a `Bun.file().stream()` so the bytes
+ * never land fully in heap. Throws `AudioTurnNotFoundError` (no row) or
+ * `AudioNotUploadedError` (row but no audio, or file gone). Both map to 404.
  */
 export async function readTurnAudio(
 	store: Store,
@@ -85,19 +82,6 @@ export async function readTurnAudio(
 		contentLength: file.size,
 		contentType: EXTENSION_TO_RESPONSE_CONTENT_TYPE[extension],
 	};
-}
-
-/**
- * Remove all uploaded audio for a session. Called from any session-delete
- * pathway so the on-disk footprint matches the DB (turns cascade-delete
- * already, but the file system is outside the SQLite transaction).
- *
- * `recursive: true, force: true` — a missing dir is success, not an error.
- * Sessions without uploaded audio never created the directory.
- */
-export async function deleteSessionAudio(audioRoot: string, sessionId: string): Promise<void> {
-	const dir = join(audioRoot, sessionId);
-	await rm(dir, { recursive: true, force: true });
 }
 
 function audioRelativePath(sessionId: string, turnIdx: number, ext: AudioExtension): string {

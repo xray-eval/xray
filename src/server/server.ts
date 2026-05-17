@@ -8,12 +8,7 @@ import { createSessionsRouter } from "./sessions/sessions.router.ts";
 import type { Store } from "./store/store.ts";
 
 export interface AppConfig {
-	/**
-	 * Absolute path of the root directory that holds per-turn audio uploads,
-	 * laid out as `<audioRoot>/<sessionId>/<turnIdx>.<ext>`. The production
-	 * bootstrap derives this from `XRAY_DATA_DIR` so it shares the mounted
-	 * volume with `xray.db` (per `.claude/rules/single-image-distribution.md`).
-	 */
+	/** Absolute path. Laid out as `<audioRoot>/<sessionId>/<turnIdx>.<ext>`. */
 	readonly audioRoot: string;
 }
 

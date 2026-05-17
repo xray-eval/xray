@@ -46,10 +46,8 @@ export const turns = sqliteTable(
 		responseLatencyMs: integer("response_latency_ms"),
 		interrupted: integer("interrupted", { mode: "boolean" }),
 		interruptedAtMs: integer("interrupted_at_ms"),
-		// Relative to the audio root (e.g. `<sessionId>/<idx>.opus`). NULL when
-		// no audio has been uploaded for this turn. The file itself lives on the
-		// mounted volume, NOT in SQLite — BLOBs > a few MB are a SQLite
-		// anti-pattern per the per-turn-Opus size estimate in issue #25.
+		// Relative to the audio root; bytes live on the mounted volume, not
+		// in SQLite (BLOBs > a few MB are a SQLite anti-pattern).
 		audioPath: text("audio_path"),
 	},
 	(t) => [

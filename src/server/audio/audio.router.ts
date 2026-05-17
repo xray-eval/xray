@@ -19,14 +19,11 @@ import type { AudioContentType } from "./audio.types.ts";
 import { AudioContentTypeSchema, MAX_AUDIO_BYTES, TurnIdxParamSchema } from "./audio.types.ts";
 
 /**
- * Audio router. Mounted at `/v1`; final URLs are
- * - `POST /v1/sessions/:id/turns/:idx/audio` — upload raw audio bytes.
- * - `GET  /v1/sessions/:id/turns/:idx/audio` — stream them back.
+ * `POST /v1/sessions/:id/turns/:idx/audio` — upload raw bytes.
+ * `GET  /v1/sessions/:id/turns/:idx/audio` — stream them back.
  *
- * xray does NOT transcode: the dev uploads whatever container the browser
- * can decode and the GET handler emits the matching `Content-Type`. Audio
- * lives on the mounted volume next to `xray.db`, not in SQLite BLOBs, so
- * single-image distribution still holds.
+ * No transcoding. Audio lives on the mounted volume next to `xray.db`
+ * per `single-image-distribution.md`.
  */
 export function createAudioRouter(store: Store, audioRoot: string): Hono {
 	const router = new Hono();
@@ -67,9 +64,9 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 		return c.body(stream, 200, {
 			"Content-Type": contentType,
 			"Content-Length": String(contentLength),
-			// Audio files are immutable per (sessionId, turnIdx) once written —
-			// a re-upload changes the extension. Long-cache safely.
-			"Cache-Control": "private, max-age=3600",
+			// `no-cache` (revalidate, not no-store): a same-extension re-upload
+			// keeps the same URL, so a long max-age would serve stale bytes.
+			"Cache-Control": "private, no-cache",
 		});
 	});
 
@@ -114,8 +111,7 @@ function parsePathParams(
 }
 
 function parseAudioContentType(header: string | undefined): AudioContentType {
-	// Strip `; codecs=...` / `; charset=...` — browsers attach codec params
-	// to `audio/webm` and `audio/ogg` routinely; we key on the MIME alone.
+	// Strip `; codecs=...` — browsers attach those routinely on audio/webm.
 	const stripped = header?.split(";")[0]?.trim().toLowerCase() ?? null;
 	const result = v.safeParse(AudioContentTypeSchema, stripped);
 	if (!result.success) {

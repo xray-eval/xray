@@ -12,11 +12,6 @@ export interface AudioFixtureSession {
 	readonly turnIdx: number;
 }
 
-/**
- * Seed one session + one turn into the store so audio routes have something
- * to attach to. Returns the ids tests use to address the upload/download
- * endpoints.
- */
 export function seedSessionWithTurn(
 	store: Store,
 	overrides: { sessionId?: string; turnIdx?: number; turnId?: string } = {},
@@ -29,11 +24,6 @@ export function seedSessionWithTurn(
 	return { sessionId, turnIdx };
 }
 
-/**
- * Disposable on-disk audio root. Each call returns a unique directory under
- * the OS tmp; the returned `dispose` removes the tree. Tests use it instead
- * of writing into `/data` so a failed test never leaves bytes behind.
- */
 export function makeTempAudioRoot(): { path: string; dispose(): void } {
 	const path = mkdtempSync(join(tmpdir(), "xray-audio-test-"));
 	return {
@@ -44,14 +34,10 @@ export function makeTempAudioRoot(): { path: string; dispose(): void } {
 	};
 }
 
-/** Build a request URL for the audio endpoints — single source of truth for the path shape. */
 export function audioUrl(sessionId: string, turnIdx: number): string {
 	return `http://test.local/v1/sessions/${sessionId}/turns/${turnIdx}/audio`;
 }
 
-/** Deterministic byte payload — content doesn't matter, only roundtrip
- *  equality. Returns `Uint8Array<ArrayBuffer>` so callers can pass it
- *  straight into `BodyInit` under TS 6's tightened generics. */
 export function fakeAudioBytes(seed = 0): Uint8Array<ArrayBuffer> {
 	const len = 64;
 	const out = new Uint8Array(new ArrayBuffer(len));

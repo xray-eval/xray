@@ -63,6 +63,18 @@
 			}
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["src/client/inspector/inspector.tsx"],
+			"linter": {
+				"rules": {
+					"a11y": {
+						"useMediaCaption": "off"
+					}
+				}
+			}
+		}
+	],
 	"assist": {
 		"enabled": true,
 		"actions": {

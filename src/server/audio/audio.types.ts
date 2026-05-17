@@ -1,12 +1,7 @@
 import * as v from "valibot";
 
-/**
- * Container formats `<audio>` can decode in every modern browser, mapped to
- * the canonical filename extension we persist them under. Aliases
- * (`audio/mpeg` ↔ `audio/mp3`, `audio/x-wav` ↔ `audio/wav`) collapse onto
- * the canonical extension so two uploads with different headers but the
- * same bytes land at the same file path.
- */
+/** Aliases (`audio/mpeg` ↔ `audio/mp3`, `audio/x-wav` ↔ `audio/wav`)
+ *  collapse onto one extension so two headers, same bytes → same file. */
 export const CONTENT_TYPE_TO_EXTENSION = {
 	"audio/opus": "opus",
 	"audio/ogg": "ogg",
@@ -37,10 +32,8 @@ const ALL_EXTENSIONS = [
 export const AudioContentTypeSchema = v.picklist(ALL_CONTENT_TYPES);
 export const AudioExtensionSchema = v.picklist(ALL_EXTENSIONS);
 
-/**
- * Reverse map for response Content-Type. `.mp3` could legally be either
- * `audio/mp3` or `audio/mpeg` — we pick the IANA-registered one.
- */
+/** `.mp3` could legally be `audio/mp3` or `audio/mpeg` — pick the
+ *  IANA-registered one for the response. */
 export const EXTENSION_TO_RESPONSE_CONTENT_TYPE: Record<AudioExtension, string> = {
 	opus: "audio/opus",
 	ogg: "audio/ogg",
@@ -49,8 +42,7 @@ export const EXTENSION_TO_RESPONSE_CONTENT_TYPE: Record<AudioExtension, string> 
 	wav: "audio/wav",
 };
 
-/** 50 MB — past the issue's 5 MB / 15-min Opus baseline; capped so a
- *  misbehaving client can't OOM the process with one POST. */
+/** Capped so a misbehaving client can't OOM the process with one POST. */
 export const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
 
 const MAX_TURN_IDX = 1_000_000;
@@ -68,3 +60,9 @@ export const UploadAudioResponseSchema = v.object({
 	audioPath: v.string(),
 });
 export type UploadAudioResponse = v.InferOutput<typeof UploadAudioResponseSchema>;
+
+export interface AudioStream {
+	readonly stream: ReadableStream<Uint8Array>;
+	readonly contentLength: number;
+	readonly contentType: string;
+}

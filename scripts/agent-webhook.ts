@@ -34,44 +34,29 @@
 //                         debugging. THIS IS THE BIGGEST KNOB — a bad
 //                         default here manufactures diffs that aren't bugs.
 //   PORT                  default 4000
-//   VOICE                 "1" / "true" enables voice-to-voice mode (see below).
+//   VOICE                 "1" / "true" enables voice mode (TTS + xray audio upload, #25)
 //   OPENAI_TTS_MODEL      default "tts-1"
 //   OPENAI_TTS_VOICE      default "alloy"
-//   XRAY_URL              xray base URL the webhook POSTs audio to.
-//                         default "http://xray-dev:8080" (compose sibling).
+//   XRAY_URL              default "http://xray-dev:8080" (compose sibling)
 // CLI flags (--port, --model, --system, --voice, --tts-model, --tts-voice,
 // --xray-url) override the env vars.
-//
-// Voice-to-voice mode (#25):
-//   When VOICE / --voice is on, after the text reply lands the script calls
-//   OpenAI's TTS endpoint with `agentText`, then POSTs the resulting Opus
-//   bytes to xray's per-turn audio endpoint
-//   (POST /v1/sessions/:targetId/turns/:turnIdx/audio). The inspector then
-//   renders an <audio controls> next to that turn. Upload is fire-and-forget
-//   — TTS failures log and skip; they don't break the replay.
 //
 // Why no openai SDK: keeps this contributor-only script out of package.json
 // (and out of the 7-day supply-chain cooldown). Raw fetch is enough.
 
 import * as v from "valibot";
 
-// Env codec — per boundary-validation.md, env vars get parsed once at startup
-// rather than read ad-hoc as untyped index lookups. Failing here gives the
-// operator one clear error instead of cryptic `undefined` symptoms later.
+import { isTruthy, stripTrailingSlash, synthesizeAndUpload } from "./lib/voice.ts";
+
+// Per boundary-validation.md: env parsed once at startup.
 const EnvSchema = v.object({
 	OPENAI_API_KEY: v.pipe(v.string(), v.minLength(1, "OPENAI_API_KEY is required")),
 	OPENAI_MODEL: v.optional(v.string()),
 	AGENT_SYSTEM_PROMPT: v.optional(v.string()),
 	PORT: v.optional(v.string()),
-	// Voice mode (#25) — when enabled, after generating the agent's text reply
-	// the script calls OpenAI TTS and POSTs the resulting bytes to xray's
-	// per-turn audio endpoint so the inspector can play the agent's voice back.
 	VOICE: v.optional(v.string()),
 	OPENAI_TTS_MODEL: v.optional(v.string()),
 	OPENAI_TTS_VOICE: v.optional(v.string()),
-	// xray's base URL from the webhook's perspective. Default targets the
-	// compose-mode sibling service (`xray-dev`); operators running both on
-	// the host override to `http://localhost:8080`.
 	XRAY_URL: v.optional(v.string()),
 });
 
@@ -99,9 +84,6 @@ interface ScriptArgs {
 const ARGS: ScriptArgs = parseArgs(process.argv.slice(2));
 const PORT = Number(ARGS.port ?? ENV.PORT ?? "4000");
 const MODEL = ARGS.model ?? ENV.OPENAI_MODEL ?? "gpt-4o-mini";
-
-// Voice mode is "on" when either --voice (any non-false value) or VOICE env is set.
-// Truthy-string semantics so `--voice` (no value) and `VOICE=1` both work.
 const VOICE_ENABLED = isTruthy(ARGS.voice ?? ENV.VOICE);
 const TTS_MODEL = ARGS["tts-model"] ?? ENV.OPENAI_TTS_MODEL ?? "tts-1";
 const TTS_VOICE = ARGS["tts-voice"] ?? ENV.OPENAI_TTS_VOICE ?? "alloy";
@@ -360,12 +342,9 @@ const server = Bun.serve({
 			`[${payload.sessionId}] turn ${payload.turnIdx} ${snippet(payload.userText)} → ${snippet(result.agentText)}${toolSuffix} (${responseLatencyMs}ms)`,
 		);
 
-		// Voice mode: synthesize the agent reply and ship it to xray so the
-		// inspector can play it back next to the text. Fire-and-forget — we
-		// don't block the HTTP response on TTS; a slow voice provider should
-		// not push the replay worker past its turn deadline.
+		// Fire-and-forget: don't block the replay worker on a slow TTS provider.
 		if (VOICE_ENABLED) {
-			void synthesizeAndUpload(payload.sessionId, payload.turnIdx, result.agentText);
+			void runVoice(payload.sessionId, payload.turnIdx, result.agentText);
 		}
 
 		return Response.json({
@@ -376,49 +355,20 @@ const server = Bun.serve({
 	},
 });
 
-async function synthesizeAndUpload(
-	sessionId: string,
-	turnIdx: number,
-	text: string,
-): Promise<void> {
-	if (text.trim().length === 0) return;
-	try {
-		const ttsRes = await fetch("https://api.openai.com/v1/audio/speech", {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				authorization: `Bearer ${ENV.OPENAI_API_KEY}`,
-			},
-			body: JSON.stringify({
-				model: TTS_MODEL,
-				voice: TTS_VOICE,
-				input: text,
-				// Opus is the issue's recommended container — small, well-supported by
-				// `<audio>` in every modern browser.
-				response_format: "opus",
-			}),
-		});
-		if (!ttsRes.ok) {
-			throw new Error(`OpenAI TTS ${ttsRes.status}: ${await ttsRes.text()}`);
-		}
-		const audioBytes = new Uint8Array(await ttsRes.arrayBuffer());
-
-		const uploadUrl = `${XRAY_URL}/v1/sessions/${encodeURIComponent(sessionId)}/turns/${turnIdx}/audio`;
-		const uploadRes = await fetch(uploadUrl, {
-			method: "POST",
-			headers: { "content-type": "audio/ogg" },
-			body: audioBytes,
-		});
-		if (!uploadRes.ok) {
-			throw new Error(`xray audio upload ${uploadRes.status}: ${await uploadRes.text()}`);
-		}
-		console.info(
-			`[${sessionId}] turn ${turnIdx} voice uploaded (${audioBytes.byteLength}B) → ${uploadUrl}`,
-		);
-	} catch (cause) {
-		// Best-effort: log and keep going. The text turn is already persisted,
-		// so a TTS or upload failure shouldn't block the replay.
-		console.error(`turn ${turnIdx} voice synthesis/upload failed:`, cause);
+async function runVoice(sessionId: string, turnIdx: number, text: string): Promise<void> {
+	const res = await synthesizeAndUpload({
+		apiKey: ENV.OPENAI_API_KEY,
+		xrayBase: XRAY_URL,
+		sessionId,
+		turnIdx,
+		text,
+		ttsModel: TTS_MODEL,
+		voice: TTS_VOICE,
+	});
+	if (res.ok) {
+		console.info(`[${sessionId}] turn ${turnIdx} voice uploaded (${res.bytes}B)`);
+	} else {
+		console.error(`turn ${turnIdx} voice failed: ${res.reason}`);
 	}
 }
 
@@ -466,14 +416,4 @@ function parseArgs(argv: string[]): ScriptArgs {
 		// Unknown flags are ignored.
 	}
 	return out;
-}
-
-function isTruthy(raw: string | undefined): boolean {
-	if (raw === undefined) return false;
-	const s = raw.toLowerCase();
-	return s === "1" || s === "true" || s === "yes" || s === "on";
-}
-
-function stripTrailingSlash(url: string): string {
-	return url.endsWith("/") ? url.slice(0, -1) : url;
 }

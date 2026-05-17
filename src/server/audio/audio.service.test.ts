@@ -6,7 +6,7 @@ import { makeTempStore } from "@/server/store/test-utils.ts";
 import { getTurnByIdx } from "@/server/store/turns-repo.ts";
 
 import { AudioNotUploadedError, AudioTurnNotFoundError } from "./audio.errors.ts";
-import { deleteSessionAudio, readTurnAudio, uploadTurnAudio } from "./audio.service.ts";
+import { readTurnAudio, uploadTurnAudio } from "./audio.service.ts";
 import { fakeAudioBytes, makeTempAudioRoot, seedSessionWithTurn } from "./audio.test-utils.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
@@ -109,7 +109,7 @@ describe("readTurnAudio", () => {
 		);
 	});
 
-	it("survives a re-upload of the same turn with a different extension", async () => {
+	it("survives a re-upload of the same turn with a different extension and removes the old file", async () => {
 		const { sessionId, turnIdx } = seedSessionWithTurn(store);
 		await uploadTurnAudio(store, audio.path, {
 			sessionId,
@@ -117,6 +117,9 @@ describe("readTurnAudio", () => {
 			contentType: "audio/opus",
 			bytes: fakeAudioBytes(1),
 		});
+		const oldFile = join(audio.path, sessionId, `${turnIdx}.opus`);
+		expect(existsSync(oldFile)).toBe(true);
+
 		const second = fakeAudioBytes(2);
 		await uploadTurnAudio(store, audio.path, {
 			sessionId,
@@ -127,6 +130,8 @@ describe("readTurnAudio", () => {
 		const result = await readTurnAudio(store, audio.path, sessionId, turnIdx);
 		expect(await streamToBytes(result.stream)).toEqual(second);
 		expect(result.contentType).toBe("audio/wav");
+		// Old extension's file must be gone — no orphans on extension change.
+		expect(existsSync(oldFile)).toBe(false);
 	});
 });
 
@@ -148,23 +153,3 @@ async function streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8A
 	}
 	return out;
 }
-
-describe("deleteSessionAudio", () => {
-	it("removes the session's audio directory", async () => {
-		const { sessionId, turnIdx } = seedSessionWithTurn(store);
-		await uploadTurnAudio(store, audio.path, {
-			sessionId,
-			turnIdx,
-			contentType: "audio/opus",
-			bytes: fakeAudioBytes(),
-		});
-		expect(existsSync(join(audio.path, sessionId))).toBe(true);
-
-		await deleteSessionAudio(audio.path, sessionId);
-		expect(existsSync(join(audio.path, sessionId))).toBe(false);
-	});
-
-	it("is a no-op for sessions that never uploaded audio", async () => {
-		await expect(deleteSessionAudio(audio.path, "ghost-session")).resolves.toBeUndefined();
-	});
-});
