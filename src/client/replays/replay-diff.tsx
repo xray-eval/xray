@@ -42,10 +42,6 @@ export function DiffPanel({ run, apiBase }: DiffPanelProps) {
 			}),
 	});
 
-	// Dispatch over the *combined* status of both queries so a future status
-	// variant can't slip past either site silently. `match.exhaustive()` here
-	// also fixes a latent bug where the previous if-chain showed only the
-	// source error when both queries failed.
 	return match([sourceQuery, targetQuery] as const)
 		.with([{ status: "error" }, P.any], [P.any, { status: "error" }], ([s, t]) => (
 			<DiffError
