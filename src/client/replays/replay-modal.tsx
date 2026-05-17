@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
-import { match } from "ts-pattern";
+import { match, P } from "ts-pattern";
 
 import type { ReplayMode, ReplayRunResponse } from "@/server/replays/replays.types.ts";
 
@@ -15,6 +15,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "../components/ui/dialog.tsx";
+import { ReplayLoadError } from "./errors.ts";
 
 export interface ReplayModalProps {
 	sourceSessionId: string;
@@ -110,7 +111,9 @@ export function ReplayModal({ sourceSessionId, onClose, onStarted }: ReplayModal
 				<form onSubmit={submit} className="space-y-5">
 					<fieldset className="space-y-2">
 						<legend className="text-sm font-medium">Mode</legend>
-						<div className="flex gap-3" role="radiogroup" aria-label="Replay mode">
+						{/* <fieldset>/<legend> already exposes radiogroup semantics
+						    (WAI-ARIA §4.3.11) — don't double-label with role="radiogroup". */}
+						<div className="flex gap-3">
 							<ModeOption
 								id={`${modeRadioName}-text`}
 								name={modeRadioName}
@@ -142,7 +145,16 @@ export function ReplayModal({ sourceSessionId, onClose, onStarted }: ReplayModal
 							// scheme which the browser's built-in url validation rejects.
 							// Server-side Valibot is the authoritative validator at the
 							// boundary per .claude/rules/boundary-validation.md.
+							// inputMode="url" + autoCorrect/autoCapitalize/spellCheck off
+							// preserves the iOS URL keyboard and stops mobile keyboards
+							// from auto-capitalizing the host into "Https://..." or
+							// silently mangling the path segment.
 							type="text"
+							inputMode="url"
+							autoComplete="url"
+							autoCorrect="off"
+							autoCapitalize="none"
+							spellCheck={false}
 							required
 							autoFocus
 							placeholder={placeholderForMode(mode)}
@@ -153,20 +165,10 @@ export function ReplayModal({ sourceSessionId, onClose, onStarted }: ReplayModal
 						<p className="text-xs text-muted-foreground">{helpTextForMode(mode)}</p>
 					</div>
 
-					{mutation.isError && (
-						<div
-							role="alert"
-							className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm"
-						>
-							<AlertCircle className="mt-0.5 size-4 text-destructive" />
-							<div>
-								<div className="font-medium">Failed to start replay.</div>
-								<div className="break-all text-xs text-muted-foreground">
-									{mutation.error.message}
-								</div>
-							</div>
-						</div>
-					)}
+					{match(mutation)
+						.with({ status: "error" }, (m) => <SubmitError error={m.error} />)
+						.with({ status: P.union("idle", "pending", "success") }, () => null)
+						.exhaustive()}
 
 					<DialogFooter>
 						<Button type="button" variant="ghost" onClick={onClose}>
@@ -191,6 +193,41 @@ interface ModeOptionProps {
 	onChange: (mode: ReplayMode) => void;
 	label: string;
 	hint: string;
+}
+
+/**
+ * Renders the mutation error in user terms. The server returns structured
+ * JSON like `{"error": "invalid_realtime_replay_request", "issues": [...]}`
+ * and `ReplayLoadError.message` carries that raw body — useful for debugging
+ * but not user-facing. Branch on `status` for the common cases; fall back to
+ * the raw message only when we don't recognize the code.
+ */
+function SubmitError({ error }: { error: Error }) {
+	const friendly = match(error)
+		.with(P.instanceOf(ReplayLoadError), (e) =>
+			match(e.status)
+				.with(400, () => "The webhook URL isn't valid for this mode (try ws:// or wss:// for V2V).")
+				.with(404, () => "Source session not found — open it again from the list.")
+				.with(413, () => "Request body is too large — try a shorter URL.")
+				.with(
+					P.number.between(500, 599),
+					() => "The xray server hit an internal error. Check the container logs.",
+				)
+				.otherwise(() => e.message),
+		)
+		.otherwise((e) => e.message);
+	return (
+		<div
+			role="alert"
+			className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm"
+		>
+			<AlertCircle aria-hidden="true" className="mt-0.5 size-4 text-destructive" />
+			<div>
+				<div className="font-medium">Failed to start replay.</div>
+				<div className="break-all text-xs text-muted-foreground">{friendly}</div>
+			</div>
+		</div>
+	);
 }
 
 function ModeOption({ id, name, value, checked, onChange, label, hint }: ModeOptionProps) {

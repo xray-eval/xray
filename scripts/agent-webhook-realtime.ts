@@ -134,6 +134,12 @@ interface PerSocketState {
 	 *  The first `response.done` for a function-call-only response is NOT a
 	 *  turn boundary; the follow-up's `response.done` is. */
 	expectingFollowupResponse: boolean;
+	/** Monotonic per-turn counter for tool_called frames forwarded to xray.
+	 *  The store's UNIQUE(turn_id, idx) means duplicate idx values are
+	 *  silently dropped via onConflictDoNothing — using `idx: 0` everywhere
+	 *  (the previous shape) lost every parallel function call beyond the
+	 *  first. Resets on each new awaiting turn. */
+	toolCallIdxThisTurn: number;
 }
 
 function freshState(): PerSocketState {
@@ -146,6 +152,7 @@ function freshState(): PerSocketState {
 		lastTurnStartedAtMs: null,
 		pcmChunks: [],
 		expectingFollowupResponse: false,
+		toolCallIdxThisTurn: 0,
 	};
 }
 
@@ -269,6 +276,7 @@ async function handleUserAudioCommit(
 	ws.data.awaitingTurnIdx = frame.turnIdx;
 	ws.data.transcriptAccumulator = "";
 	ws.data.lastTurnStartedAtMs = Date.now();
+	ws.data.toolCallIdxThisTurn = 0;
 	up.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
 	up.send(JSON.stringify({ type: "response.create" }));
 }
@@ -518,7 +526,7 @@ function handleUpstreamEvent(
 			sendFrame({ type: "agent_transcript.delta", turnIdx, text: e.delta });
 		})
 		.with({ type: "response.function_call_arguments.done" }, (e) => {
-			const recorded = findRecordedToolResult(ws.data.manifestByIdx, e.name);
+			const recorded = findRecordedToolResult(ws.data.manifestByIdx, turnIdx, e.name);
 			if (e.call_id !== undefined && e.call_id !== "") {
 				upstream.send(
 					JSON.stringify({
@@ -536,10 +544,12 @@ function handleUpstreamEvent(
 				// as the turn boundary.
 				ws.data.expectingFollowupResponse = true;
 			}
+			const idx = ws.data.toolCallIdxThisTurn;
+			ws.data.toolCallIdxThisTurn += 1;
 			sendFrame({
 				type: "tool_called",
 				turnIdx,
-				idx: 0,
+				idx,
 				name: e.name,
 				args: safeParseJson(e.arguments),
 				...(recorded !== undefined ? { result: recorded } : {}),
@@ -594,8 +604,31 @@ function handleUpstreamEvent(
 		.exhaustive();
 }
 
-function findRecordedToolResult(manifest: Map<number, TurnManifestEntry>, name: string): unknown {
-	for (const turn of manifest.values()) {
+/**
+ * Look up a recorded tool result for the turn currently being replayed.
+ * Scoping the lookup to the awaiting turn first matters when the source
+ * session called the same tool name in multiple turns with different args
+ * — a name-only scan across the whole manifest (the previous shape) would
+ * always return the first turn's result and silently diverge from the
+ * source the moment the second invocation happened. We fall back to a
+ * cross-turn scan only if the current turn has no matching recorded
+ * result (rare — typically means the model called a tool the source agent
+ * didn't, in which case we surface the explicit "no recorded result" path
+ * upstream).
+ */
+function findRecordedToolResult(
+	manifest: Map<number, TurnManifestEntry>,
+	turnIdx: number,
+	name: string,
+): unknown {
+	const current = manifest.get(turnIdx);
+	if (current !== undefined) {
+		for (const r of current.recordedToolResults) {
+			if (r.name === name) return r.result;
+		}
+	}
+	for (const [idx, turn] of manifest) {
+		if (idx === turnIdx) continue;
 		for (const r of turn.recordedToolResults) {
 			if (r.name === name) return r.result;
 		}

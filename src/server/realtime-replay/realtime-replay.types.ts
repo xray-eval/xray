@@ -32,6 +32,12 @@ const MAX_TURNS_PER_SESSION = 1024;
 const MAX_TOOL_CALLS_PER_TURN = 64;
 const MAX_RECORDED_TOOLS_PER_TURN = 64;
 const MAX_BASE64_PER_CHUNK = Math.ceil((MAX_AUDIO_CHUNK_BYTES * 4) / 3) + 4;
+/** Per-turn agent audio cap. 32 MB is ~10 minutes of PCM16/24 kHz mono
+ *  (24000 * 2 * 600 ≈ 28 MB) with headroom — past the realistic single-turn
+ *  budget for any voice-agent provider. A webhook that exceeds it is
+ *  misbehaving and the engine throws `AgentTurnTooLargeError` instead of
+ *  growing the heap unbounded. */
+const MAX_AGENT_AUDIO_BYTES_PER_TURN = 32 * 1024 * 1024;
 
 /** Used everywhere a frame references a turn index — one source of truth. */
 const TurnIdxSchema = v.pipe(v.number(), v.integer(), v.minValue(0));
@@ -196,3 +202,4 @@ export type ServerFrame = v.InferOutput<typeof ServerFrameSchema>;
 /** Re-exported so the engine and tests share one chunk cap. */
 export const MAX_REALTIME_AUDIO_CHUNK_BYTES = MAX_AUDIO_CHUNK_BYTES;
 export const MAX_REALTIME_TOOL_CALLS_PER_TURN = MAX_TOOL_CALLS_PER_TURN;
+export const MAX_REALTIME_AGENT_AUDIO_BYTES_PER_TURN = MAX_AGENT_AUDIO_BYTES_PER_TURN;

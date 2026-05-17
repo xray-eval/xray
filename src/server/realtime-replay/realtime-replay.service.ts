@@ -29,7 +29,10 @@ import { listTurnsForSession } from "@/server/store/turns-repo.ts";
 import type { ReplayRunRow, TurnRow } from "@/server/store/types.ts";
 
 import {
+	AgentTurnTooLargeError,
 	ContentTypeChangedMidTurnError,
+	TooManyToolCallsError,
+	UnknownAudioExtensionError,
 	UnknownTurnIdxError,
 	WebhookClosedEarlyError,
 	WebhookConnectError,
@@ -45,7 +48,9 @@ import type {
 	TurnManifestEntry,
 } from "./realtime-replay.types.ts";
 import {
+	MAX_REALTIME_AGENT_AUDIO_BYTES_PER_TURN,
 	MAX_REALTIME_AUDIO_CHUNK_BYTES,
+	MAX_REALTIME_TOOL_CALLS_PER_TURN,
 	REALTIME_REPLAY_PROTOCOL_VERSION,
 	ServerFrameSchema,
 } from "./realtime-replay.types.ts";
@@ -256,7 +261,7 @@ function contentTypeFromAudioPath(path: string): AudioContentType {
 	if (ct === undefined) {
 		// Audio writer guarantees a known extension; an unknown one is data
 		// corruption from a hand-edit.
-		throw new Error(`Unknown audio extension "${ext}" in path "${path}"`);
+		throw new UnknownAudioExtensionError(ext, path);
 	}
 	return ct;
 }
@@ -446,6 +451,21 @@ async function openWebhookSession(
 
 	return {
 		send(frame: ClientFrame): void {
+			// Guard readyState: if the webhook closed between two engine sends,
+			// `ws.send` would throw a low-quality DOMException. Prefer any
+			// already-latched error frame (`firstError`) so a webhook that
+			// emits a typed `error` then immediately closes surfaces as
+			// `WebhookReportedError`, not as the generic close-early.
+			if (ws.readyState !== WebSocket.OPEN) {
+				if (firstError !== null) throw firstError;
+				const info = closeInfo;
+				throw new WebhookClosedEarlyError(
+					progress.completed,
+					progress.total,
+					info?.code ?? 1006,
+					info?.reason ?? "send on closed socket",
+				);
+			}
 			ws.send(JSON.stringify(frame));
 		},
 		close(): void {
@@ -530,7 +550,13 @@ async function streamUserAudio(
 
 /**
  * Pull server frames until a `turn.done` for `expectedTurnIdx` arrives.
- * Mid-turn audio chunks with diverging contentType throw.
+ * Mid-turn audio chunks with diverging contentType throw. Per-turn audio
+ * bytes are capped at `MAX_REALTIME_AGENT_AUDIO_BYTES_PER_TURN` and
+ * `tool_called` count at `MAX_REALTIME_TOOL_CALLS_PER_TURN` so a webhook
+ * that streams forever can't OOM the engine or fill the audio volume.
+ * `agent_transcript.delta` text is intentionally NOT accumulated — the
+ * `turn.done.transcript` field is authoritative; deltas are a progress-UI
+ * signal that we forward but don't persist.
  */
 async function collectAgentTurn(
 	session: WebhookSession,
@@ -568,15 +594,22 @@ async function collectAgentTurn(
 					);
 				}
 				const decoded = Buffer.from(f.audioBase64, "base64");
+				if (totalBytes + decoded.byteLength > MAX_REALTIME_AGENT_AUDIO_BYTES_PER_TURN) {
+					throw new AgentTurnTooLargeError(
+						expectedTurnIdx,
+						totalBytes + decoded.byteLength,
+						MAX_REALTIME_AGENT_AUDIO_BYTES_PER_TURN,
+					);
+				}
 				chunks.push(new Uint8Array(decoded.buffer, decoded.byteOffset, decoded.byteLength));
 				totalBytes += decoded.byteLength;
 				return false;
 			})
-			.with({ type: "agent_transcript.delta" }, (f) => {
-				collected.transcript += f.text;
-				return false;
-			})
+			.with({ type: "agent_transcript.delta" }, () => false)
 			.with({ type: "tool_called" }, (f) => {
+				if (collected.toolCalls.length >= MAX_REALTIME_TOOL_CALLS_PER_TURN) {
+					throw new TooManyToolCallsError(expectedTurnIdx, MAX_REALTIME_TOOL_CALLS_PER_TURN);
+				}
 				collected.toolCalls.push({
 					idx: f.idx,
 					name: f.name,

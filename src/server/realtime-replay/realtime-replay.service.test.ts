@@ -15,6 +15,7 @@ import { listToolCallsForSession } from "@/server/store/tool-calls-repo.ts";
 import { listTurnsForSession } from "@/server/store/turns-repo.ts";
 
 import {
+	TooManyToolCallsError,
 	WebhookClosedEarlyError,
 	WebhookInvalidFrameError,
 	WebhookReportedError,
@@ -465,6 +466,40 @@ describe("runRealtimeReplay — edge cases", () => {
 			expect(getReplayRun(store.db, id)?.status).toBe("completed");
 			expect(getReplayRun(store.db, id)?.progressCompleted).toBe(0);
 			expect(listTurnsForSession(store.db, targetSessionId)).toEqual([]);
+		} finally {
+			await webhook.stop();
+		}
+	});
+
+	it("throws TooManyToolCallsError once the per-turn tool_called count exceeds the cap", async () => {
+		await seedSourceWithUserAudio("src-1", 1);
+		const webhook = startMockWebhook({
+			onConnection: async (conn) => {
+				const commit = await conn.waitFor(
+					(f): f is Extract<ClientFrame, { type: "user_audio.commit" }> =>
+						f.type === "user_audio.commit",
+				);
+				// MAX_REALTIME_TOOL_CALLS_PER_TURN = 64. Push 65 to trip the cap.
+				for (let i = 0; i < 65; i++) {
+					conn.send({
+						type: "tool_called",
+						turnIdx: commit.turnIdx,
+						idx: i,
+						name: "spam",
+						args: { i },
+					});
+				}
+			},
+		});
+		try {
+			const { id } = createRealtimeReplay(store, {
+				sourceSessionId: "src-1",
+				webhookUrl: webhook.url,
+			});
+			await expect(runRealtimeReplay({ store, audioRoot: audio.path, runId: id })).rejects.toThrow(
+				TooManyToolCallsError,
+			);
+			expect(getReplayRun(store.db, id)?.status).toBe("failed");
 		} finally {
 			await webhook.stop();
 		}

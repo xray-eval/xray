@@ -1,9 +1,12 @@
 import type { BaseIssue } from "valibot";
 
 import {
+	AgentTurnTooLargeError,
 	ContentTypeChangedMidTurnError,
 	InvalidRealtimeReplayRequestError,
 	RealtimeReplayError,
+	TooManyToolCallsError,
+	UnknownAudioExtensionError,
 	UnknownTurnIdxError,
 	WebhookClosedEarlyError,
 	WebhookConnectError,
@@ -35,14 +38,18 @@ describe("RealtimeReplayError subclasses", () => {
 		expect(err.issues).toBe(issues);
 	});
 
-	it("WebhookConnectError carries the URL and a wrapped cause", () => {
+	it("WebhookConnectError carries the URL on the field and a wrapped cause, but does NOT interpolate the URL into the message", () => {
 		const cause = new Error("ECONNREFUSED");
-		const err = new WebhookConnectError("ws://x/", "refused", { cause });
+		const err = new WebhookConnectError("wss://example.test/?token=secret", "refused", { cause });
 		expect(err).toBeInstanceOf(RealtimeReplayError);
 		expect(err.name).toBe("WebhookConnectError");
-		expect(err.webhookUrl).toBe("ws://x/");
+		expect(err.webhookUrl).toBe("wss://example.test/?token=secret");
 		expect(err.cause).toBe(cause);
 		expect(err.message).toContain("refused");
+		// Token-in-URL must not flow into the message (which lands in the
+		// replay_runs.error column, the API response, and container logs).
+		expect(err.message).not.toContain("token=secret");
+		expect(err.message).not.toContain("example.test");
 	});
 
 	it("WebhookClosedEarlyError surfaces code, reason, and progress", () => {
@@ -91,5 +98,34 @@ describe("RealtimeReplayError subclasses", () => {
 		expect(err.conflicting).toBe("audio/opus");
 		expect(err.message).toContain("audio/wav");
 		expect(err.message).toContain("audio/opus");
+	});
+
+	it("AgentTurnTooLargeError carries bytes + limit", () => {
+		const err = new AgentTurnTooLargeError(3, 2_000_000, 1_500_000);
+		expect(err).toBeInstanceOf(RealtimeReplayError);
+		expect(err.name).toBe("AgentTurnTooLargeError");
+		expect(err.turnIdx).toBe(3);
+		expect(err.bytes).toBe(2_000_000);
+		expect(err.limit).toBe(1_500_000);
+		expect(err.message).toContain("3");
+		expect(err.message).toContain("1500000");
+	});
+
+	it("TooManyToolCallsError carries the cap", () => {
+		const err = new TooManyToolCallsError(5, 64);
+		expect(err).toBeInstanceOf(RealtimeReplayError);
+		expect(err.name).toBe("TooManyToolCallsError");
+		expect(err.turnIdx).toBe(5);
+		expect(err.limit).toBe(64);
+		expect(err.message).toContain("64");
+	});
+
+	it("UnknownAudioExtensionError carries extension + path", () => {
+		const err = new UnknownAudioExtensionError("flac", "sess-1/0.flac");
+		expect(err).toBeInstanceOf(RealtimeReplayError);
+		expect(err.name).toBe("UnknownAudioExtensionError");
+		expect(err.extension).toBe("flac");
+		expect(err.path).toBe("sess-1/0.flac");
+		expect(err.message).toContain("flac");
 	});
 });

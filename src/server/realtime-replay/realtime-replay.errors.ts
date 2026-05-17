@@ -19,12 +19,17 @@ export class InvalidRealtimeReplayRequestError extends RealtimeReplayError {
 	}
 }
 
-/** WS handshake to the webhook failed (DNS, refused, TLS, HTTP error pre-upgrade). */
+/** WS handshake to the webhook failed (DNS, refused, TLS, HTTP error pre-upgrade).
+ *  The URL is held on the structured field; we deliberately keep it OUT of
+ *  the message so a webhook URL carrying an auth token in its query string
+ *  (acknowledged as a real pattern in the modal) can't leak into the
+ *  `replay_runs.error` SQLite column, the public `GET /v1/replays/:id`
+ *  response, or container stdout. */
 export class WebhookConnectError extends RealtimeReplayError {
 	readonly webhookUrl: string;
 
 	constructor(webhookUrl: string, message: string, options?: ErrorOptions) {
-		super(`Failed to open WebSocket to ${webhookUrl}: ${message}`, options);
+		super(`Failed to open WebSocket to webhook: ${message}`, options);
 		this.name = "WebhookConnectError";
 		this.webhookUrl = webhookUrl;
 	}
@@ -104,5 +109,54 @@ export class ContentTypeChangedMidTurnError extends RealtimeReplayError {
 		this.turnIdx = turnIdx;
 		this.first = first;
 		this.conflicting = conflicting;
+	}
+}
+
+/** A turn's `agent_audio.delta` chunks exceeded the per-turn byte cap before
+ *  `turn.done` arrived — a webhook that streams audio forever would OOM the
+ *  engine and fill the audio volume; the cap stops it. */
+export class AgentTurnTooLargeError extends RealtimeReplayError {
+	readonly turnIdx: number;
+	readonly bytes: number;
+	readonly limit: number;
+
+	constructor(turnIdx: number, bytes: number, limit: number) {
+		super(
+			`Turn ${turnIdx} agent_audio exceeded the per-turn cap (${bytes} > ${limit} bytes) before turn.done`,
+		);
+		this.name = "AgentTurnTooLargeError";
+		this.turnIdx = turnIdx;
+		this.bytes = bytes;
+		this.limit = limit;
+	}
+}
+
+/** A turn's `tool_called` frame count exceeded the per-turn cap before
+ *  `turn.done` arrived. The cap exists as `MAX_REALTIME_TOOL_CALLS_PER_TURN`;
+ *  this error is what fires when a webhook tries to exceed it. */
+export class TooManyToolCallsError extends RealtimeReplayError {
+	readonly turnIdx: number;
+	readonly limit: number;
+
+	constructor(turnIdx: number, limit: number) {
+		super(`Turn ${turnIdx} sent more than ${limit} tool_called frames before turn.done`);
+		this.name = "TooManyToolCallsError";
+		this.turnIdx = turnIdx;
+		this.limit = limit;
+	}
+}
+
+/** An `audio_path` column carries an extension we don't know how to map back
+ *  to a content type. Indicates store corruption from a hand-edit — the
+ *  audio writer only ever stamps known extensions. */
+export class UnknownAudioExtensionError extends RealtimeReplayError {
+	readonly extension: string;
+	readonly path: string;
+
+	constructor(extension: string, path: string) {
+		super(`Unknown audio extension "${extension}" in path "${path}"`);
+		this.name = "UnknownAudioExtensionError";
+		this.extension = extension;
+		this.path = path;
 	}
 }
