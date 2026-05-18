@@ -26,7 +26,7 @@ Both write into the same SQLite store. One source-agnostic UI reads from it. The
 
 The shared `OpenAPIV3.SchemaObject` helper lives in `src/server/core/types.ts` alongside cross-slice error-response schemas — both are wire contracts every router slice depends on. The docs assembler in `src/server/docs/` reads route metadata at request time, so adding a `describeRoute(...)` to a new router auto-populates the spec.
 
-**Distribution.** The shipped artifact is a Docker image published to **GHCR** (`ghcr.io/basilebong/xray`) by CI on tagged releases. Operators `docker pull` and run it. No SaaS, no hosted version.
+**Distribution.** The shipped artifact is a Docker image published to **GHCR** (`ghcr.io/xray-eval/xray`) by CI on tagged releases. Operators `docker pull` and run it. No SaaS, no hosted version.
 
 **Local-first.** Every CI step must be runnable on a developer machine with one command — image build, image run + smoke test, supply-chain audit, lint, typecheck. CI runs the same scripts; it doesn't have privileged knowledge. If something only works in GitHub Actions, that's a bug.
 

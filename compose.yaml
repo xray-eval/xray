@@ -4,7 +4,7 @@
 
 services:
   xray:
-    image: ghcr.io/basilebong/xray:0.0.0  # bump per release; pin to digest in production
+    image: ghcr.io/xray-eval/xray:0.0.0  # bump per release; pin to digest in production
     container_name: xray
     restart: unless-stopped
     # Secrets enter HERE — never in the image. The operator's .env stays on the

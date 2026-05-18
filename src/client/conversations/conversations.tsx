@@ -273,7 +273,7 @@ function EmptyState() {
 				</EmptyHint>
 				<div className="pt-3 text-center">
 					<a
-						href="https://github.com/basilebong/xray#readme"
+						href="https://github.com/xray-eval/xray#readme"
 						target="_blank"
 						rel="noreferrer noopener"
 						className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs"
