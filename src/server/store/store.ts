@@ -51,17 +51,22 @@ export function openStore(opts: OpenStoreOptions): Store {
 		}
 	}
 	const sqlite = new Database(opts.path, { create: true, strict: true });
-	// WAL: readers and the single writer don't block each other. Safe choice
-	// since one Bun process owns the DB (see `.claude/rules/single-image-distribution.md`).
-	sqlite.exec("PRAGMA journal_mode = WAL");
-	// FK enforcement is off by default in SQLite. Required for ON DELETE CASCADE.
-	sqlite.exec("PRAGMA foreign_keys = ON");
-	// Probe BEFORE the migrator so an in-place upgrade from the pre-rewrite
-	// alpha gets a typed error instead of an opaque SQLITE_ERROR mid-migration.
-	assertNoLegacySchema(sqlite, opts.path);
-	const db = drizzle(sqlite, { schema });
-	migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
-	return { db, close: () => sqlite.close() };
+	try {
+		// WAL: readers and the single writer don't block each other. Safe choice
+		// since one Bun process owns the DB (see `.claude/rules/single-image-distribution.md`).
+		sqlite.exec("PRAGMA journal_mode = WAL");
+		// FK enforcement is off by default in SQLite. Required for ON DELETE CASCADE.
+		sqlite.exec("PRAGMA foreign_keys = ON");
+		// Probe BEFORE the migrator so an in-place upgrade from the pre-rewrite
+		// alpha gets a typed error instead of an opaque SQLITE_ERROR mid-migration.
+		assertNoLegacySchema(sqlite, opts.path);
+		const db = drizzle(sqlite, { schema });
+		migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+		return { db, close: () => sqlite.close() };
+	} catch (e) {
+		sqlite.close();
+		throw e;
+	}
 }
 
 function assertNoLegacySchema(sqlite: Database, path: string): void {
