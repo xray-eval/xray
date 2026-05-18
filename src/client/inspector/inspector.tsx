@@ -97,7 +97,11 @@ function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
 					<ol className="grid gap-3">
 						{replay.turns.map((turn) => (
 							<li key={`${turn.idx}-${turn.role}`}>
-								<TurnBlock replay={replay} turn={turn} />
+								<TurnBlock
+									replay={replay}
+									turn={turn}
+									assertions={replay.assertions.filter((a) => a.turnIdx === turn.idx)}
+								/>
 							</li>
 						))}
 					</ol>
@@ -107,7 +111,15 @@ function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
 	);
 }
 
-function TurnBlock({ replay, turn }: { replay: ReplayDetailResponse; turn: ReplayTurnResponse }) {
+function TurnBlock({
+	replay,
+	turn,
+	assertions,
+}: {
+	replay: ReplayDetailResponse;
+	turn: ReplayTurnResponse;
+	assertions: AssertionResponse[];
+}) {
 	return (
 		<div className="rounded border p-3">
 			<div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
@@ -127,8 +139,39 @@ function TurnBlock({ replay, turn }: { replay: ReplayDetailResponse; turn: Repla
 					/>
 				</div>
 			)}
+			{assertions.length > 0 && (
+				<ul className="mt-2 grid gap-1 text-xs" aria-label={`Assertions for turn ${turn.idx}`}>
+					{assertions.map((a) => (
+						<li key={a.id} className="flex items-start gap-2">
+							<AssertionChip status={a.status} />
+							<div className="flex-1">
+								<span className="font-medium">{a.name}</span>
+								{a.message !== null && (
+									<span className="ml-1 text-muted-foreground">— {a.message}</span>
+								)}
+							</div>
+						</li>
+					))}
+				</ul>
+			)}
 		</div>
 	);
+}
+
+function AssertionChip({ status }: { status: AssertionResponse["status"] }) {
+	return match(status)
+		.with("passed", () => <Badge aria-label="passed">{"✓"}</Badge>)
+		.with("failed", () => (
+			<Badge variant="destructive" aria-label="failed">
+				{"✗"}
+			</Badge>
+		))
+		.with("errored", () => (
+			<Badge variant="secondary" aria-label="errored">
+				err
+			</Badge>
+		))
+		.exhaustive();
 }
 
 function SpansCard({ spans }: { spans: SpanResponse[] }) {
@@ -140,8 +183,9 @@ function SpansCard({ spans }: { spans: SpanResponse[] }) {
 			<CardContent>
 				{spans.length === 0 ? (
 					<p className="text-sm text-muted-foreground">
-						No recognized spans for this replay. xray accepts spans whose vocabulary it knows — see{" "}
-						<code>docs/WIRE.md</code> for the list.
+						No trace spans recorded. Decorate your agent code with{" "}
+						<code>@xray.trace.stage(...)</code> to populate this panel — see{" "}
+						<code>docs/SDK.md</code>.
 					</p>
 				) : (
 					<ul className="grid gap-2 text-xs">
@@ -260,32 +304,28 @@ function ModelUsageCard({ usage }: { usage: ModelUsageResponse[] }) {
 
 function AssertionsCard({ assertions }: { assertions: AssertionResponse[] }) {
 	if (assertions.length === 0) return null;
+	const passed = assertions.filter((a) => a.status === "passed").length;
+	const failed = assertions.filter((a) => a.status === "failed").length;
+	const errored = assertions.filter((a) => a.status === "errored").length;
 	return (
 		<Card>
 			<CardHeader>
 				<CardTitle className="text-base">Assertions</CardTitle>
 			</CardHeader>
 			<CardContent>
-				<ul className="grid gap-2 text-xs">
-					{assertions.map((a) => (
-						<li key={a.id} className="flex items-center justify-between rounded border p-2">
-							<span>
-								#{a.turnIdx} {a.name}
-							</span>
-							<Badge
-								variant={
-									a.status === "passed"
-										? "default"
-										: a.status === "failed"
-											? "destructive"
-											: "secondary"
-								}
-							>
-								{a.status}
-							</Badge>
-						</li>
-					))}
-				</ul>
+				<div className="flex flex-wrap items-center gap-2 text-xs">
+					<Badge aria-label={`${passed} passed`}>
+						{passed} {"✓"}
+					</Badge>
+					<span className="text-muted-foreground">·</span>
+					<Badge variant="destructive" aria-label={`${failed} failed`}>
+						{failed} {"✗"}
+					</Badge>
+					<span className="text-muted-foreground">·</span>
+					<Badge variant="secondary" aria-label={`${errored} errored`}>
+						{errored} err
+					</Badge>
+				</div>
 			</CardContent>
 		</Card>
 	);
