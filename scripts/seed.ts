@@ -43,6 +43,7 @@ async function main() {
 	for (let i = 0; i < REPLAY_COUNT; i++) {
 		const replayId = await postReplay(i);
 		await pushOtlp(replayId, i);
+		await uploadReplayAudio(replayId, i);
 		await patchReplay(replayId, i);
 	}
 	console.info(`seeded ${REPLAY_COUNT} replays under ${CONVERSATION_ID}`);
@@ -200,6 +201,26 @@ async function pushOtlp(replayId: string, idx: number) {
 	if (!res.ok) throw new Error(`POST /v1/otlp/v1/traces -> ${res.status}`);
 }
 
+// One audio file per replay (the full mixdown). The UI slices it by
+// `replay_turns.started_at`/`ended_at` from the xray.turn spans pushed
+// above, so this single WAV plays back per-turn segments in the inspector.
+//
+// 5 seconds of mono 16-bit PCM at 16 kHz — long enough to span both turns
+// (the spans run from t=0 to t≈4 s), small enough to keep `pnpm seed` quick.
+async function uploadReplayAudio(replayId: string, idx: number) {
+	const sampleRate = 16_000;
+	const durationS = 5;
+	// Different tones per replay so they're audibly distinguishable in the UI.
+	const freqHz = 220 + idx * 110;
+	const wav = makeSineWav(sampleRate, durationS, freqHz);
+	const res = await fetch(`${BASE}/v1/replays/${replayId}/audio`, {
+		method: "POST",
+		headers: { "content-type": "audio/wav" },
+		body: new Blob([wav], { type: "audio/wav" }),
+	});
+	if (!res.ok) throw new Error(`POST /v1/replays/:id/audio -> ${res.status}`);
+}
+
 async function patchReplay(replayId: string, idx: number) {
 	const body = {
 		status: idx === 2 ? "failed" : "completed",
@@ -245,6 +266,48 @@ function span(opts: {
 function pad(seed: string, length: number): string {
 	const hex = [...seed].reduce((acc, ch) => acc * 31 + ch.charCodeAt(0), 7).toString(16);
 	return (hex + "0".repeat(length)).slice(0, length);
+}
+
+/**
+ * Build a minimal RIFF/WAV (PCM, mono, 16-bit) of a sine wave. No external
+ * dep, no audio-encoding library — the format is small enough to spell out
+ * by hand and the resulting file plays in every browser.
+ */
+function makeSineWav(sampleRate: number, durationS: number, freqHz: number): ArrayBuffer {
+	const sampleCount = sampleRate * durationS;
+	const bytesPerSample = 2; // 16-bit
+	const dataBytes = sampleCount * bytesPerSample;
+	const buffer = new ArrayBuffer(44 + dataBytes);
+	const view = new DataView(buffer);
+
+	// RIFF header
+	writeAscii(view, 0, "RIFF");
+	view.setUint32(4, 36 + dataBytes, true);
+	writeAscii(view, 8, "WAVE");
+	// fmt chunk
+	writeAscii(view, 12, "fmt ");
+	view.setUint32(16, 16, true); // PCM chunk size
+	view.setUint16(20, 1, true); // PCM format
+	view.setUint16(22, 1, true); // mono
+	view.setUint32(24, sampleRate, true);
+	view.setUint32(28, sampleRate * bytesPerSample, true); // byte rate
+	view.setUint16(32, bytesPerSample, true); // block align
+	view.setUint16(34, 16, true); // bits per sample
+	// data chunk
+	writeAscii(view, 36, "data");
+	view.setUint32(40, dataBytes, true);
+
+	// Sine samples, amplitude 0.25 so the seed audio isn't ear-blasting.
+	const amplitude = 0.25 * 0x7fff;
+	for (let i = 0; i < sampleCount; i++) {
+		const sample = Math.round(amplitude * Math.sin((2 * Math.PI * freqHz * i) / sampleRate));
+		view.setInt16(44 + i * bytesPerSample, sample, true);
+	}
+	return buffer;
+}
+
+function writeAscii(view: DataView, offset: number, ascii: string): void {
+	for (let i = 0; i < ascii.length; i++) view.setUint8(offset + i, ascii.charCodeAt(i));
 }
 
 main().catch((err) => {
