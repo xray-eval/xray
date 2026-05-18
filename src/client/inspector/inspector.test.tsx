@@ -268,6 +268,55 @@ describe("Inspector — back navigation", () => {
 		fireEvent.click(back);
 		await waitFor(() => expect(router.state.location.pathname).toBe("/"));
 	});
+
+	it("renders the back button with the outline variant", async () => {
+		server.use(http.get(CONVO_URL, () => HttpResponse.json(makeConversation({ id: "sess-1" }))));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+		const back = await screen.findByRole("link", { name: /all sessions/i });
+		// Outline variant emits a `border` class; ghost (the prior variant) didn't.
+		expect(back.className).toMatch(/\bborder\b/);
+	});
+});
+
+describe("Inspector — tab routing via search param", () => {
+	it("defaults to the Transcript tab when ?tab is absent", async () => {
+		server.use(http.get(CONVO_URL, () => HttpResponse.json(makeConversation({ id: "sess-1" }))));
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+		const transcriptTab = await screen.findByRole("tab", { name: /transcript/i });
+		expect(transcriptTab.getAttribute("data-state")).toBe("active");
+		const replaysTab = screen.getByRole("tab", { name: /replays/i });
+		expect(replaysTab.getAttribute("data-state")).toBe("inactive");
+	});
+
+	it("renders the Replays tab as active when ?tab=replays", async () => {
+		server.use(
+			http.get(CONVO_URL, () => HttpResponse.json(makeConversation({ id: "sess-1" }))),
+			http.get("http://localhost/v1/sessions/sess-1/replays", () =>
+				HttpResponse.json({ items: [] }),
+			),
+		);
+		const { ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1?tab=replays"] });
+		render(ui);
+		const replaysTab = await screen.findByRole("tab", { name: /replays/i });
+		expect(replaysTab.getAttribute("data-state")).toBe("active");
+	});
+
+	it("pushes ?tab=replays to the URL when the Replays tab is clicked", async () => {
+		server.use(
+			http.get(CONVO_URL, () => HttpResponse.json(makeConversation({ id: "sess-1" }))),
+			http.get("http://localhost/v1/sessions/sess-1/replays", () =>
+				HttpResponse.json({ items: [] }),
+			),
+		);
+		const { router, ui } = renderWithRouter({ initialEntries: ["/sessions/sess-1"] });
+		render(ui);
+		const replaysTab = await screen.findByRole("tab", { name: /replays/i });
+		// Radix Tabs activates on `onMouseDown`, not `onClick`.
+		fireEvent.mouseDown(replaysTab);
+		await waitFor(() => expect(router.state.location.search).toEqual({ tab: "replays" }));
+	});
 });
 
 describe("Inspector — replay", () => {

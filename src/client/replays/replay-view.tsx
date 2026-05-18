@@ -14,7 +14,7 @@ import {
 	CardTitle,
 } from "../components/ui/card.tsx";
 import { Separator } from "../components/ui/separator.tsx";
-import { BackToSessionsLink } from "../router/back-to-sessions-link.tsx";
+import { BackToReplaysLink, BackToSessionsLink } from "../router/back-link.tsx";
 import { DiffPanel } from "./replay-diff.tsx";
 import { ReplayStatusBadge } from "./replay-status-badge.tsx";
 
@@ -40,7 +40,12 @@ export function ReplayView() {
 	return (
 		<section aria-label="Replay" aria-busy={replayQuery.isPending} className="space-y-6">
 			<header className="flex items-baseline justify-between gap-4">
-				<BackToSessionsLink />
+				{match(replayQuery)
+					.with({ status: "success" }, (q) => (
+						<BackToReplaysLink sourceSessionId={q.data.sourceSessionId} />
+					))
+					.with({ status: "pending" }, { status: "error" }, () => <BackToSessionsLink />)
+					.exhaustive()}
 			</header>
 
 			{match(replayQuery)
