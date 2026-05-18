@@ -62,7 +62,16 @@ export function canonicalizeTurns(turns: readonly ConversationTurn[]): string {
 }
 
 function parseStoredTurns(raw: string): ConversationTurn[] {
-	return v.parse(TurnArraySchema, JSON.parse(raw));
+	// Stored rows were validated on the way in; a corrupt row (botched
+	// migration, fsck'd file) shouldn't 500 the entire conversation handler.
+	let parsedJson: unknown;
+	try {
+		parsedJson = JSON.parse(raw);
+	} catch {
+		return [];
+	}
+	const result = v.safeParse(TurnArraySchema, parsedJson);
+	return result.success ? result.output : [];
 }
 
 /** Project a stored row back onto the wire response shape. */

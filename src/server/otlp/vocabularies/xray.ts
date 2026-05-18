@@ -1,4 +1,7 @@
+import { match, P } from "ts-pattern";
+
 import type { FlatAttributes, ProjectedSpan } from "../otlp.types.ts";
+import { asInteger, asString, pickPrefixed } from "./attrs.ts";
 import type {
 	ExtractedAssertion,
 	ExtractedJudge,
@@ -22,95 +25,81 @@ import type {
  *     as raw spans only; no extracted rows. The span tree in the inspector
  *     surfaces them via vocabulary='xray'.
  */
-const XRAY_RECOGNIZED_NAMES = new Set([
+const XRAY_RECOGNIZED_NAMES = [
 	"xray.assertion",
 	"xray.judge",
 	"xray.turn",
 	"xray.stage.stt",
 	"xray.stage.tts",
-]);
+] as const;
 
-export const xrayVocabulary: SpanVocabularyMatcher = {
-	id: "xray",
-	match(span: ProjectedSpan): VocabularyExtraction | null {
-		if (!XRAY_RECOGNIZED_NAMES.has(span.name)) return null;
-		const a = span.attributes;
-		const narrowed: FlatAttributes = pickPrefixed(a, "xray.");
+type XrayRecognizedName = (typeof XRAY_RECOGNIZED_NAMES)[number];
 
-		const out: VocabularyExtraction = { vocabulary: "xray", attributes: narrowed };
+const XRAY_RECOGNIZED_NAMES_SET = new Set<string>(XRAY_RECOGNIZED_NAMES);
 
-		switch (span.name) {
-			case "xray.assertion": {
-				const name = asString(a["xray.assertion.name"]);
-				const status = asAssertionStatus(a["xray.assertion.status"]);
-				const turnIdx = asInteger(a["xray.turn.idx"]);
-				if (name !== null && status !== null && turnIdx !== null) {
-					const assertion: ExtractedAssertion = {
-						turnIdx,
-						name,
-						status,
-						message: asString(a["xray.assertion.message"]),
-						recordedAt: span.endedAt,
-					};
-					out.assertions = [assertion];
-				}
-				break;
+function isRecognized(name: string): name is XrayRecognizedName {
+	return XRAY_RECOGNIZED_NAMES_SET.has(name);
+}
+
+export const xrayVocabulary: SpanVocabularyMatcher = (
+	span: ProjectedSpan,
+): VocabularyExtraction | null => {
+	if (!isRecognized(span.name)) return null;
+	const a = span.attributes;
+	const narrowed: FlatAttributes = pickPrefixed(a, "xray.");
+	const out: VocabularyExtraction = { vocabulary: "xray", attributes: narrowed };
+
+	match(span.name)
+		.with("xray.assertion", () => {
+			const name = asString(a["xray.assertion.name"]);
+			const status = asAssertionStatus(a["xray.assertion.status"]);
+			const turnIdx = asInteger(a["xray.turn.idx"]);
+			if (name !== null && status !== null && turnIdx !== null) {
+				const assertion: ExtractedAssertion = {
+					turnIdx,
+					name,
+					status,
+					message: asString(a["xray.assertion.message"]),
+					recordedAt: span.endedAt,
+				};
+				out.assertions = [assertion];
 			}
-			case "xray.judge": {
-				const status = asJudgeStatus(a["xray.judge.status"]);
-				if (status !== null) {
-					const judge: ExtractedJudge = {
-						status,
-						score: asInteger(a["xray.judge.score"]),
-						reason: asString(a["xray.judge.reason"]),
-						error: asString(a["xray.judge.error"]),
-					};
-					out.judge = judge;
-				}
-				break;
+		})
+		.with("xray.judge", () => {
+			const status = asJudgeStatus(a["xray.judge.status"]);
+			if (status !== null) {
+				const judge: ExtractedJudge = {
+					status,
+					score: asInteger(a["xray.judge.score"]),
+					reason: asString(a["xray.judge.reason"]),
+					error: asString(a["xray.judge.error"]),
+				};
+				out.judge = judge;
 			}
-			case "xray.turn": {
-				const turnIdx = asInteger(a["xray.turn.idx"]);
-				const role = asTurnRole(a["xray.turn.role"]);
-				if (turnIdx !== null && role !== null) {
-					const update: ExtractedTurnUpdate = {
-						idx: turnIdx,
-						role,
-						key: asString(a["xray.turn.key"]),
-						startedAt: span.startedAt,
-						endedAt: span.endedAt,
-						transcript: asString(a["xray.turn.transcript"]),
-						audioPath: asString(a["xray.turn.audio_path"]),
-					};
-					out.turnUpdates = [update];
-				}
-				break;
+		})
+		.with("xray.turn", () => {
+			const turnIdx = asInteger(a["xray.turn.idx"]);
+			const role = asTurnRole(a["xray.turn.role"]);
+			if (turnIdx !== null && role !== null) {
+				const update: ExtractedTurnUpdate = {
+					idx: turnIdx,
+					role,
+					key: asString(a["xray.turn.key"]),
+					startedAt: span.startedAt,
+					endedAt: span.endedAt,
+					transcript: asString(a["xray.turn.transcript"]),
+					audioPath: asString(a["xray.turn.audio_path"]),
+				};
+				out.turnUpdates = [update];
 			}
-			// xray.stage.stt / xray.stage.tts — raw span only, no extracted rows.
-		}
-		return out;
-	},
-};
+		})
+		.with(P.union("xray.stage.stt", "xray.stage.tts"), () => {
+			// Raw span only — surfaced in the inspector via vocabulary='xray'.
+		})
+		.exhaustive();
 
-function pickPrefixed(attrs: FlatAttributes, prefix: string): FlatAttributes {
-	const out: FlatAttributes = {};
-	for (const [k, v] of Object.entries(attrs)) {
-		if (k.startsWith(prefix)) out[k] = v;
-	}
 	return out;
-}
-
-function asString(v: FlatAttributes[string] | undefined): string | null {
-	if (typeof v === "string") return v;
-	if (typeof v === "number" || typeof v === "boolean") return String(v);
-	return null;
-}
-
-function asInteger(v: FlatAttributes[string] | undefined): number | null {
-	if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
-	if (typeof v === "string" && /^[-+]?\d+$/.test(v)) return Number(v);
-	return null;
-}
+};
 
 function asAssertionStatus(
 	v: FlatAttributes[string] | undefined,

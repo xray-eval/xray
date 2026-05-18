@@ -218,8 +218,8 @@ function persistExtracted(
 }
 
 function recognize(span: ProjectedSpan, resource: FlatAttributes): VocabularyExtraction | null {
-	for (const vocab of SPAN_VOCABULARIES) {
-		const result = vocab.match(span, resource);
+	for (const matcher of SPAN_VOCABULARIES) {
+		const result = matcher(span, resource);
 		if (result !== null) return result;
 	}
 	return null;

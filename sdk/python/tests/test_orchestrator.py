@@ -135,6 +135,36 @@ def test_run_marks_failed_when_runtime_raises():
     assert patch_replay.called
     body = patch_replay.calls[0].request.content.decode()
     assert '"status":"failed"' in body
+    # The raised message matches the server's failureReason picklist
+    # ("agent_not_joined"), so it survives the classifier verbatim.
+    assert '"failureReason":"agent_not_joined"' in body
+
+
+@respx.mock
+def test_run_falls_back_to_runtime_error_for_unmapped_exception():
+    """A free-form exception message that isn't in the failureReason picklist
+    is classified as `runtime_error`, not echoed verbatim — otherwise the
+    server would reject the PATCH for an invalid failureReason."""
+    conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
+
+    class BoomRuntime(Runtime):
+        async def run(self, conversation: Conversation) -> RuntimeResult:
+            raise RuntimeError("connection refused to wss://livekit.example")
+
+        async def aclose(self) -> None: ...
+
+    respx.post("http://xray.local/v1/conversations").mock(
+        return_value=httpx.Response(200, json=conv.to_spec_payload())
+    )
+    respx.post("http://xray.local/v1/replays").mock(
+        return_value=httpx.Response(201, json={"id": "00000000-0000-0000-0000-0000000000ee"})
+    )
+    patch_replay = respx.patch(
+        "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000ee"
+    ).mock(return_value=httpx.Response(200, json={}))
+
+    run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
+    body = patch_replay.calls[0].request.content.decode()
     assert '"failureReason":"runtime_error"' in body
 
 

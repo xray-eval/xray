@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useSearch } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { match } from "ts-pattern";
 
 import { Badge } from "@/client/components/ui/badge.tsx";
@@ -25,17 +25,24 @@ export function CompareReplays() {
 
 	if (replayIds.length < MIN_COMPARE || replayIds.length > MAX_COMPARE) {
 		return (
-			<p className="text-sm text-destructive">
-				Compare requires between {MIN_COMPARE} and {MAX_COMPARE} replay ids.
-			</p>
+			<section>
+				<CompareHeader />
+				<p role="alert" className="text-sm text-destructive">
+					Compare requires between {MIN_COMPARE} and {MAX_COMPARE} replay ids.
+				</p>
+			</section>
 		);
 	}
 
 	return (
 		<section>
-			<h2 className="mb-4 text-2xl font-semibold">Compare replays</h2>
+			<CompareHeader />
 			{match(query)
-				.with({ status: "pending" }, () => <Skeleton className="h-96 w-full" />)
+				.with({ status: "pending" }, () => (
+					<div role="status" aria-label="Loading comparison" aria-busy="true">
+						<Skeleton className="h-96 w-full" />
+					</div>
+				))
 				.with({ status: "error" }, () => (
 					<p role="alert" className="text-destructive">
 						Failed to load comparison.
@@ -47,68 +54,98 @@ export function CompareReplays() {
 	);
 }
 
+function CompareHeader() {
+	return (
+		<header className="mb-4">
+			<Link to="/" className="text-sm text-muted-foreground hover:underline">
+				<span aria-hidden="true">←</span> Conversations
+			</Link>
+			<h2 className="mt-2 text-2xl font-semibold">Compare replays</h2>
+		</header>
+	);
+}
+
 function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 	const allKeys = collectKeys(replays);
 	return (
-		<div
-			className="grid gap-3"
-			style={{ gridTemplateColumns: `repeat(${replays.length}, minmax(0, 1fr))` }}
-		>
-			{replays.map((r) => (
-				<Card key={r.id}>
-					<CardHeader>
-						<CardTitle className="text-base">
-							<span className="font-mono">{r.id.slice(0, 8)}…</span>
-						</CardTitle>
-					</CardHeader>
-					<CardContent className="text-xs text-muted-foreground">
-						<div>v{r.conversationVersion}</div>
-						<div>{formatTimestamp(r.startedAt)}</div>
-						{r.runConfig !== null && r.runConfig !== undefined && (
-							<pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 text-[10px]">
-								{JSON.stringify(r.runConfig, null, 2)}
-							</pre>
-						)}
-					</CardContent>
-				</Card>
-			))}
-			{allKeys.map((key) => (
-				<KeyRow key={key} keyName={key} replays={replays} />
-			))}
+		<div className="overflow-x-auto">
+			<table className="w-full border-separate border-spacing-3" aria-label="Replay comparison">
+				<thead>
+					<tr>
+						{replays.map((r) => (
+							<th key={r.id} scope="col" className="min-w-[240px] text-left align-top">
+								<Card>
+									<CardHeader>
+										<CardTitle className="text-base">
+											<span className="font-mono">{r.id.slice(0, 8)}…</span>
+										</CardTitle>
+									</CardHeader>
+									<CardContent className="text-xs text-muted-foreground">
+										<div>v{r.conversationVersion}</div>
+										<div>{formatTimestamp(r.startedAt)}</div>
+										{r.runConfig !== null && r.runConfig !== undefined && (
+											<pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 text-[10px]">
+												{JSON.stringify(r.runConfig, null, 2)}
+											</pre>
+										)}
+									</CardContent>
+								</Card>
+							</th>
+						))}
+					</tr>
+				</thead>
+				<tbody>
+					{allKeys.map((key) => (
+						<KeyRow key={key} keyName={key} replays={replays} />
+					))}
+				</tbody>
+			</table>
 		</div>
 	);
 }
 
 function KeyRow({ keyName, replays }: { keyName: string; replays: ReplayDetailResponse[] }) {
 	return (
-		<>
+		<tr>
 			{replays.map((r) => {
-				const turn = r.turns.find((t) => t.key === keyName) ?? null;
+				// `key` is not unique within a replay, only `(replay_id, idx)` is.
+				// Surface every matching turn so a duplicate-keyed run isn't silently
+				// reduced to its first turn.
+				const matchingTurns = r.turns.filter((t) => t.key === keyName);
 				return (
-					<div key={`${r.id}-${keyName}`} className="rounded border p-2 text-xs">
+					<td
+						key={`${r.id}-${keyName}`}
+						className="min-w-[240px] rounded border p-2 align-top text-xs"
+					>
 						<div className="mb-1 flex items-center justify-between text-muted-foreground">
 							<span>key: {keyName}</span>
-							{turn !== null && <Badge variant="outline">{turn.role}</Badge>}
+							{matchingTurns.length > 0 && (
+								<Badge variant="outline">{matchingTurns[0]?.role}</Badge>
+							)}
 						</div>
-						{turn === null ? (
+						{matchingTurns.length === 0 ? (
 							<p className="text-muted-foreground italic">no matching turn</p>
 						) : (
-							<TurnSnippet turn={turn} />
+							<ul className="grid gap-1">
+								{matchingTurns.map((turn) => (
+									<li key={`${r.id}-${keyName}-${turn.idx}`}>
+										<TurnSnippet turn={turn} />
+									</li>
+								))}
+							</ul>
 						)}
-					</div>
+					</td>
 				);
 			})}
-		</>
+		</tr>
 	);
 }
 
 function TurnSnippet({ turn }: { turn: ReplayTurnResponse }) {
 	return (
-		<div>
-			<p className="line-clamp-6 whitespace-pre-wrap text-sm">
-				{turn.transcript ?? "(no transcript)"}
-			</p>
-		</div>
+		<p className="line-clamp-6 whitespace-pre-wrap text-sm">
+			{turn.transcript ?? "(no transcript)"}
+		</p>
 	);
 }
 

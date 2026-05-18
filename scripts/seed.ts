@@ -17,6 +17,36 @@
 
 import * as v from "valibot";
 
+class SeedError extends Error {
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "SeedError";
+	}
+}
+
+class SeedRequestError extends SeedError {
+	readonly method: string;
+	readonly path: string;
+	readonly status: number;
+	readonly statusText: string;
+	readonly responseBody: string;
+	constructor(
+		method: string,
+		path: string,
+		status: number,
+		statusText: string,
+		responseBody: string,
+	) {
+		super(`${method} ${path} -> ${status} ${statusText}`);
+		this.name = "SeedRequestError";
+		this.method = method;
+		this.path = path;
+		this.status = status;
+		this.statusText = statusText;
+		this.responseBody = responseBody;
+	}
+}
+
 const EnvSchema = v.object({
 	XRAY_BASE_URL: v.optional(v.string()),
 	OPENAI_API_KEY: v.optional(v.string()),
@@ -121,7 +151,15 @@ async function postConversation() {
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
 	});
-	if (!res.ok) throw new Error(`POST /v1/conversations -> ${res.status}`);
+	if (!res.ok) {
+		throw new SeedRequestError(
+			"POST",
+			"/v1/conversations",
+			res.status,
+			res.statusText,
+			await res.text(),
+		);
+	}
 }
 
 async function postReplay(idx: number): Promise<string> {
@@ -139,7 +177,9 @@ async function postReplay(idx: number): Promise<string> {
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
 	});
-	if (!res.ok) throw new Error(`POST /v1/replays -> ${res.status}`);
+	if (!res.ok) {
+		throw new SeedRequestError("POST", "/v1/replays", res.status, res.statusText, await res.text());
+	}
 	const parsed = v.parse(v.object({ id: v.string() }), await res.json());
 	return parsed.id;
 }
@@ -252,7 +292,15 @@ async function pushOtlp(replayId: string, idx: number) {
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
 	});
-	if (!res.ok) throw new Error(`POST /v1/otlp/v1/traces -> ${res.status}`);
+	if (!res.ok) {
+		throw new SeedRequestError(
+			"POST",
+			"/v1/otlp/v1/traces",
+			res.status,
+			res.statusText,
+			await res.text(),
+		);
+	}
 }
 
 // One audio file per replay (the full mixdown). The UI slices it by
@@ -273,7 +321,15 @@ async function uploadReplayAudio(replayId: string, replayIdx: number) {
 		headers: { "content-type": "audio/wav" },
 		body: new Blob([wav], { type: "audio/wav" }),
 	});
-	if (!res.ok) throw new Error(`POST /v1/replays/:id/audio -> ${res.status}`);
+	if (!res.ok) {
+		throw new SeedRequestError(
+			"POST",
+			`/v1/replays/${replayId}/audio`,
+			res.status,
+			res.statusText,
+			await res.text(),
+		);
+	}
 }
 
 async function patchReplay(replayId: string, idx: number) {
@@ -290,7 +346,15 @@ async function patchReplay(replayId: string, idx: number) {
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
 	});
-	if (!res.ok) throw new Error(`PATCH /v1/replays/:id -> ${res.status}`);
+	if (!res.ok) {
+		throw new SeedRequestError(
+			"PATCH",
+			`/v1/replays/${replayId}`,
+			res.status,
+			res.statusText,
+			await res.text(),
+		);
+	}
 }
 
 // --- audio helpers ---
@@ -300,28 +364,29 @@ const SINE_SAMPLE_RATE = 16_000;
 
 /**
  * TTS each segment, drop the bytes at the right offset of a single
- * 24 kHz mono PCM buffer, render to WAV. Buffer length = max of the
- * spans' endMs and the actual TTS audio runover, so nothing gets cut.
+ * 24 kHz mono PCM buffer, render to WAV.
+ *
+ * Each clip is trimmed to its span's slot length so the on-disk
+ * playhead matches the span timestamps the inspector seeks by. If TTS
+ * runs longer than the slot the tail is dropped; if shorter, the slot
+ * pads with silence. Trimming (rather than expanding the buffer) keeps
+ * playback aligned with `replay_turns.started_at`/`ended_at` — that
+ * alignment is the whole reason this script uploads one mixdown
+ * instead of N per-turn clips.
  */
 async function synthesizeReplayWavViaOpenAI(apiKey: string): Promise<ArrayBuffer> {
-	const placed: { startSamples: number; samples: Int16Array }[] = [];
+	const sampleRate = TTS_SAMPLE_RATE;
+	const totalSamples = Math.round(((PLAYED.at(-1)?.endMs ?? 0) / 1000) * sampleRate);
+	const mix = new Int16Array(totalSamples);
 	for (const seg of PLAYED) {
 		const samples = await ttsToPcm(apiKey, seg.transcript, TTS_VOICE_FOR_ROLE[seg.role]);
-		const startSamples = Math.round((seg.startMs / 1000) * TTS_SAMPLE_RATE);
-		placed.push({ startSamples, samples });
+		const startSamples = Math.round((seg.startMs / 1000) * sampleRate);
+		const endSamples = Math.round((seg.endMs / 1000) * sampleRate);
+		const slotLength = Math.max(0, endSamples - startSamples);
+		const clipLength = Math.min(samples.length, slotLength, totalSamples - startSamples);
+		if (clipLength > 0) mix.set(samples.subarray(0, clipLength), startSamples);
 	}
-	const spanEndSamples = Math.round(((PLAYED.at(-1)?.endMs ?? 0) / 1000) * TTS_SAMPLE_RATE);
-	const ttsEndSamples = placed.reduce(
-		(max, p) => Math.max(max, p.startSamples + p.samples.length),
-		0,
-	);
-	const totalSamples = Math.max(spanEndSamples, ttsEndSamples);
-
-	const mix = new Int16Array(totalSamples);
-	for (const { startSamples, samples } of placed) {
-		mix.set(samples, startSamples);
-	}
-	return wavFromPcm(mix, TTS_SAMPLE_RATE);
+	return wavFromPcm(mix, sampleRate);
 }
 
 async function ttsToPcm(apiKey: string, text: string, voice: string): Promise<Int16Array> {
@@ -341,7 +406,13 @@ async function ttsToPcm(apiKey: string, text: string, voice: string): Promise<In
 		}),
 	});
 	if (!res.ok) {
-		throw new Error(`OpenAI TTS -> ${res.status} ${res.statusText}: ${await res.text()}`);
+		throw new SeedRequestError(
+			"POST",
+			"https://api.openai.com/v1/audio/speech",
+			res.status,
+			res.statusText,
+			await res.text(),
+		);
 	}
 	const buf = await res.arrayBuffer();
 	return new Int16Array(buf);
@@ -425,8 +496,8 @@ function span(opts: {
 	attrs: Record<string, string | number | boolean>;
 }) {
 	return {
-		traceId: pad(opts.name + opts.start, 32),
-		spanId: pad(opts.name + opts.start, 16),
+		traceId: randomHex(32),
+		spanId: randomHex(16),
 		name: opts.name,
 		startTimeUnixNano: String(BigInt(opts.start) * 1_000_000n),
 		endTimeUnixNano: String(BigInt(opts.end) * 1_000_000n),
@@ -434,9 +505,15 @@ function span(opts: {
 	};
 }
 
-function pad(seed: string, length: number): string {
-	const hex = [...seed].reduce((acc, ch) => acc * 31 + ch.charCodeAt(0), 7).toString(16);
-	return (hex + "0".repeat(length)).slice(0, length);
+function randomHex(length: number): string {
+	// crypto.randomUUID yields 32 hex chars; loop for the 16-char case rather
+	// than slicing because the floating-point accumulator the previous
+	// implementation used overflowed past 2^53 on long span names and
+	// silently collided on (replay_id, span_id), tripping the spans
+	// onConflictDoNothing path.
+	let out = "";
+	while (out.length < length) out += crypto.randomUUID().replace(/-/g, "");
+	return out.slice(0, length);
 }
 
 main().catch((err) => {

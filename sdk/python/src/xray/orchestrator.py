@@ -29,6 +29,11 @@ from xray.runtime.base import Runtime
 
 logger = logging.getLogger(__name__)
 
+# Must match REPLAY_FAILURE_REASONS in src/server/store/types.ts.
+_FAILURE_REASONS = frozenset(
+    {"agent_not_joined", "runtime_error", "audio_missing", "sdk_aborted", "other"}
+)
+
 
 @dataclass
 class RunResult:
@@ -106,7 +111,7 @@ async def run_async(
         except Exception as e:  # noqa: BLE001
             logger.exception("runtime failed during replay %s", replay_id)
             status = "failed"
-            failure_reason = str(e) or "runtime_error"
+            failure_reason = _classify_failure(e)
         finally:
             await runtime.aclose()
 
@@ -142,7 +147,7 @@ async def run_async(
         # 7. PATCH the Replay with the final outcome.
         patch_body: dict[str, Any] = {"status": status}
         if failure_reason is not None:
-            patch_body["failureReason"] = "runtime_error"
+            patch_body["failureReason"] = failure_reason
         if judge_outcome is not None:
             patch_body["judge"] = {
                 "status": judge_outcome.status,
@@ -161,6 +166,15 @@ async def run_async(
             assertions=assertions,
             judge=judge_outcome,
         )
+
+
+def _classify_failure(e: BaseException) -> str:
+    """Map a runtime exception to one of the server's failureReason picklist
+    values. Runtimes that want to signal a specific reason (`agent_not_joined`,
+    `audio_missing`, …) raise with that string as the message; anything else
+    falls back to `runtime_error`."""
+    message = str(e).strip()
+    return message if message in _FAILURE_REASONS else "runtime_error"
 
 
 async def _evaluate_assertion(

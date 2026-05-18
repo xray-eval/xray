@@ -42,7 +42,7 @@ export function ConversationDetail() {
 		<section>
 			<header className="mb-6">
 				<Link to="/" className="text-sm text-muted-foreground hover:underline">
-					← Conversations
+					<span aria-hidden="true">←</span> Conversations
 				</Link>
 				<h2 className="mt-2 text-2xl font-semibold">
 					{match(conversation)
@@ -54,20 +54,26 @@ export function ConversationDetail() {
 				<p className="text-xs text-muted-foreground font-mono">{conversationId}</p>
 			</header>
 
-			<div className="mb-3 flex items-center justify-between">
+			<div className="mb-3 flex items-center justify-between gap-3">
 				<h3 className="text-lg font-medium">Replays</h3>
-				<Button
-					variant={canCompare ? "default" : "secondary"}
-					disabled={!canCompare}
-					onClick={() =>
-						navigate({
-							to: "/compare/replays",
-							search: { ids: selected.join(",") },
-						})
-					}
-				>
-					Compare ({selected.length})
-				</Button>
+				<div className="flex flex-col items-end gap-1">
+					<Button
+						variant={canCompare ? "default" : "secondary"}
+						disabled={!canCompare}
+						aria-describedby="compare-hint"
+						onClick={() =>
+							navigate({
+								to: "/compare/replays",
+								search: { ids: selected.join(",") },
+							})
+						}
+					>
+						Compare ({selected.length})
+					</Button>
+					<p id="compare-hint" className="text-xs text-muted-foreground">
+						Select {MIN_COMPARE}–{MAX_COMPARE} replays to compare.
+					</p>
+				</div>
 			</div>
 
 			{match(replays)
@@ -112,7 +118,7 @@ function ReplayRow({
 		<Card className={selected ? "border-primary" : undefined}>
 			<CardHeader>
 				<CardTitle className="flex items-center justify-between gap-3 text-base">
-					<label className="flex items-center gap-2">
+					<div className="flex items-center gap-2">
 						<input
 							type="checkbox"
 							checked={selected}
@@ -122,11 +128,11 @@ function ReplayRow({
 						<Link
 							to="/replays/$replayId"
 							params={{ replayId: replay.id }}
-							className="hover:underline"
+							className="rounded-sm hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 						>
 							<span className="font-mono text-sm">{replay.id.slice(0, 8)}…</span>
 						</Link>
-					</label>
+					</div>
 					<StatusChip replay={replay} />
 				</CardTitle>
 			</CardHeader>
@@ -153,11 +159,18 @@ function StatusChip({ replay }: { replay: ReplaySummaryResponse }) {
 	return match(replay.status)
 		.with("running", () => <Badge variant="secondary">running</Badge>)
 		.with("completed", () => <Badge>completed</Badge>)
-		.with("failed", () => (
-			<Badge variant="destructive" title={replay.failureReason ?? ""}>
-				failed
-			</Badge>
-		))
+		.with("failed", () => {
+			const reason = replay.failureReason;
+			return (
+				<Badge
+					variant="destructive"
+					title={reason ?? ""}
+					aria-label={reason !== null ? `failed: ${reason}` : "failed"}
+				>
+					failed{reason !== null ? `: ${reason}` : ""}
+				</Badge>
+			);
+		})
 		.exhaustive();
 }
 

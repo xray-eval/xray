@@ -2,6 +2,8 @@ import type { SpanVocabulary } from "@/server/store/types.ts";
 
 import type { FlatAttributes, ProjectedSpan } from "../otlp.types.ts";
 
+export type { SpanVocabulary };
+
 export interface ExtractedToolCall {
 	name: string;
 	argsJson: string | null;
@@ -66,9 +68,11 @@ export interface VocabularyExtraction {
 /**
  * A vocabulary recognizes some span shapes and ignores others. Returning
  * `null` means "not for me" — the receiver falls through to the next
- * vocabulary, and finally drops the span if nobody claims it.
+ * vocabulary, and finally drops the span if nobody claims it. The
+ * vocabulary identity travels on the returned `VocabularyExtraction.vocabulary`
+ * field; there's no separate `id` on the matcher itself.
  */
-export interface SpanVocabularyMatcher {
-	readonly id: SpanVocabulary;
-	match(span: ProjectedSpan, resource: FlatAttributes): VocabularyExtraction | null;
-}
+export type SpanVocabularyMatcher = (
+	span: ProjectedSpan,
+	resource: FlatAttributes,
+) => VocabularyExtraction | null;

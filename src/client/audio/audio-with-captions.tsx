@@ -2,6 +2,8 @@ interface AudioWithCaptionsProps {
 	src: string;
 	captionText: string | null;
 	className?: string;
+	/** Distinguishes multiple players on one page (e.g. per-turn audio). */
+	label?: string;
 }
 
 /**
@@ -10,10 +12,10 @@ interface AudioWithCaptionsProps {
  * forbids ignoring it). When the model has no transcript, we still emit a
  * tiny placeholder cue so the track element is valid VTT.
  */
-export function AudioWithCaptions({ src, captionText, className }: AudioWithCaptionsProps) {
+export function AudioWithCaptions({ src, captionText, className, label }: AudioWithCaptionsProps) {
 	const captionsUrl = toCaptionsDataUrl(captionText);
 	return (
-		<audio controls className={className} preload="none">
+		<audio controls className={className} preload="none" aria-label={label}>
 			<source src={src} />
 			<track default kind="captions" src={captionsUrl} srcLang="en" label="English" />
 		</audio>

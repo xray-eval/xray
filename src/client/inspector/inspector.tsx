@@ -25,24 +25,35 @@ export function Inspector() {
 		queryFn: ({ signal }) => getReplay(replayId, signal),
 	});
 
+	const conversationId = query.data?.conversationId;
 	return (
 		<section>
 			<header className="mb-6 flex items-center justify-between">
 				<div>
-					<Link
-						to="/conversations/$conversationId"
-						params={{ conversationId: query.data?.conversationId ?? "" }}
-						className="text-sm text-muted-foreground hover:underline"
-					>
-						← Conversation
-					</Link>
+					{conversationId !== undefined ? (
+						<Link
+							to="/conversations/$conversationId"
+							params={{ conversationId }}
+							className="text-sm text-muted-foreground hover:underline"
+						>
+							<span aria-hidden="true">←</span> Conversation
+						</Link>
+					) : (
+						<Link to="/" className="text-sm text-muted-foreground hover:underline">
+							<span aria-hidden="true">←</span> Conversations
+						</Link>
+					)}
 					<h2 className="mt-2 text-2xl font-semibold">Replay</h2>
 					<p className="font-mono text-xs text-muted-foreground">{replayId}</p>
 				</div>
 			</header>
 
 			{match(query)
-				.with({ status: "pending" }, () => <Skeleton className="h-96 w-full" />)
+				.with({ status: "pending" }, () => (
+					<div role="status" aria-label="Loading replay" aria-busy="true">
+						<Skeleton className="h-96 w-full" />
+					</div>
+				))
 				.with({ status: "error" }, () => (
 					<p role="alert" className="text-destructive">
 						Failed to load replay.
@@ -112,6 +123,7 @@ function TurnBlock({ replay, turn }: { replay: ReplayDetailResponse; turn: Repla
 						src={turnAudioUrl(replay.id, turn.idx)}
 						captionText={turn.transcript}
 						className="w-full"
+						label={`Turn ${turn.idx} audio — ${turn.role}`}
 					/>
 				</div>
 			)}
@@ -305,6 +317,7 @@ function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
 							src={replayAudioUrl(replay.id)}
 							captionText={replay.transcript}
 							className="w-full"
+							label="Full replay audio"
 						/>
 					</div>
 				)}

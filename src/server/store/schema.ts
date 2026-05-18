@@ -33,7 +33,6 @@ import type {
 //   so a future migration to a different embedded engine has no
 //   storage-engine-specific surface to port.
 
-// ============================================================================
 // Conversations — dev-authored test definitions
 //
 // Composite primary key `(id, version)`: the dev controls `id`, the SDK
@@ -41,7 +40,6 @@ import type {
 // the same `(id, version)` upsert idempotently; an upsert against an
 // existing `(id, version)` with a different `turns_json` is rejected by
 // the service as `VersionFingerprintMismatchError`.
-// ============================================================================
 export const conversations = sqliteTable(
 	"conversations",
 	{
@@ -59,14 +57,12 @@ export const conversations = sqliteTable(
 	],
 );
 
-// ============================================================================
 // Replays — one execution of one Conversation
 //
 // `conversation_id` + `conversation_version` together reference a row in
 // `conversations`. We do NOT declare it as a composite FK because Drizzle's
 // SQLite dialect spells composite FKs inconsistently across versions; the
 // service validates the (id, version) pair on insert.
-// ============================================================================
 export const replays = sqliteTable(
 	"replays",
 	{
@@ -89,13 +85,11 @@ export const replays = sqliteTable(
 	],
 );
 
-// ============================================================================
 // Replay meta — 1:1 side table for fields that change after the row exists
 //
 // Split out so creating a replay (single insert into `replays`) is cheap and
 // the read-heavy fields (status chip, judge result, run_config diff in the UI)
 // can be updated without rewriting the main row's wide audio/transcript blobs.
-// ============================================================================
 export const replayMeta = sqliteTable(
 	"replay_meta",
 	{
@@ -115,12 +109,10 @@ export const replayMeta = sqliteTable(
 	(t) => [check("replay_meta_modality_ck", sql`${t.modality} IN ('voice')`)],
 );
 
-// ============================================================================
 // Replay turns — per-turn audio segments + transcripts + cross-replay key
 //
 // `idx` is the ordinal within the replay (0-based). `key` is a dev-declared
 // cross-Conversation alignment key; the UI joins on it for compare views.
-// ============================================================================
 export const replayTurns = sqliteTable(
 	"replay_turns",
 	{
@@ -143,12 +135,10 @@ export const replayTurns = sqliteTable(
 	],
 );
 
-// ============================================================================
 // Spans — recognized OTLP spans persisted under a replay
 //
 // One row per accepted span. Unrecognized vocabularies are dropped at the
 // OTLP receiver and never reach this table.
-// ============================================================================
 export const spans = sqliteTable(
 	"spans",
 	{
@@ -175,9 +165,7 @@ export const spans = sqliteTable(
 	],
 );
 
-// ============================================================================
 // Tool calls — extracted from gen_ai / langfuse / xray.* tool-call spans
-// ============================================================================
 export const toolCalls = sqliteTable(
 	"tool_calls",
 	{
@@ -199,9 +187,7 @@ export const toolCalls = sqliteTable(
 	(t) => [index("idx_tool_calls_replay").on(t.replayId, t.startedAt)],
 );
 
-// ============================================================================
 // Model usage — extracted from gen_ai / langfuse LLM-call spans
-// ============================================================================
 export const modelUsage = sqliteTable(
 	"model_usage",
 	{
@@ -223,9 +209,7 @@ export const modelUsage = sqliteTable(
 	(t) => [index("idx_model_usage_replay").on(t.replayId, t.startedAt)],
 );
 
-// ============================================================================
 // Assertions — per-turn predicate results posted by the SDK as xray.* spans
-// ============================================================================
 export const assertions = sqliteTable(
 	"assertions",
 	{

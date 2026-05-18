@@ -1,16 +1,14 @@
 import * as v from "valibot";
 
-// ----------------------------------------------------------------------------
-// OTLP/JSON shape — minimal model of what we consume.
-//
-// Spec: https://opentelemetry.io/docs/specs/otlp/
-//
-// We model only the fields we read. OTLP/JSON sends attribute values as
-// `{stringValue: "...", intValue: 123, boolValue: true, doubleValue: 1.5, …}`
-// objects keyed by the value's type — we accept the union and project to a
-// plain JS value at parse time.
-// ----------------------------------------------------------------------------
-
+/**
+ * OTLP/JSON shape — minimal model of what we consume. Spec:
+ * https://opentelemetry.io/docs/specs/otlp/
+ *
+ * We model only the fields we read. OTLP/JSON sends attribute values as
+ * `{stringValue: "...", intValue: 123, boolValue: true, doubleValue: 1.5, …}`
+ * objects keyed by the value's type — we accept the union and project to a
+ * plain JS value at parse time.
+ */
 const AnyValueSchema = v.union([
 	v.object({ stringValue: v.string() }),
 	v.object({ intValue: v.union([v.string(), v.number()]) }),
@@ -80,16 +78,10 @@ export const ExportTraceServiceResponseSchema = v.object({
 });
 export type ExportTraceServiceResponse = v.InferOutput<typeof ExportTraceServiceResponseSchema>;
 
-// ----------------------------------------------------------------------------
-// Receiver limits
-// ----------------------------------------------------------------------------
 export const MAX_OTLP_BODY_BYTES = 4 * 1024 * 1024;
 export const MAX_SPANS_PER_REQUEST = 512;
 export const MAX_SPANS_PER_REPLAY = 5_000;
 
-// ----------------------------------------------------------------------------
-// xray-shaped resource attributes
-// ----------------------------------------------------------------------------
 export const XRAY_REPLAY_ID_KEY = "xray.replay.id";
 export const XRAY_CONVERSATION_ID_KEY = "xray.conversation.id";
 export const XRAY_CONVERSATION_VERSION_KEY = "xray.conversation.version";
@@ -97,9 +89,6 @@ export const XRAY_TURN_KEY_KEY = "xray.turn.key";
 export const XRAY_TURN_IDX_KEY = "xray.turn.idx";
 export const XRAY_MODALITY_KEY = "xray.modality";
 
-// ----------------------------------------------------------------------------
-// Internal projected shape used downstream by the vocabularies / sink
-// ----------------------------------------------------------------------------
 export interface FlatAttributes {
 	[key: string]: string | number | boolean | null;
 }

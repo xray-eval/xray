@@ -10,6 +10,7 @@ import {
 	ReplayDetailResponseSchema,
 } from "@/server/replays/replays.types.ts";
 
+import { ApiRequestFailedError, ApiResponseValidationError } from "./api.errors.ts";
 import type {
 	CompareReplaysResponse,
 	ConversationResponse,
@@ -36,11 +37,11 @@ async function getJson<T>(
 ): Promise<T> {
 	const init: RequestInit = signal === undefined ? {} : { signal };
 	const res = await fetch(`${BASE}${path}`, init);
-	if (!res.ok) throw new Error(`GET ${path} failed: ${res.status} ${res.statusText}`);
+	if (!res.ok) throw new ApiRequestFailedError("GET", path, res.status, res.statusText);
 	const raw: unknown = await res.json();
 	const parsed = v.safeParse(schema, raw);
 	if (!parsed.success) {
-		throw new Error(`GET ${path} response failed validation`);
+		throw new ApiResponseValidationError("GET", path);
 	}
 	return parsed.output;
 }
@@ -58,10 +59,10 @@ async function postJson<T>(
 		...(signal === undefined ? {} : { signal }),
 	};
 	const res = await fetch(`${BASE}${path}`, init);
-	if (!res.ok) throw new Error(`POST ${path} failed: ${res.status} ${res.statusText}`);
+	if (!res.ok) throw new ApiRequestFailedError("POST", path, res.status, res.statusText);
 	const raw: unknown = await res.json();
 	const parsed = v.safeParse(schema, raw);
-	if (!parsed.success) throw new Error(`POST ${path} response failed validation`);
+	if (!parsed.success) throw new ApiResponseValidationError("POST", path);
 	return parsed.output;
 }
 

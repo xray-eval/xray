@@ -50,7 +50,11 @@ export function ConversationsList() {
 
 function ConversationRow({ conversation }: { conversation: ConversationSummary }) {
 	return (
-		<Link to="/conversations/$conversationId" params={{ conversationId: conversation.id }}>
+		<Link
+			to="/conversations/$conversationId"
+			params={{ conversationId: conversation.id }}
+			className="block rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+		>
 			<Card className="transition-colors hover:bg-muted/40">
 				<CardHeader>
 					<CardTitle className="flex items-center justify-between gap-3">

@@ -31,8 +31,8 @@ class LiveKitRuntime(Runtime):
     will stream a continuous user track."""
 
     url: str
-    api_key: str
-    api_secret: str
+    api_key: str = field(repr=False)
+    api_secret: str = field(repr=False)
     room: str
     # Identity of the user-side participant we mint a token for.
     identity: str = "xray-driver"
