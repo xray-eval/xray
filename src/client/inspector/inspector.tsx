@@ -26,7 +26,9 @@ import { Skeleton } from "../components/ui/skeleton.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs.tsx";
 import { formatAbsolute, formatDuration } from "../format.ts";
 import { ReplayModal } from "../replays/replay-modal.tsx";
-import { BackToSessionsLink } from "../router/back-to-sessions-link.tsx";
+import { BackToSessionsLink } from "../router/back-link.tsx";
+import type { InspectorTab } from "../router/router.ts";
+import { INSPECTOR_TABS } from "../router/router.ts";
 import { sourceBadgeVariant } from "../source-badge.ts";
 import { ConversationLoadError } from "./errors.ts";
 import { ReplaysTab } from "./replays-tab/replays-tab.tsx";
@@ -93,6 +95,10 @@ export function Inspector() {
 	);
 }
 
+function isInspectorTab(value: string): value is InspectorTab {
+	return INSPECTOR_TABS.some((t) => t === value);
+}
+
 function InspectorTabs({
 	conversation,
 	sessionId,
@@ -100,8 +106,22 @@ function InspectorTabs({
 	conversation: Conversation;
 	sessionId: string;
 }) {
+	const { tab = "transcript" } = route.useSearch();
+	const navigate = useNavigate();
 	return (
-		<Tabs defaultValue="transcript" className="space-y-6">
+		<Tabs
+			value={tab}
+			onValueChange={(next) => {
+				if (!isInspectorTab(next)) return;
+				void navigate({
+					to: "/sessions/$sessionId",
+					params: { sessionId },
+					search: next === "transcript" ? {} : { tab: next },
+					replace: true,
+				});
+			}}
+			className="space-y-6"
+		>
 			<TabsList>
 				<TabsTrigger value="transcript">Transcript</TabsTrigger>
 				<TabsTrigger value="replays">Replays</TabsTrigger>

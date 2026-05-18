@@ -221,21 +221,30 @@ describe("ReplayView — completed diff", () => {
 });
 
 describe("ReplayView — back navigation", () => {
-	it("navigates to / when the back button is clicked", async () => {
+	it("navigates to /sessions/:sourceSessionId?tab=replays when the back button is clicked", async () => {
 		server.use(
 			http.get(REPLAY_URL, () =>
-				HttpResponse.json(makeReplayRunResponse({ id: "r-1", status: "completed" })),
+				HttpResponse.json(
+					makeReplayRunResponse({
+						id: "r-1",
+						sourceSessionId: "sess-source",
+						status: "completed",
+					}),
+				),
 			),
 			http.get(SOURCE_URL, () => HttpResponse.json(makeConversation({ id: "sess-source" }))),
 			http.get(TARGET_URL, () => HttpResponse.json(makeConversation({ id: "sess-target" }))),
-			http.get("http://localhost/v1/sessions", () =>
-				HttpResponse.json({ sessions: [], nextCursor: null }),
+			http.get("http://localhost/v1/sessions/sess-source/replays", () =>
+				HttpResponse.json({ items: [] }),
 			),
 		);
 		const { router, ui } = renderWithRouter({ initialEntries: ["/replays/r-1"] });
 		render(ui);
-		const back = await screen.findByRole("link", { name: /all sessions/i });
+		const back = await screen.findByRole("link", { name: /all replays/i });
 		fireEvent.click(back);
-		await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+		await waitFor(() => {
+			expect(router.state.location.pathname).toBe("/sessions/sess-source");
+			expect(router.state.location.search).toEqual({ tab: "replays" });
+		});
 	});
 });

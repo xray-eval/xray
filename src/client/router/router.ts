@@ -1,11 +1,21 @@
 import type { RouterHistory } from "@tanstack/react-router";
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import * as v from "valibot";
 
 import { ConversationsList } from "../conversations/conversations.tsx";
 import { Inspector } from "../inspector/inspector.tsx";
 import { ReplayView } from "../replays/replay-view.tsx";
 import { NotFoundView } from "./not-found.tsx";
 import { RootLayout } from "./root-layout.tsx";
+
+export const INSPECTOR_TABS = ["transcript", "replays"] as const;
+export type InspectorTab = (typeof INSPECTOR_TABS)[number];
+
+export const InspectorSearchSchema = v.object({
+	tab: v.optional(v.picklist(INSPECTOR_TABS)),
+});
+
+export type InspectorSearch = v.InferOutput<typeof InspectorSearchSchema>;
 
 export const rootRoute = createRootRoute({
 	component: RootLayout,
@@ -22,6 +32,7 @@ export const inspectorRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/sessions/$sessionId",
 	component: Inspector,
+	validateSearch: (search): InspectorSearch => v.parse(InspectorSearchSchema, search),
 });
 
 export const replayRoute = createRoute({
