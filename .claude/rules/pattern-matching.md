@@ -13,11 +13,10 @@ Secondary motive: `ts-pattern` is already a pinned dep (`package.json`). If the 
 ```ts
 import { match } from "ts-pattern";
 
-return match(event)
-  .with({ type: "session_started" }, (e) => handleStart(e))
-  .with({ type: "turn_completed" }, (e) => handleTurn(e))
-  .with({ type: "tool_called" }, (e) => handleTool(e))
-  .with({ type: "session_ended" }, (e) => handleEnd(e))
+return match(query)
+  .with({ status: "pending" }, () => <p>Loading…</p>)
+  .with({ status: "error" }, (q) => <p role="alert">{q.error.message}</p>)
+  .with({ status: "success" }, (q) => <List items={q.data} />)
   .exhaustive();
 ```
 

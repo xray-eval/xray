@@ -9,14 +9,18 @@ const EnvSchema = v.object({
 		v.minValue(1),
 		v.maxValue(65535),
 	),
-	// Default bind is loopback: the ingest endpoint has no auth, so a wider
+	// Default bind is loopback: the SDK→xray surface has no auth, so a wider
 	// bind needs the operator's explicit opt-in (`HOST=0.0.0.0` + a fronting
-	// proxy or shared-secret middleware).
+	// proxy or shared-secret middleware). README documents this.
 	HOST: v.optional(v.string(), "127.0.0.1"),
 	// Directory holding the SQLite store file (`xray.db`). `/data` is the
 	// mounted-volume convention in the production image; `./data` is the dev
 	// equivalent at the repo root.
 	XRAY_DATA_DIR: v.pipe(v.optional(v.string(), "/data"), v.nonEmpty()),
+	// Audio root. Per-turn and full-replay audio files live here, indexed by
+	// replay id. Defaults under XRAY_DATA_DIR if unset so a fresh `docker run`
+	// works without operator intervention.
+	XRAY_AUDIO_ROOT: v.optional(v.pipe(v.string(), v.nonEmpty())),
 });
 
 export type Env = v.InferOutput<typeof EnvSchema>;

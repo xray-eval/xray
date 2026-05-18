@@ -41,7 +41,7 @@ If the linter is genuinely wrong about your case, the fix is **change the rule's
 Fire-and-forget is a real pattern (background telemetry posts, dev-script logging). The legitimate form is:
 
 ```ts
-void synthesizeAndUploadAudio(sessionId, idx, role, text);
+void pushTelemetrySpan(replayId, attributes);
 ```
 
 `void` is a *language feature* that says "I know this returns a promise; I'm intentionally not awaiting." `biome-ignore` is a *linter feature* that says "shut up about this." They aren't equivalent — the first is intent expressed in code, the second is intent expressed by silencing the tool that was checking the code.

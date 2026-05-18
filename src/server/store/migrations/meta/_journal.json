@@ -5,36 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1778943903312,
-      "tag": "0000_initial",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1778961339341,
-      "tag": "0001_turn_response_latency_and_interrupt",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1779007682193,
-      "tag": "0002_replay_runs",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1779016856886,
-      "tag": "0003_add_turn_audio_path",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1779023174003,
-      "tag": "0004_replay_runs_mode",
+      "when": 1747584000000,
+      "tag": "0000_init",
       "breakpoints": true
     }
   ]

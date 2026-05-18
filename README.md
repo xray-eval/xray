@@ -2,19 +2,18 @@
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange)
 
-A self-hosted, single-session debugger for voice agents. One Docker image, SQLite on a mounted volume.
+Open-source replay/eval framework for LiveKit voice agents. One Docker image, one SQLite file, one Python SDK.
 
-![xray replay diff — source session and replay rendered side by side, turn by turn](docs/assets/hero.png)
-
-**Status: alpha.** Pre-v1. The HTTP ingest wire format and the realtime-replay WebSocket protocol may change before v1. Issues and feedback are the most useful contribution right now.
+> **Alpha.** The wire and SDK API can break between minor versions. **Upgrading from a previous release wipes your data: delete `/data/xray.db` before starting the new container.** Issues and feedback are the most useful contribution right now.
 
 ---
 
 ## What it does
 
-xray records voice-agent sessions, renders the transcript with tool calls inlined and per-turn audio playback, and lets you replay a recorded session through an updated version of your agent over a webhook — text or WebSocket. Replays write a fresh session so the source and the replay can be diffed turn by turn.
-
-There are two ways to get sessions into xray: an HTTP ingest endpoint your loop POSTs events to, or a provider adapter that polls a hosted agent platform. One ElevenLabs Convai adapter ships today.
+- **Author a Conversation in Python** — an ordered list of user-side turns, per-turn assertion predicates, and an optional per-replay LLM judge.
+- **Run it against your LiveKit voice agent.** The SDK joins your room as a user-side participant, plays the user audio, captures the agent's audio + transcript.
+- **xray records the run as a Replay.** The dev's agent emits OpenTelemetry spans during the run — xray's OTLP receiver routes them by `xray.replay.id` and surfaces tool calls, model usage, and timings in the inspector. Spans of recognized vocabularies (`xray.*`, OTel GenAI semconv `gen_ai.*`, Langfuse) light up automatically.
+- **Compare runs side-by-side.** Pick 2–8 Replays of one Conversation to grid-compare; pick two Conversations to align by per-turn `key` and see what diverged.
 
 ---
 
@@ -26,7 +25,7 @@ The image is published to GHCR:
 docker pull ghcr.io/basilebong/xray:0.0.1-alpha
 ```
 
-Tagged releases are signed with cosign keyless (OIDC). If you want to verify:
+Tagged releases are signed with cosign keyless (OIDC). To verify:
 
 ```bash
 cosign verify ghcr.io/basilebong/xray:<tag> \
@@ -37,16 +36,22 @@ cosign verify ghcr.io/basilebong/xray:<tag> \
 Or build from source:
 
 ```bash
-git clone https://github.com/basilebong/xray.git
+git clone https://github.com/xray-eval/xray.git
 cd xray
 docker build -t xray:local .
+```
+
+The Python SDK:
+
+```bash
+pip install xray-py[livekit]
 ```
 
 ---
 
 ## Quickstart
 
-xray is designed to sit in the same Docker network as your voice agent so your loop can POST events to it over the internal DNS name. Drop xray into your existing compose stack:
+Drop xray into your existing compose stack alongside your LiveKit agent:
 
 ```yaml
 # compose.yaml
@@ -54,14 +59,15 @@ services:
   xray:
     image: ghcr.io/basilebong/xray:0.0.1-alpha
     ports:
-      - "8080:8080"          # only expose if you want the UI reachable from the host
+      - "127.0.0.1:8080:8080"   # bind to localhost only — see Security below
     volumes:
-      - xray-data:/data      # SQLite + audio files survive container restarts
+      - xray-data:/data         # SQLite + audio survive container restarts
 
   my-voice-agent:
     build: .
     environment:
-      XRAY_URL: http://xray:8080
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://xray:8080/v1/otlp/v1/traces
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/json
     depends_on:
       - xray
 
@@ -71,130 +77,99 @@ volumes:
 
 `docker compose up`, then open <http://localhost:8080>. The API reference is at <http://localhost:8080/docs>.
 
-### From your voice loop — four `fetch` calls
+### Write a Conversation in Python
 
-Any language with an HTTP client works. Stream events as they happen; the UI updates as new turns arrive.
+```python
+from xray import Conversation, Turn, expect_agent_turn, run
+from xray.conversation import AgentResponse
+from xray.runtime.livekit import LiveKitRuntime
+import os
 
-```js
-const XRAY = process.env.XRAY_URL;
+conv = Conversation(
+    id="booking-happy-path",
+    turns=[
+        Turn.user("Hi, I'd like to book a table for two at 7pm.", key="u0"),
+        expect_agent_turn(
+            key="a0",
+            assertion=lambda agent: "confirmed" in agent.transcript.lower(),
+            assertion_name="confirms_booking",
+        ),
+    ],
+)
 
-// 1. Session starts
-await fetch(`${XRAY}/v1/sessions/sess-42/events`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    type: "session_started",
-    agentId: "concierge",
-    startedAt: new Date().toISOString(),
-  }),
-});
+runtime = LiveKitRuntime(
+    url=os.environ["LIVEKIT_URL"],
+    api_key=os.environ["LIVEKIT_API_KEY"],
+    api_secret=os.environ["LIVEKIT_API_SECRET"],
+    room="booking-test-room",
+)
 
-// 2. A user turn completes
-await fetch(`${XRAY}/v1/sessions/sess-42/events`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    type: "turn_completed",
-    idx: 0,
-    role: "user",
-    text: "Book me a table for two at the bistro tonight at seven.",
-    timestamp: new Date().toISOString(),
-  }),
-});
-
-// 3. An agent turn completes — include the latency-to-first-output
-await fetch(`${XRAY}/v1/sessions/sess-42/events`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    type: "turn_completed",
-    idx: 1,
-    role: "agent",
-    text: "Got it — two people, seven PM. Checking availability now.",
-    timestamp: new Date().toISOString(),
-    responseLatencyMs: 720,
-  }),
-});
-
-// 4. Session ends
-await fetch(`${XRAY}/v1/sessions/sess-42/events`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    type: "session_ended",
-    endedAt: new Date().toISOString(),
-    durationMs: 22_000,
-  }),
-});
+result = run(
+    conversation=conv,
+    runtime=runtime,
+    xray_url="http://localhost:8080",
+    run_config={"model": "gpt-4o", "temperature": 0.5},
+)
+print(f"replay: http://localhost:8080/replays/{result.id}")
 ```
 
-See [`docs/INGEST.md`](docs/INGEST.md) for the full wire contract — tool calls, barge-in, voice-to-voice events, and per-turn audio upload.
+### Wire your agent (one-time)
+
+The dev's agent reads `xray.replay.id` (plus `conversation.id` / `version` / `modality`) from LiveKit room metadata and propagates them as OTEL baggage so every span — `xray.*`, `gen_ai.*`, Langfuse — gets routed to the right Replay. See [`docs/SDK.md`](docs/SDK.md).
 
 ---
 
-## Replay
+## Compare
 
-From any recorded session, you can re-run the user-side inputs through your updated agent code and render the result next to the original.
-
-1. Click **Replay** on a recorded session and paste a webhook URL.
-2. xray POSTs each user turn (text + recorded tool results) to your webhook.
-3. Your webhook returns the new agent text (and optionally tool calls + latency).
-4. xray writes a fresh session and renders it next to the original.
-
-Two flavors, both documented at `/docs` on your running instance:
-
-- **Text replay** (`POST /v1/replays`) — your webhook is an HTTP endpoint.
-- **Realtime / V2V replay** (`POST /v1/replays/realtime`) — your webhook is a WebSocket server. xray streams the recorded user audio chunk-by-chunk and consumes your agent's audio + transcript frames. Frame protocol is at `/asyncapi.json`.
-
-Recorded tool results are forwarded so the replay doesn't re-execute real side effects.
-
----
-
-## Adapter mode
-
-If you use ElevenLabs Convai, you can skip the ingest step entirely. Set `ELEVENLABS_API_KEY` and xray pulls conversations from ElevenLabs' API into the same SQLite store the UI reads from:
-
-```yaml
-services:
-  xray:
-    image: ghcr.io/basilebong/xray:0.0.1-alpha
-    ports:
-      - "8080:8080"
-    volumes:
-      - xray-data:/data
-    environment:
-      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY}
-```
-
-ElevenLabs is the only adapter today. New adapters live under [`src/adapters/<provider>/`](src/adapters/) — PRs welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Replays of the same Conversation:** select 2–8 from the Conversation detail page → grid view with per-column `run_config` headers.
+- **Two Conversations:** pick from the Conversations index → side-by-side aligned by per-turn `key`. Unmatched turns render as labeled "no matching turn" placeholders.
 
 ---
 
 ## Architecture
 
-One Bun process serves both the SPA shell and the API. One SQLite file at `/data/xray.db` on a mounted volume. No external database, no second container, no managed service required. See [`.claude/rules/single-image-distribution.md`](.claude/rules/single-image-distribution.md) for why SQLite is the right fit here.
+One Bun process serves both the SPA and the API. One SQLite file at `/data/xray.db` on a mounted volume. No external database, no second container, no managed service. See [`.claude/rules/single-image-distribution.md`](.claude/rules/single-image-distribution.md).
 
 ```
-                ┌─ src/adapters/<provider>/   (REST poll: ElevenLabs Convai)
-   sources  ────┤
-                └─ POST /v1/sessions/:id/events   (HTTP ingest)
-                         │
-                         ▼
-                ┌────────────────────────┐
-                │  SQLite  /data/xray.db │   single file, mounted volume, `bun:sqlite`
-                └────────────────────────┘
-                         │
-                         ▼
-                ┌────────────────────────┐
-                │           UI           │   list • transcript • inspector • replay
-                └────────────────────────┘
+   ┌─ xray-py SDK on dev's machine ───────────────────────────────────────┐
+   │  POST /v1/conversations   (idempotent upsert by (id, version))     │
+   │  POST /v1/replays         → returns replay_id                       │
+   │  LiveKitRuntime joins room, plays user audio                        │
+   │  PATCH /v1/replays/:id    (final status + judge result)             │
+   └─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+   ┌─ dev's agent ─────────────────────────────────────────────────────────┐
+   │  reads replay.id from room metadata → OTEL baggage                  │
+   │  emits xray.* / gen_ai.* / langfuse spans                            │
+   └─────────────────────────────────────────────────────────────────────┘
+                                  │ OTLP/JSON
+                                  ▼
+                        ┌────────────────────────┐
+                        │  SQLite /data/xray.db  │   single file, mounted volume
+                        └────────────────────────┘
+                                  │
+                                  ▼
+                        ┌────────────────────────┐
+                        │           UI           │   Conversations · Replays · Compare
+                        └────────────────────────┘
 ```
 
 ### Security
 
-- Secrets are runtime-only — API keys are passed at run time (compose `environment:` / `env_file:`, or `docker run -e`), never baked into the image.
-- 7-day cooldown on npm releases, deny-by-default lifecycle scripts, every GitHub Action pinned to a 40-char commit SHA. See [`.claude/rules/supply-chain.md`](.claude/rules/supply-chain.md).
+- **The SDK→xray surface has no auth.** xray and your agent are expected to live in the same Docker network. **Do not expose port 8080 publicly.** The default compose snippet above binds to `127.0.0.1`.
+- Secrets (LiveKit, LLM provider keys) live in the SDK's process, never in xray's. xray's image never holds provider credentials.
+- Secrets are runtime-only — pass them at run time (compose `environment:` / `env_file:`, or `docker run -e`), never baked into the image.
+- 7-day cooldown on npm releases, deny-by-default lifecycle scripts, every GitHub Action pinned to a 40-char SHA. See [`.claude/rules/supply-chain.md`](.claude/rules/supply-chain.md).
 - Releases are signed with cosign keyless (OIDC) and carry build-provenance attestations.
+
+---
+
+## Documentation
+
+- [`docs/SDK.md`](docs/SDK.md) — Python authoring + runtime + how to propagate baggage from LiveKit room metadata.
+- [`docs/WIRE.md`](docs/WIRE.md) — OTLP attribute contract + recognized vocabularies and what fields are extracted from each.
+- `/docs` on your running instance — generated OpenAPI 3.1 reference rendered by Scalar.
 
 ---
 

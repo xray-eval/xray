@@ -2,49 +2,56 @@ import type { RouterHistory } from "@tanstack/react-router";
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import * as v from "valibot";
 
+import { ConversationDetail } from "../conversations/conversation-detail.tsx";
 import { ConversationsList } from "../conversations/conversations.tsx";
 import { Inspector } from "../inspector/inspector.tsx";
-import { ReplayView } from "../replays/replay-view.tsx";
+import { CompareReplays } from "../replays/compare.tsx";
 import { NotFoundView } from "./not-found.tsx";
 import { RootLayout } from "./root-layout.tsx";
 
-export const INSPECTOR_TABS = ["transcript", "replays"] as const;
-export type InspectorTab = (typeof INSPECTOR_TABS)[number];
-
-export const InspectorSearchSchema = v.object({
-	tab: v.optional(v.picklist(INSPECTOR_TABS)),
+const CompareSearchSchema = v.object({
+	ids: v.optional(v.string()),
 });
-
-export type InspectorSearch = v.InferOutput<typeof InspectorSearchSchema>;
+export type CompareSearch = v.InferOutput<typeof CompareSearchSchema>;
 
 export const rootRoute = createRootRoute({
 	component: RootLayout,
 	notFoundComponent: NotFoundView,
 });
 
-export const listRoute = createRoute({
+export const conversationsRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/",
 	component: ConversationsList,
 });
 
-export const inspectorRoute = createRoute({
+export const conversationDetailRoute = createRoute({
 	getParentRoute: () => rootRoute,
-	path: "/sessions/$sessionId",
-	component: Inspector,
-	validateSearch: (search): InspectorSearch => v.parse(InspectorSearchSchema, search),
+	path: "/conversations/$conversationId",
+	component: ConversationDetail,
 });
 
 export const replayRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/replays/$replayId",
-	component: ReplayView,
+	component: Inspector,
 });
 
-const routeTree = rootRoute.addChildren([listRoute, inspectorRoute, replayRoute]);
+export const compareReplaysRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/compare/replays",
+	component: CompareReplays,
+	validateSearch: (search): CompareSearch => v.parse(CompareSearchSchema, search),
+});
+
+const routeTree = rootRoute.addChildren([
+	conversationsRoute,
+	conversationDetailRoute,
+	replayRoute,
+	compareReplaysRoute,
+]);
 
 export interface CreateAppRouterOptions {
-	/** Memory history for tests; omit in production to default to browser history. */
 	history?: RouterHistory;
 }
 

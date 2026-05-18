@@ -6,48 +6,38 @@ import * as v from "valibot";
 
 import {
 	BodyTooLargeResponseSchema,
+	ConversationNotFoundResponseSchema,
 	openApiSchemaFromValibot,
 	ReplayNotFoundResponseSchema,
-	SessionNotFoundResponseSchema,
-	StoreFailureResponseSchema,
 	ValidationErrorResponseSchema,
 } from "@/server/core/types.ts";
-import { SessionIdSchema } from "@/server/ingest/ingest.types.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
-import { InvalidSessionIdError, SessionNotFoundError } from "@/server/sessions/sessions.errors.ts";
-import { getReplayRun } from "@/server/store/replay-runs-repo.ts";
 import type { Store } from "@/server/store/store.ts";
 
 import {
-	BodyTooLargeError,
+	ConversationVersionNotFoundError,
+	InvalidCompareSelectionError,
 	InvalidReplayIdError,
 	InvalidReplayRequestError,
-	MalformedBodyError,
-	ReplayRunNotFoundError,
-	SourceSessionNotFoundError,
+	MalformedReplayBodyError,
+	ReplayBodyTooLargeError,
+	ReplayNotFoundError,
 } from "./replays.errors.ts";
+import { compareReplays, createReplay, getReplay, updateReplay } from "./replays.service.ts";
 import {
-	createReplay,
-	listReplaysForSession,
-	runReplay,
-	toReplayRunResponse,
-} from "./replays.service.ts";
-import {
+	COMPARE_MAX,
+	COMPARE_MIN,
+	CompareReplaysRequestSchema,
+	CompareReplaysResponseSchema,
 	CreateReplayRequestSchema,
-	ListReplayRunsResponseSchema,
+	ReplayDetailResponseSchema,
 	ReplayIdSchema,
-	ReplayRunResponseSchema,
+	UpdateReplayRequestSchema,
 } from "./replays.types.ts";
 
-/** Body is just `{sourceSessionId, webhookUrl}`; even with a 2KB URL the worst case fits well under 4KB. */
-const MAX_BODY_BYTES = 4 * 1024;
+const MAX_REPLAY_BODY_BYTES = 64 * 1024;
+const MAX_COMPARE_BODY_BYTES = 16 * 1024;
 
-/**
- * Fire-and-forget: `POST /v1/replays` returns 202 the moment the row is in
- * the store. The worker runs in the background on the same Bun process;
- * status flows back through `GET /v1/replays/:id`. SSE streaming
- * (`/v1/replays/:id/stream`) is deferred until #15.
- */
 export function createReplaysRouter(store: Store): Hono {
 	const router = new Hono();
 
@@ -55,9 +45,9 @@ export function createReplaysRouter(store: Store): Hono {
 		"/replays",
 		describeRoute({
 			tags: ["Replays"],
-			summary: "Start a text-replay run",
+			summary: "Start a Replay",
 			description:
-				"Re-runs a recorded session through your text webhook. xray POSTs each user turn from the source session to `webhookUrl`; your webhook returns the new agent text (and optionally tool calls / latency). The body shape xray sends and the response shape it expects are documented under `webhooks.textReplay`. Returns 202 immediately — poll `GET /v1/replays/:id` for progress.",
+				"Creates the Replay row eagerly so the SDK can propagate `xray.replay.id` as OTEL baggage on the LiveKit room metadata BEFORE the dev's agent emits its first span. Returns the full detail row with `status='running'`.",
 			requestBody: {
 				required: true,
 				content: {
@@ -65,10 +55,12 @@ export function createReplaysRouter(store: Store): Hono {
 				},
 			},
 			responses: {
-				"202": {
-					description: "Replay run created; worker started.",
+				"201": {
+					description: "Replay row created; status='running'.",
 					content: {
-						"application/json": { schema: openApiSchemaFromValibot(ReplayRunResponseSchema) },
+						"application/json": {
+							schema: openApiSchemaFromValibot(ReplayDetailResponseSchema),
+						},
 					},
 				},
 				"400": {
@@ -78,29 +70,25 @@ export function createReplaysRouter(store: Store): Hono {
 					},
 				},
 				"404": {
-					description: "Source session not found.",
+					description: "(conversationId, conversationVersion) not found — POST it first.",
 					content: {
-						"application/json": { schema: openApiSchemaFromValibot(SessionNotFoundResponseSchema) },
+						"application/json": {
+							schema: openApiSchemaFromValibot(ConversationNotFoundResponseSchema),
+						},
 					},
 				},
 				"413": {
-					description: "Body exceeded the 4 KB cap.",
+					description: "Body exceeded byte cap.",
 					content: {
 						"application/json": { schema: openApiSchemaFromValibot(BodyTooLargeResponseSchema) },
-					},
-				},
-				"500": {
-					description: "Unhandled internal failure.",
-					content: {
-						"application/json": { schema: openApiSchemaFromValibot(StoreFailureResponseSchema) },
 					},
 				},
 			},
 		}),
 		bodyLimit({
-			maxSize: MAX_BODY_BYTES,
+			maxSize: MAX_REPLAY_BODY_BYTES,
 			onError: () => {
-				throw new BodyTooLargeError(MAX_BODY_BYTES);
+				throw new ReplayBodyTooLargeError(MAX_REPLAY_BODY_BYTES);
 			},
 		}),
 		async (c) => {
@@ -108,69 +96,82 @@ export function createReplaysRouter(store: Store): Hono {
 			try {
 				raw = await c.req.json();
 			} catch (cause) {
-				throw new MalformedBodyError({ cause });
+				throw new MalformedReplayBodyError({ cause });
 			}
 			const parsed = v.safeParse(CreateReplayRequestSchema, raw);
-			if (!parsed.success) {
-				throw new InvalidReplayRequestError(parsed.issues);
-			}
-
-			const row = createReplay(store, parsed.output);
-
-			// Fire-and-forget worker. Errors update the run row's `error` column;
-			// log here because no caller is awaiting this promise.
-			void runReplay({ store, runId: row.id }).catch((err) => {
-				console.error(`replay ${row.id} failed`, err);
-			});
-
-			return c.json(toReplayRunResponse(row), 202);
+			if (!parsed.success) throw new InvalidReplayRequestError(parsed.issues);
+			const detail = createReplay(store, parsed.output);
+			return c.json(detail, 201);
 		},
 	);
 
-	router.get(
-		"/sessions/:sessionId/replays",
+	router.patch(
+		"/replays/:id",
 		describeRoute({
 			tags: ["Replays"],
-			summary: "List replay runs for a session",
+			summary: "Update a Replay",
 			description:
-				"Returns every replay whose `sourceSessionId` matches this session, newest-first. Powers the inspector's Replays tab. No pagination — replay counts per session are small.",
+				"Applies a partial update. Used by the SDK during a run to set `status`, `finishedAt`, the judge result, the run's audio/transcript, and any updated `runConfig`.",
 			parameters: [
 				{
 					in: "path",
-					name: "sessionId",
+					name: "id",
 					required: true,
-					schema: openApiSchemaFromValibot(SessionIdSchema),
+					schema: openApiSchemaFromValibot(ReplayIdSchema),
 				},
 			],
+			requestBody: {
+				required: true,
+				content: {
+					"application/json": { schema: openApiSchemaFromValibot(UpdateReplayRequestSchema) },
+				},
+			},
 			responses: {
 				"200": {
-					description: "Replay runs for the session (possibly empty).",
+					description: "Updated row.",
 					content: {
 						"application/json": {
-							schema: openApiSchemaFromValibot(ListReplayRunsResponseSchema),
+							schema: openApiSchemaFromValibot(ReplayDetailResponseSchema),
 						},
 					},
 				},
 				"400": {
-					description: "Session id failed validation.",
+					description: "Body or id failed validation.",
 					content: {
 						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
 					},
 				},
 				"404": {
-					description: "Session not found.",
+					description: "Replay not found.",
 					content: {
-						"application/json": { schema: openApiSchemaFromValibot(SessionNotFoundResponseSchema) },
+						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
+					},
+				},
+				"413": {
+					description: "Body exceeded byte cap.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(BodyTooLargeResponseSchema) },
 					},
 				},
 			},
 		}),
-		(c) => {
-			const idCheck = v.safeParse(SessionIdSchema, c.req.param("sessionId"));
-			if (!idCheck.success) {
-				throw new InvalidSessionIdError(idCheck.issues);
+		bodyLimit({
+			maxSize: MAX_REPLAY_BODY_BYTES,
+			onError: () => {
+				throw new ReplayBodyTooLargeError(MAX_REPLAY_BODY_BYTES);
+			},
+		}),
+		async (c) => {
+			const id = parseReplayId(c.req.param("id"));
+			let raw: unknown;
+			try {
+				raw = await c.req.json();
+			} catch (cause) {
+				throw new MalformedReplayBodyError({ cause });
 			}
-			return c.json(listReplaysForSession(store, idCheck.output));
+			const parsed = v.safeParse(UpdateReplayRequestSchema, raw);
+			if (!parsed.success) throw new InvalidReplayRequestError(parsed.issues);
+			return c.json(updateReplay(store, id, parsed.output));
 		},
 	);
 
@@ -178,34 +179,32 @@ export function createReplaysRouter(store: Store): Hono {
 		"/replays/:id",
 		describeRoute({
 			tags: ["Replays"],
-			summary: "Get one replay run's status",
-			description:
-				"Shared by text and realtime replays — both flavors share the same row shape. Poll until `status` is `completed` or `failed`.",
+			summary: "Get a Replay's full detail",
 			parameters: [
 				{
 					in: "path",
 					name: "id",
 					required: true,
-					description:
-						"Replay run UUID (returned by `POST /v1/replays` or `POST /v1/replays/realtime`).",
 					schema: openApiSchemaFromValibot(ReplayIdSchema),
 				},
 			],
 			responses: {
 				"200": {
-					description: "Replay run row.",
+					description: "Replay detail.",
 					content: {
-						"application/json": { schema: openApiSchemaFromValibot(ReplayRunResponseSchema) },
+						"application/json": {
+							schema: openApiSchemaFromValibot(ReplayDetailResponseSchema),
+						},
 					},
 				},
 				"400": {
-					description: "Replay id is not a UUID.",
+					description: "Id failed validation.",
 					content: {
 						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
 					},
 				},
 				"404": {
-					description: "No replay run with that id.",
+					description: "Replay not found.",
 					content: {
 						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
 					},
@@ -213,47 +212,124 @@ export function createReplaysRouter(store: Store): Hono {
 			},
 		}),
 		(c) => {
-			const idCheck = v.safeParse(ReplayIdSchema, c.req.param("id"));
-			if (!idCheck.success) {
-				throw new InvalidReplayIdError(idCheck.issues);
+			const id = parseReplayId(c.req.param("id"));
+			return c.json(getReplay(store, id));
+		},
+	);
+
+	router.post(
+		"/replays/compare",
+		describeRoute({
+			tags: ["Replays"],
+			summary: "Compare 2–8 Replays",
+			description:
+				"Returns the full detail rows for the supplied replay ids, preserving caller order so the UI's left-to-right columns match the user's selection.",
+			requestBody: {
+				required: true,
+				content: {
+					"application/json": { schema: openApiSchemaFromValibot(CompareReplaysRequestSchema) },
+				},
+			},
+			responses: {
+				"200": {
+					description: "Comparison payload.",
+					content: {
+						"application/json": {
+							schema: openApiSchemaFromValibot(CompareReplaysResponseSchema),
+						},
+					},
+				},
+				"400": {
+					description: "Body failed validation or selection count out of range.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description: "One of the ids does not exist.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
+					},
+				},
+				"413": {
+					description: "Body exceeded byte cap.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(BodyTooLargeResponseSchema) },
+					},
+				},
+			},
+		}),
+		bodyLimit({
+			maxSize: MAX_COMPARE_BODY_BYTES,
+			onError: () => {
+				throw new ReplayBodyTooLargeError(MAX_COMPARE_BODY_BYTES);
+			},
+		}),
+		async (c) => {
+			let raw: unknown;
+			try {
+				raw = await c.req.json();
+			} catch (cause) {
+				throw new MalformedReplayBodyError({ cause });
 			}
-			const row = getReplayRun(store.db, idCheck.output);
-			if (row === undefined) {
-				throw new ReplayRunNotFoundError(idCheck.output);
+			const parsed = v.safeParse(CompareReplaysRequestSchema, raw);
+			if (!parsed.success) {
+				// Distinguish min/max range failures so the client can render a
+				// targeted "pick 2–8" message instead of a generic 400. We use
+				// a discriminating Valibot schema (object with a replayIds
+				// array) rather than a cast — the safeParse narrows for free.
+				const rawIdsCheck = v.safeParse(v.object({ replayIds: v.array(v.unknown()) }), raw);
+				if (rawIdsCheck.success) {
+					const len = rawIdsCheck.output.replayIds.length;
+					if (len < COMPARE_MIN || len > COMPARE_MAX) {
+						throw new InvalidCompareSelectionError(len, COMPARE_MIN, COMPARE_MAX);
+					}
+				}
+				throw new InvalidReplayRequestError(parsed.issues);
 			}
-			return c.json(toReplayRunResponse(row));
+			return c.json(compareReplays(store, parsed.output.replayIds));
 		},
 	);
 
 	router.onError((err, c) =>
 		match(err)
 			.with(
-				P.union(P.instanceOf(InvalidReplayRequestError), P.instanceOf(MalformedBodyError)),
+				P.union(P.instanceOf(InvalidReplayRequestError), P.instanceOf(MalformedReplayBodyError)),
 				(e) => c.json({ error: "invalid_replay_request", issues: sanitizeIssues(e.issues) }, 400),
-			)
-			.with(P.instanceOf(BodyTooLargeError), (e) =>
-				c.json({ error: "body_too_large", maxBytes: e.maxBytes }, 413),
 			)
 			.with(P.instanceOf(InvalidReplayIdError), (e) =>
 				c.json({ error: "invalid_replay_id", issues: sanitizeIssues(e.issues) }, 400),
 			)
-			.with(P.instanceOf(InvalidSessionIdError), (e) =>
-				c.json({ error: "invalid_session_id", issues: sanitizeIssues(e.issues) }, 400),
+			.with(P.instanceOf(InvalidCompareSelectionError), (e) =>
+				c.json({ error: "invalid_compare_selection", count: e.count, min: e.min, max: e.max }, 400),
 			)
-			.with(P.instanceOf(SourceSessionNotFoundError), (e) =>
-				c.json({ error: "source_session_not_found", sessionId: e.sessionId }, 404),
+			.with(P.instanceOf(ReplayBodyTooLargeError), (e) =>
+				c.json({ error: "body_too_large", maxBytes: e.maxBytes }, 413),
 			)
-			.with(P.instanceOf(SessionNotFoundError), (e) =>
-				c.json({ error: "session_not_found", sessionId: e.sessionId }, 404),
+			.with(P.instanceOf(ConversationVersionNotFoundError), (e) =>
+				c.json(
+					{
+						error: "conversation_not_found",
+						conversationId: e.conversationId,
+						conversationVersion: e.conversationVersion,
+					},
+					404,
+				),
 			)
-			.with(P.instanceOf(ReplayRunNotFoundError), (e) =>
+			.with(P.instanceOf(ReplayNotFoundError), (e) =>
 				c.json({ error: "replay_not_found", replayId: e.replayId }, 404),
 			)
 			.otherwise((e) => {
-				console.error("unhandled error during replay", e);
+				console.error("unhandled error during replay request", e);
 				return c.json({ error: "internal_error" }, 500);
 			}),
 	);
 
 	return router;
+}
+
+function parseReplayId(raw: string): string {
+	const idCheck = v.safeParse(ReplayIdSchema, raw);
+	if (!idCheck.success) throw new InvalidReplayIdError(idCheck.issues);
+	return idCheck.output;
 }

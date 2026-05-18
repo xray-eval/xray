@@ -1,349 +1,314 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, useNavigate } from "@tanstack/react-router";
-import { AlertCircle, ChevronRight, Play, Zap, ZapOff } from "lucide-react";
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useParams } from "@tanstack/react-router";
 import { match } from "ts-pattern";
 
+import { Badge } from "@/client/components/ui/badge.tsx";
+import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
+import { Skeleton } from "@/client/components/ui/skeleton.tsx";
+
+import { getReplay, replayAudioUrl, turnAudioUrl } from "../api/api.ts";
 import type {
-	Conversation,
-	ConversationToolCall,
-	ConversationTurn,
-} from "@/server/sessions/sessions.types.ts";
-
-import { fetchConversation } from "../api/conversation-api.ts";
-import { TurnAudio } from "../audio/turn-audio.tsx";
-import { Badge } from "../components/ui/badge.tsx";
-import { Button } from "../components/ui/button.tsx";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "../components/ui/card.tsx";
-import { Separator } from "../components/ui/separator.tsx";
-import { Skeleton } from "../components/ui/skeleton.tsx";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs.tsx";
-import { formatAbsolute, formatDuration } from "../format.ts";
-import { ReplayModal } from "../replays/replay-modal.tsx";
-import { BackToSessionsLink } from "../router/back-link.tsx";
-import type { InspectorTab } from "../router/router.ts";
-import { INSPECTOR_TABS } from "../router/router.ts";
-import { sourceBadgeVariant } from "../source-badge.ts";
-import { ConversationLoadError } from "./errors.ts";
-import { ReplaysTab } from "./replays-tab/replays-tab.tsx";
-
-const route = getRouteApi("/sessions/$sessionId");
-
-type ConversationQueryKey = readonly ["conversation", { sessionId: string }];
+	AssertionResponse,
+	ModelUsageResponse,
+	ReplayDetailResponse,
+	ReplayTurnResponse,
+	SpanResponse,
+	ToolCallResponse,
+} from "../api/api.types.ts";
+import { AudioWithCaptions } from "../audio/audio-with-captions.tsx";
+import { formatTimestamp } from "../format.ts";
 
 export function Inspector() {
-	const { sessionId } = route.useParams();
-	const navigate = useNavigate();
-	const queryClient = useQueryClient();
-	const [replayOpen, setReplayOpen] = useState(false);
-	const query = useQuery<Conversation, Error, Conversation, ConversationQueryKey>({
-		queryKey: ["conversation", { sessionId }] as const,
-		queryFn: ({ signal }) => fetchConversation({ sessionId, signal }),
+	const { replayId } = useParams({ from: "/replays/$replayId" });
+	const query = useQuery({
+		queryKey: ["replays", { id: replayId }],
+		queryFn: ({ signal }) => getReplay(replayId, signal),
 	});
 
 	return (
-		<>
-			<section
-				aria-label="Session"
-				aria-busy={query.isPending}
-				aria-live="polite"
-				className="space-y-6"
-			>
-				<header className="flex items-baseline justify-between gap-4">
-					<BackToSessionsLink />
-					{query.status === "success" && (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => setReplayOpen(true)}
-							aria-label={`Replay session ${query.data.agentId}`}
-						>
-							<Play />
-							Replay
-						</Button>
-					)}
-				</header>
+		<section>
+			<header className="mb-6 flex items-center justify-between">
+				<div>
+					<Link
+						to="/conversations/$conversationId"
+						params={{ conversationId: query.data?.conversationId ?? "" }}
+						className="text-sm text-muted-foreground hover:underline"
+					>
+						← Conversation
+					</Link>
+					<h2 className="mt-2 text-2xl font-semibold">Replay</h2>
+					<p className="font-mono text-xs text-muted-foreground">{replayId}</p>
+				</div>
+			</header>
 
-				{match(query)
-					.with({ status: "pending" }, () => <LoadingState />)
-					.with({ status: "error" }, (q) => (
-						<ErrorState error={q.error} onRetry={() => query.refetch()} />
-					))
-					.with({ status: "success" }, (q) => (
-						<InspectorTabs conversation={q.data} sessionId={sessionId} />
-					))
-					.exhaustive()}
-			</section>
-			{replayOpen && (
-				<ReplayModal
-					sourceSessionId={sessionId}
-					onClose={() => setReplayOpen(false)}
-					onStarted={(run) => {
-						setReplayOpen(false);
-						void queryClient.invalidateQueries({ queryKey: ["replays", { sessionId }] });
-						void navigate({ to: "/replays/$replayId", params: { replayId: run.id } });
-					}}
-				/>
+			{match(query)
+				.with({ status: "pending" }, () => <Skeleton className="h-96 w-full" />)
+				.with({ status: "error" }, () => (
+					<p role="alert" className="text-destructive">
+						Failed to load replay.
+					</p>
+				))
+				.with({ status: "success" }, (q) => <ReplayBody replay={q.data} />)
+				.exhaustive()}
+		</section>
+	);
+}
+
+function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
+	return (
+		<div className="grid gap-6 lg:grid-cols-3">
+			<div className="lg:col-span-2 grid gap-6">
+				<HeaderCard replay={replay} />
+				<TranscriptCard replay={replay} />
+				<SpansCard spans={replay.spans} />
+			</div>
+			<aside className="grid gap-6">
+				<JudgeCard replay={replay} />
+				<RunConfigCard replay={replay} />
+				<ToolCallsCard toolCalls={replay.toolCalls} />
+				<ModelUsageCard usage={replay.modelUsage} />
+				<AssertionsCard assertions={replay.assertions} />
+			</aside>
+		</div>
+	);
+}
+
+function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle className="text-base">Turns</CardTitle>
+			</CardHeader>
+			<CardContent>
+				{replay.turns.length === 0 ? (
+					<p className="text-sm text-muted-foreground">No per-turn data recorded.</p>
+				) : (
+					<ol className="grid gap-3">
+						{replay.turns.map((turn) => (
+							<li key={`${turn.idx}-${turn.role}`}>
+								<TurnBlock replay={replay} turn={turn} />
+							</li>
+						))}
+					</ol>
+				)}
+			</CardContent>
+		</Card>
+	);
+}
+
+function TurnBlock({ replay, turn }: { replay: ReplayDetailResponse; turn: ReplayTurnResponse }) {
+	return (
+		<div className="rounded border p-3">
+			<div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+				<Badge variant={turn.role === "user" ? "secondary" : "default"}>{turn.role}</Badge>
+				<span>#{turn.idx}</span>
+				{turn.key !== null && <span>key: {turn.key}</span>}
+				{turn.startedAt !== null && <span>· {formatTimestamp(turn.startedAt)}</span>}
+			</div>
+			{turn.transcript !== null && <p className="whitespace-pre-wrap text-sm">{turn.transcript}</p>}
+			{turn.audioPath !== null && (
+				<div className="mt-2">
+					<AudioWithCaptions
+						src={turnAudioUrl(replay.id, turn.idx)}
+						captionText={turn.transcript}
+						className="w-full"
+					/>
+				</div>
 			)}
-		</>
+		</div>
 	);
 }
 
-function isInspectorTab(value: string): value is InspectorTab {
-	return INSPECTOR_TABS.some((t) => t === value);
-}
-
-function InspectorTabs({
-	conversation,
-	sessionId,
-}: {
-	conversation: Conversation;
-	sessionId: string;
-}) {
-	const { tab = "transcript" } = route.useSearch();
-	const navigate = useNavigate();
+function SpansCard({ spans }: { spans: SpanResponse[] }) {
 	return (
-		<Tabs
-			value={tab}
-			onValueChange={(next) => {
-				if (!isInspectorTab(next)) return;
-				void navigate({
-					to: "/sessions/$sessionId",
-					params: { sessionId },
-					search: next === "transcript" ? {} : { tab: next },
-					replace: true,
-				});
-			}}
-			className="space-y-6"
-		>
-			<TabsList>
-				<TabsTrigger value="transcript">Transcript</TabsTrigger>
-				<TabsTrigger value="replays">Replays</TabsTrigger>
-			</TabsList>
-			<TabsContent value="transcript">
-				<Transcript conversation={conversation} />
-			</TabsContent>
-			<TabsContent value="replays">
-				<ReplaysTab sessionId={sessionId} />
-			</TabsContent>
-		</Tabs>
+		<Card>
+			<CardHeader>
+				<CardTitle className="text-base">Span tree</CardTitle>
+			</CardHeader>
+			<CardContent>
+				{spans.length === 0 ? (
+					<p className="text-sm text-muted-foreground">
+						No recognized spans for this replay. xray accepts spans whose vocabulary it knows — see{" "}
+						<code>docs/WIRE.md</code> for the list.
+					</p>
+				) : (
+					<ul className="grid gap-2 text-xs">
+						{spans.map((s) => (
+							<li key={s.id} className="rounded border p-2 font-mono">
+								<div className="flex items-center justify-between">
+									<span className="truncate">{s.name}</span>
+									<Badge variant="outline">{s.vocabulary}</Badge>
+								</div>
+								<div className="text-muted-foreground">
+									{formatTimestamp(s.startedAt)} → {formatTimestamp(s.endedAt)}
+								</div>
+							</li>
+						))}
+					</ul>
+				)}
+			</CardContent>
+		</Card>
 	);
 }
 
-function Transcript({ conversation }: { conversation: Conversation }) {
+function JudgeCard({ replay }: { replay: ReplayDetailResponse }) {
+	if (replay.judge.status === null) return null;
 	return (
-		<div className="space-y-6">
-			<TranscriptHeader conversation={conversation} />
-			<Separator />
-			{conversation.turns.length === 0 ? (
-				<EmptyTranscript />
-			) : (
-				<ol className="space-y-4">
-					{conversation.turns.map((turn) => (
-						<li key={turn.id}>
-							<TurnCard sessionId={conversation.id} turn={turn} />
+		<Card>
+			<CardHeader>
+				<CardTitle className="text-base">Judge</CardTitle>
+			</CardHeader>
+			<CardContent className="grid gap-2 text-sm">
+				<div>
+					<Badge>{replay.judge.status}</Badge>
+					{replay.judge.score !== null && <span className="ml-2">score: {replay.judge.score}</span>}
+				</div>
+				{replay.judge.reason !== null && (
+					<p className="text-muted-foreground">{replay.judge.reason}</p>
+				)}
+				{replay.judge.error !== null && (
+					<p className="text-destructive">errored: {replay.judge.error}</p>
+				)}
+			</CardContent>
+		</Card>
+	);
+}
+
+function RunConfigCard({ replay }: { replay: ReplayDetailResponse }) {
+	if (replay.runConfig === null || replay.runConfig === undefined) return null;
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle className="text-base">Run config</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<pre className="overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">
+					{JSON.stringify(replay.runConfig, null, 2)}
+				</pre>
+			</CardContent>
+		</Card>
+	);
+}
+
+function ToolCallsCard({ toolCalls }: { toolCalls: ToolCallResponse[] }) {
+	if (toolCalls.length === 0) return null;
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle className="text-base">Tool calls</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<ul className="grid gap-2 text-xs">
+					{toolCalls.map((tc) => (
+						<li key={tc.id} className="rounded border p-2 font-mono">
+							<div className="font-medium">{tc.name}</div>
+							{tc.argsJson !== null && (
+								<div className="text-muted-foreground truncate">args: {tc.argsJson}</div>
+							)}
+							{tc.resultJson !== null && (
+								<div className="text-muted-foreground truncate">result: {tc.resultJson}</div>
+							)}
+							{tc.latencyMs !== null && (
+								<div className="text-muted-foreground">{tc.latencyMs}ms</div>
+							)}
 						</li>
 					))}
-				</ol>
-			)}
-		</div>
-	);
-}
-
-function TranscriptHeader({ conversation }: { conversation: Conversation }) {
-	return (
-		<div className="space-y-2">
-			<h2 className="text-2xl font-semibold tracking-tight">{conversation.agentId}</h2>
-			<dl className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5 text-sm">
-				<div className="flex items-baseline gap-2">
-					<dt className="text-muted-foreground">Session</dt>
-					<dd className="font-mono">{conversation.id}</dd>
-				</div>
-				<div className="flex items-baseline gap-2">
-					<dt className="text-muted-foreground">Started</dt>
-					<dd>
-						<time dateTime={conversation.startedAt}>{formatAbsolute(conversation.startedAt)}</time>
-					</dd>
-				</div>
-				<div className="flex items-baseline gap-2">
-					<dt className="text-muted-foreground">Duration</dt>
-					<dd>{formatDuration(conversation.durationMs)}</dd>
-				</div>
-				<div className="flex items-baseline gap-2">
-					<dt className="sr-only">Source</dt>
-					<dd>
-						<Badge variant={sourceBadgeVariant(conversation.source)}>{conversation.source}</Badge>
-					</dd>
-				</div>
-			</dl>
-		</div>
-	);
-}
-
-function TurnCard({ sessionId, turn }: { sessionId: string; turn: ConversationTurn }) {
-	const interruptedSuffix = turn.interruptedAtMs !== null ? ` at ${turn.interruptedAtMs}ms` : "";
-	return (
-		<Card>
-			<CardHeader>
-				<CardDescription className="flex flex-wrap items-center gap-2">
-					<RoleBadge role={turn.role} />
-					<time dateTime={turn.timestamp} className="text-muted-foreground text-xs">
-						{formatAbsolute(turn.timestamp)}
-					</time>
-					{turn.responseLatencyMs !== null && (
-						<Badge variant="outline" aria-label={`Response latency ${turn.responseLatencyMs}ms`}>
-							<Zap />
-							{turn.responseLatencyMs}ms
-						</Badge>
-					)}
-					{turn.interrupted === true && (
-						<Badge variant="destructive" aria-label={`Interrupted${interruptedSuffix}`}>
-							<ZapOff />
-							interrupted{interruptedSuffix}
-						</Badge>
-					)}
-				</CardDescription>
-				<CardTitle className="text-base font-medium whitespace-pre-wrap break-words">
-					{turn.text}
-				</CardTitle>
-				{turn.audioPath !== null && <TurnAudio sessionId={sessionId} turn={turn} />}
-			</CardHeader>
-			{turn.toolCalls.length > 0 && (
-				<CardContent>
-					<ToolCallList toolCalls={turn.toolCalls} />
-				</CardContent>
-			)}
+				</ul>
+			</CardContent>
 		</Card>
 	);
 }
 
-function RoleBadge({ role }: { role: ConversationTurn["role"] }) {
-	const variant: "default" | "secondary" | "outline" = match(role)
-		.with("agent", () => "default" as const)
-		.with("user", () => "secondary" as const)
-		.with("tool", () => "outline" as const)
-		.with("system", () => "outline" as const)
-		.exhaustive();
-	return <Badge variant={variant}>{role}</Badge>;
-}
-
-function ToolCallList({ toolCalls }: { toolCalls: readonly ConversationToolCall[] }) {
+function ModelUsageCard({ usage }: { usage: ModelUsageResponse[] }) {
+	if (usage.length === 0) return null;
 	return (
-		<ul className="space-y-2">
-			{toolCalls.map((call) => (
-				<li key={call.idx}>
-					<ToolCallBlock call={call} />
-				</li>
-			))}
-		</ul>
+		<Card>
+			<CardHeader>
+				<CardTitle className="text-base">Model usage</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<ul className="grid gap-2 text-xs">
+					{usage.map((u) => (
+						<li key={u.id} className="rounded border p-2">
+							<div className="flex items-center justify-between">
+								<span className="font-mono">{u.model ?? "(unknown)"}</span>
+								<Badge variant="outline">{u.provider ?? "?"}</Badge>
+							</div>
+							<div className="text-muted-foreground">
+								in: {u.inputTokens ?? "?"} · out: {u.outputTokens ?? "?"} · total:{" "}
+								{u.totalTokens ?? "?"}
+							</div>
+						</li>
+					))}
+				</ul>
+			</CardContent>
+		</Card>
 	);
 }
 
-function ToolCallBlock({ call }: { call: ConversationToolCall }) {
+function AssertionsCard({ assertions }: { assertions: AssertionResponse[] }) {
+	if (assertions.length === 0) return null;
 	return (
-		<details className="group rounded-md border border-border bg-muted/30 p-3 text-sm">
-			<summary className="flex cursor-pointer items-center gap-2 [&::-webkit-details-marker]:hidden">
-				<ChevronRight className="size-4 transition-transform group-open:rotate-90" />
-				<span className="font-mono">{call.name}</span>
-				{call.latencyMs !== null && (
-					<Badge variant="outline" className="ml-auto">
-						{call.latencyMs}ms
-					</Badge>
+		<Card>
+			<CardHeader>
+				<CardTitle className="text-base">Assertions</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<ul className="grid gap-2 text-xs">
+					{assertions.map((a) => (
+						<li key={a.id} className="flex items-center justify-between rounded border p-2">
+							<span>
+								#{a.turnIdx} {a.name}
+							</span>
+							<Badge
+								variant={
+									a.status === "passed"
+										? "default"
+										: a.status === "failed"
+											? "destructive"
+											: "secondary"
+								}
+							>
+								{a.status}
+							</Badge>
+						</li>
+					))}
+				</ul>
+			</CardContent>
+		</Card>
+	);
+}
+
+function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle className="flex items-center justify-between gap-3 text-base">
+					<span>Status</span>
+					{match(replay.status)
+						.with("running", () => <Badge variant="secondary">running</Badge>)
+						.with("completed", () => <Badge>completed</Badge>)
+						.with("failed", () => (
+							<Badge variant="destructive" title={replay.failureReason ?? ""}>
+								failed{replay.failureReason !== null ? `: ${replay.failureReason}` : ""}
+							</Badge>
+						))
+						.exhaustive()}
+				</CardTitle>
+			</CardHeader>
+			<CardContent className="text-sm text-muted-foreground">
+				<div>Started {formatTimestamp(replay.startedAt)}</div>
+				{replay.finishedAt !== null && <div>Finished {formatTimestamp(replay.finishedAt)}</div>}
+				{replay.audioPath !== null && (
+					<div className="mt-3">
+						<AudioWithCaptions
+							src={replayAudioUrl(replay.id)}
+							captionText={replay.transcript}
+							className="w-full"
+						/>
+					</div>
 				)}
-			</summary>
-			<div className="mt-3 space-y-3 pl-6">
-				<ToolCallField label="args" value={call.args} />
-				<ToolCallField label="result" value={call.result} />
-			</div>
-		</details>
-	);
-}
-
-function ToolCallField({ label, value }: { label: string; value: unknown }) {
-	return (
-		<div className="space-y-1">
-			<div className="text-muted-foreground text-xs uppercase tracking-wider">{label}</div>
-			<pre className="overflow-x-auto rounded bg-background p-2 font-mono text-xs">
-				{prettyPrintJson(value)}
-			</pre>
-		</div>
-	);
-}
-
-function LoadingState() {
-	return (
-		<div className="space-y-4">
-			<span className="sr-only">Loading transcript…</span>
-			<div aria-hidden="true" className="space-y-4">
-				<Skeleton className="h-7 w-48" />
-				<Skeleton className="h-4 w-72" />
-				<Separator />
-				{[0, 1, 2].map((i) => (
-					<Card key={i}>
-						<CardHeader>
-							<Skeleton className="h-4 w-24" />
-							<Skeleton className="h-4 w-64" />
-						</CardHeader>
-					</Card>
-				))}
-			</div>
-		</div>
-	);
-}
-
-interface ErrorStateProps {
-	error: Error;
-	onRetry: () => void;
-}
-
-function ErrorState({ error, onRetry }: ErrorStateProps) {
-	const notFound = error instanceof ConversationLoadError && error.status === 404;
-	return (
-		// role="alert" on the whole card so SR announces title + description
-		// together when the error mounts — not just the retry footer.
-		<Card role="alert">
-			<CardHeader>
-				<CardTitle className="flex items-center gap-2 text-base">
-					<AlertCircle className="text-destructive size-4" />
-					{notFound ? "Session not found." : "Failed to load transcript."}
-				</CardTitle>
-				<CardDescription className="break-all">
-					{notFound
-						? "The session id may have been removed or never existed. Go back to the list and pick another."
-						: error.message}
-				</CardDescription>
-			</CardHeader>
-			{!notFound && (
-				<CardContent className="flex justify-end">
-					<Button size="sm" variant="outline" onClick={onRetry}>
-						Try again
-					</Button>
-				</CardContent>
-			)}
+			</CardContent>
 		</Card>
 	);
-}
-
-function EmptyTranscript() {
-	return (
-		<Card>
-			<CardHeader className="items-center text-center">
-				<CardTitle>No turns yet.</CardTitle>
-				<CardDescription>
-					This session has metadata but no recorded turns. POST a <code>turn_completed</code> event
-					to populate it.
-				</CardDescription>
-			</CardHeader>
-		</Card>
-	);
-}
-
-function prettyPrintJson(value: unknown): string {
-	return JSON.stringify(value, null, 2);
 }

@@ -1,6 +1,12 @@
 import type { Store } from "./store.ts";
 import { openStore } from "./store.ts";
-import type { ReplayRunInput, Session, ToolCallInput, TurnInput } from "./types.ts";
+import type {
+	ConversationInput,
+	ReplayInput,
+	ReplayMetaInput,
+	ReplayTurnInput,
+	SpanInput,
+} from "./types.ts";
 
 /**
  * In-memory store for a single test. Each call returns a fresh DB — no
@@ -10,68 +16,79 @@ export function makeTempStore(): Store {
 	return openStore({ path: ":memory:" });
 }
 
-let sessionCounter = 0;
-let turnCounter = 0;
+let conversationCounter = 0;
 let replayCounter = 0;
+let spanCounter = 0;
 
-export function makeSession(overrides: Partial<Session> = {}): Session {
-	sessionCounter += 1;
+export function makeConversationInput(
+	overrides: Partial<ConversationInput> = {},
+): ConversationInput {
+	conversationCounter += 1;
 	return {
-		id: `sess-${sessionCounter}`,
-		source: "ingest",
-		provider: null,
-		agentId: "agent-1",
-		startedAt: "2026-05-16T12:00:00.000Z",
-		endedAt: null,
-		durationMs: null,
+		id: `conv-${conversationCounter}`,
+		version: "v0001",
+		turnsJson: JSON.stringify([{ role: "user", text: "hi", key: "u0" }]),
+		title: null,
+		createdAt: "2026-05-16T12:00:00.000Z",
 		...overrides,
 	};
 }
 
-export function makeTurnInput(overrides: Partial<TurnInput> = {}): TurnInput {
-	turnCounter += 1;
-	return {
-		id: `turn-${turnCounter}`,
-		idx: 0,
-		role: "user",
-		text: "hello",
-		ts: "2026-05-16T12:00:01.000Z",
-		activeNodeId: null,
-		edgeFiredId: null,
-		edgeReasoning: null,
-		promptSeen: null,
-		responseLatencyMs: null,
-		interrupted: null,
-		interruptedAtMs: null,
-		...overrides,
-	};
-}
-
-export function makeToolCallInput(overrides: Partial<ToolCallInput> = {}): ToolCallInput {
-	return {
-		idx: 0,
-		name: "lookup",
-		argsJson: '{"q":"hello"}',
-		resultJson: null,
-		latencyMs: null,
-		...overrides,
-	};
-}
-
-export function makeReplayRunInput(overrides: Partial<ReplayRunInput> = {}): ReplayRunInput {
+export function makeReplayInput(overrides: Partial<ReplayInput> = {}): ReplayInput {
 	replayCounter += 1;
 	return {
 		id: `replay-${replayCounter}`,
-		sourceSessionId: "sess-1",
-		targetSessionId: `target-${replayCounter}`,
-		status: "pending",
-		mode: "text",
-		webhookUrl: "https://example.test/webhook",
-		progressCompleted: 0,
-		progressTotal: 0,
+		conversationId: "conv-1",
+		conversationVersion: "v0001",
+		status: "running",
+		failureReason: null,
 		startedAt: "2026-05-16T12:00:00.000Z",
 		finishedAt: null,
-		error: null,
+		audioPath: null,
+		transcript: null,
+		...overrides,
+	};
+}
+
+export function makeReplayMetaInput(overrides: Partial<ReplayMetaInput> = {}): ReplayMetaInput {
+	return {
+		replayId: `replay-${replayCounter}`,
+		modality: "voice",
+		runConfigJson: null,
+		judgeStatus: null,
+		judgeScore: null,
+		judgeReason: null,
+		judgeError: null,
+		...overrides,
+	};
+}
+
+export function makeReplayTurnInput(overrides: Partial<ReplayTurnInput> = {}): ReplayTurnInput {
+	return {
+		replayId: `replay-${replayCounter}`,
+		idx: 0,
+		role: "user",
+		key: null,
+		startedAt: "2026-05-16T12:00:01.000Z",
+		endedAt: "2026-05-16T12:00:02.000Z",
+		transcript: "hello",
+		audioPath: null,
+		...overrides,
+	};
+}
+
+export function makeSpanInput(overrides: Partial<SpanInput> = {}): SpanInput {
+	spanCounter += 1;
+	return {
+		replayId: `replay-${replayCounter}`,
+		traceId: `trace-${spanCounter}`,
+		spanId: `span-${spanCounter}`,
+		parentSpanId: null,
+		name: "test.span",
+		vocabulary: "xray",
+		startedAt: "2026-05-16T12:00:01.000Z",
+		endedAt: "2026-05-16T12:00:02.000Z",
+		attributesJson: "{}",
 		...overrides,
 	};
 }

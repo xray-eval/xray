@@ -18,8 +18,8 @@ For bug fixes the loop is identical: a failing regression test that reproduces t
 
 ## What "test first" means in practice
 
-- **Adapter implementations** (`src/adapters/<provider>/adapter.ts`): test the adapter against a recorded fixture or a deterministic mock of the provider's SDK. Live API calls have no place in the test suite.
-- **Pure logic** (path-highlighting, edge-fired detection, prompt formatting): unit tests with no DOM, no React, no I/O.
+- **OTLP vocabularies** (`src/server/otlp/vocabularies/<name>.ts`): test each `match(span, resource)` against synthetic projected spans built with the slice's test-utils. The vocabulary registry stays a pure function — no network in tests.
+- **Pure logic** (turn-fingerprint canonicalization, attribute flattening, etc.): unit tests with no DOM, no React, no I/O.
 - **React components**: test what a user sees and does — render via `@testing-library/react`, query by role/text, click via `userEvent`. No snapshot tests for non-trivial components (they rot, they don't catch regressions).
 - **Hono routes**: invoke the Hono `app` directly with a `Request`; do not spin up a real HTTP server.
 

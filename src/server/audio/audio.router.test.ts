@@ -8,7 +8,7 @@ import {
 	audioUrl,
 	fakeAudioBytes,
 	makeTempAudioRoot,
-	seedSessionWithTurn,
+	seedReplayWithTurn,
 } from "./audio.test-utils.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
@@ -18,9 +18,9 @@ const UploadResponseBodySchema = v.object({
 });
 
 const NotFoundBodySchema = v.object({
-	error: v.literal("audio_not_found"),
-	sessionId: v.string(),
-	turnIdx: v.number(),
+	error: v.string(),
+	replayId: v.optional(v.string()),
+	turnIdx: v.optional(v.number()),
 });
 
 let store: Store;
@@ -38,39 +38,39 @@ afterEach(() => {
 	audio.dispose();
 });
 
-async function upload(
-	sessionId: string,
+async function uploadTurn(
+	replayId: string,
 	turnIdx: number,
 	bytes: Uint8Array<ArrayBuffer>,
 	contentType = "audio/opus",
 ): Promise<Response> {
-	return app.request(audioUrl(sessionId, turnIdx), {
+	return app.request(audioUrl(replayId, turnIdx), {
 		method: "POST",
 		headers: { "Content-Type": contentType },
 		body: bytes,
 	});
 }
 
-describe("POST /v1/sessions/:id/turns/:idx/audio — happy path", () => {
-	it("accepts an upload, stamps audio_path, and returns the relative path", async () => {
-		const { sessionId, turnIdx } = seedSessionWithTurn(store);
+describe("POST /v1/replays/:id/turns/:idx/audio — happy path", () => {
+	it("accepts an upload and returns the relative path", async () => {
+		const { replayId, turnIdx } = seedReplayWithTurn(store);
 		const bytes = fakeAudioBytes();
 
-		const res = await upload(sessionId, turnIdx, bytes);
+		const res = await uploadTurn(replayId, turnIdx, bytes);
 		expect(res.status).toBe(200);
 
 		const body = v.parse(UploadResponseBodySchema, await res.json());
-		expect(body.audioPath).toBe(`${sessionId}/${turnIdx}.opus`);
+		expect(body.audioPath).toBe(`${replayId}/turns/${turnIdx}.opus`);
 	});
 
 	it("upload→retrieve roundtrip preserves bytes exactly", async () => {
-		const { sessionId, turnIdx } = seedSessionWithTurn(store);
+		const { replayId, turnIdx } = seedReplayWithTurn(store);
 		const bytes = fakeAudioBytes(11);
 
-		const uploadRes = await upload(sessionId, turnIdx, bytes, "audio/webm");
+		const uploadRes = await uploadTurn(replayId, turnIdx, bytes, "audio/webm");
 		expect(uploadRes.status).toBe(200);
 
-		const getRes = await app.request(audioUrl(sessionId, turnIdx));
+		const getRes = await app.request(audioUrl(replayId, turnIdx));
 		expect(getRes.status).toBe(200);
 		expect(getRes.headers.get("Content-Type")).toBe("audio/webm");
 
@@ -79,22 +79,22 @@ describe("POST /v1/sessions/:id/turns/:idx/audio — happy path", () => {
 	});
 
 	it("strips codec parameters from the Content-Type before lookup", async () => {
-		const { sessionId, turnIdx } = seedSessionWithTurn(store);
-		const res = await upload(sessionId, turnIdx, fakeAudioBytes(), 'audio/webm; codecs="opus"');
+		const { replayId, turnIdx } = seedReplayWithTurn(store);
+		const res = await uploadTurn(replayId, turnIdx, fakeAudioBytes(), 'audio/webm; codecs="opus"');
 		expect(res.status).toBe(200);
 	});
 });
 
-describe("POST /v1/sessions/:id/turns/:idx/audio — rejections", () => {
+describe("POST /v1/replays/:id/turns/:idx/audio — rejections", () => {
 	it("rejects an unsupported content type with 415", async () => {
-		const { sessionId, turnIdx } = seedSessionWithTurn(store);
-		const res = await upload(sessionId, turnIdx, fakeAudioBytes(), "application/octet-stream");
+		const { replayId, turnIdx } = seedReplayWithTurn(store);
+		const res = await uploadTurn(replayId, turnIdx, fakeAudioBytes(), "application/octet-stream");
 		expect(res.status).toBe(415);
 	});
 
 	it("rejects a missing content type with 415", async () => {
-		const { sessionId, turnIdx } = seedSessionWithTurn(store);
-		const res = await app.request(audioUrl(sessionId, turnIdx), {
+		const { replayId, turnIdx } = seedReplayWithTurn(store);
+		const res = await app.request(audioUrl(replayId, turnIdx), {
 			method: "POST",
 			body: fakeAudioBytes(),
 		});
@@ -102,15 +102,15 @@ describe("POST /v1/sessions/:id/turns/:idx/audio — rejections", () => {
 	});
 
 	it("rejects an unknown turn idx with 404", async () => {
-		seedSessionWithTurn(store, { sessionId: "sess-A", turnIdx: 0 });
-		const res = await upload("sess-A", 99, fakeAudioBytes());
+		const { replayId } = seedReplayWithTurn(store);
+		const res = await uploadTurn(replayId, 99, fakeAudioBytes());
 		expect(res.status).toBe(404);
 		const body = v.parse(NotFoundBodySchema, await res.json());
 		expect(body.turnIdx).toBe(99);
 	});
 
-	it("rejects a malformed session id with 400", async () => {
-		const res = await app.request("http://test.local/v1/sessions/has%20space/turns/0/audio", {
+	it("rejects a non-uuid replay id with 400", async () => {
+		const res = await app.request("http://test.local/v1/replays/not-a-uuid/turns/0/audio", {
 			method: "POST",
 			headers: { "Content-Type": "audio/opus" },
 			body: fakeAudioBytes(),
@@ -119,8 +119,8 @@ describe("POST /v1/sessions/:id/turns/:idx/audio — rejections", () => {
 	});
 
 	it("rejects a non-numeric turn idx with 400", async () => {
-		const { sessionId } = seedSessionWithTurn(store);
-		const res = await app.request(`http://test.local/v1/sessions/${sessionId}/turns/abc/audio`, {
+		const { replayId } = seedReplayWithTurn(store);
+		const res = await app.request(`http://test.local/v1/replays/${replayId}/turns/abc/audio`, {
 			method: "POST",
 			headers: { "Content-Type": "audio/opus" },
 			body: fakeAudioBytes(),
@@ -129,18 +129,39 @@ describe("POST /v1/sessions/:id/turns/:idx/audio — rejections", () => {
 	});
 });
 
-describe("GET /v1/sessions/:id/turns/:idx/audio — rejections", () => {
+describe("GET /v1/replays/:id/turns/:idx/audio — rejections", () => {
 	it("returns 404 for a turn that exists but has no upload", async () => {
-		const { sessionId, turnIdx } = seedSessionWithTurn(store);
-		const res = await app.request(audioUrl(sessionId, turnIdx));
+		const { replayId, turnIdx } = seedReplayWithTurn(store);
+		const res = await app.request(audioUrl(replayId, turnIdx));
 		expect(res.status).toBe(404);
-		const body = v.parse(NotFoundBodySchema, await res.json());
-		expect(body.sessionId).toBe(sessionId);
-		expect(body.turnIdx).toBe(turnIdx);
 	});
 
-	it("returns 404 for a session that does not exist", async () => {
-		const res = await app.request(audioUrl("missing", 0));
+	it("returns 404 for a replay that does not exist", async () => {
+		const res = await app.request(audioUrl("00000000-0000-0000-0000-000000000099", 0));
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("POST/GET /v1/replays/:id/audio — full-replay mixdown", () => {
+	it("uploads and serves the full-replay mixdown", async () => {
+		const { replayId } = seedReplayWithTurn(store);
+		const bytes = fakeAudioBytes(7);
+		const upRes = await app.request(audioUrl(replayId), {
+			method: "POST",
+			headers: { "Content-Type": "audio/wav" },
+			body: bytes,
+		});
+		expect(upRes.status).toBe(200);
+
+		const getRes = await app.request(audioUrl(replayId));
+		expect(getRes.status).toBe(200);
+		const downloaded = new Uint8Array(await getRes.arrayBuffer());
+		expect(downloaded).toEqual(bytes);
+	});
+
+	it("returns 404 if no mixdown has been uploaded", async () => {
+		const { replayId } = seedReplayWithTurn(store);
+		const res = await app.request(audioUrl(replayId));
 		expect(res.status).toBe(404);
 	});
 });

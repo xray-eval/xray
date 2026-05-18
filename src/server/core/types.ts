@@ -17,9 +17,8 @@ import * as v from "valibot";
  *
  * `$schema` is stripped: `@valibot/to-json-schema` stamps every output with
  * `http://json-schema.org/draft-07/schema#`, which is the wrong dialect for
- * an OpenAPI 3.1 doc (2020-12) or AsyncAPI 3.0 doc (2020-12). Spectral and
- * other strict validators flag every embedded schema as dialect-inconsistent
- * with its parent otherwise.
+ * an OpenAPI 3.1 doc (2020-12). Spectral and other strict validators flag
+ * every embedded schema as dialect-inconsistent with its parent otherwise.
  */
 export function openApiSchemaFromValibot(
 	schema: BaseSchema<unknown, unknown, BaseIssue<unknown>>,
@@ -28,15 +27,11 @@ export function openApiSchemaFromValibot(
 	return JSON.parse(JSON.stringify(rest));
 }
 
-// Wire-error response shapes shared across every server slice.
-//
-// Each schema describes a body shape that one or more router's `onError`
-// handler emits via `c.json(...)`. Centralized here because the same envelope
-// (e.g. `{error: "body_too_large", maxBytes: number}`) is produced by four
-// slices — duplicating per-slice would be five copies of the same shape.
-//
-// The `*.types.ts` convention in code-layout §3 keeps slice-owned wire types
-// per slice; this file holds the genuinely cross-slice ones.
+// Wire-error response shapes shared across every server slice. Each schema
+// describes a body shape that one or more `onError` handlers emit via
+// `c.json(...)`. Centralized here because the same envelope (e.g.
+// `{error: "body_too_large", maxBytes: number}`) is produced by several
+// slices — duplicating per-slice would be N copies of the same shape.
 
 const IssuePathStepSchema = v.object({
 	type: v.string(),
@@ -59,23 +54,31 @@ export const ValidationErrorResponseSchema = v.object({
 	issues: v.array(SanitizedIssueSchema),
 });
 
-/** 404 — referenced session does not exist. */
-export const SessionNotFoundResponseSchema = v.object({
+/** 404 — referenced conversation does not exist. */
+export const ConversationNotFoundResponseSchema = v.object({
 	error: v.string(),
-	sessionId: v.string(),
+	conversationId: v.string(),
+	conversationVersion: v.optional(v.string()),
 });
 
-/** 404 — replay run does not exist. */
+/** 404 — replay does not exist. */
 export const ReplayNotFoundResponseSchema = v.object({
 	error: v.string(),
 	replayId: v.string(),
 });
 
-/** 404 — turn id (idx) does not exist on the session. */
+/** 404 — audio for the replay (or one of its turns) is not on disk. */
 export const AudioNotFoundResponseSchema = v.object({
 	error: v.string(),
-	sessionId: v.string(),
-	turnIdx: v.number(),
+	replayId: v.string(),
+	turnIdx: v.optional(v.number()),
+});
+
+/** 409 — `(conversationId, version)` already exists with a different fingerprint. */
+export const ConversationConflictResponseSchema = v.object({
+	error: v.string(),
+	conversationId: v.string(),
+	conversationVersion: v.string(),
 });
 
 /** 413 — request body exceeded the per-route byte cap. */
@@ -84,22 +87,15 @@ export const BodyTooLargeResponseSchema = v.object({
 	maxBytes: v.number(),
 });
 
-/** 415 — uploaded audio used a content-type the store doesn't accept. */
-export const UnsupportedContentTypeResponseSchema = v.object({
-	error: v.string(),
-	contentType: v.nullable(v.string()),
-});
-
-/** 422 — `tool_called` references a turn idx no row has claimed yet. */
-export const UnknownTurnResponseSchema = v.object({
-	error: v.string(),
-	sessionId: v.string(),
-	turnIdx: v.number(),
-});
-
 /** 500 — store-side data corruption or unexpected internal failure. */
 export const StoreFailureResponseSchema = v.object({
 	error: v.string(),
+});
+
+/** 415 — uploaded payload used a content-type the receiver doesn't accept. */
+export const UnsupportedContentTypeResponseSchema = v.object({
+	error: v.string(),
+	contentType: v.nullable(v.string()),
 });
 
 /** Body of every "ok, nothing else to say" response. */

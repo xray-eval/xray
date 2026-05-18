@@ -1,143 +1,199 @@
 import * as v from "valibot";
 
 import {
-	MAX_DURATION_MS,
-	MAX_TOOL_NAME,
-	MAX_TURN_TEXT,
-	RoleSchema,
-	SessionIdSchema,
-} from "@/server/ingest/ingest.types.ts";
-import type { ReplayRunMode, ReplayRunStatus } from "@/server/store/types.ts";
-import { REPLAY_RUN_MODES, REPLAY_RUN_STATUSES } from "@/server/store/types.ts";
+	ConversationIdSchema,
+	ConversationVersionSchema,
+} from "@/server/conversations/conversations.types.ts";
+import {
+	ASSERTION_STATUSES,
+	JUDGE_STATUSES,
+	REPLAY_FAILURE_REASONS,
+	REPLAY_MODALITIES,
+	REPLAY_STATUSES,
+	SPAN_VOCABULARIES,
+	TURN_ROLES,
+} from "@/server/store/types.ts";
 
-// Wire-shared schemas for the agent-replay surface.
-// - Request body for `POST /v1/replays` and response for `GET /v1/replays/:id`.
-// - Webhook contract (what xray POSTs to the user's URL and what it expects back).
-// The webhook shapes are deliberately framework-agnostic: any HTTP server in
-// any language can implement them.
+const MAX_RUN_CONFIG_BYTES = 32 * 1024;
+const MAX_JUDGE_REASON = 4 * 1024;
+const MAX_TRANSCRIPT = 1024 * 1024;
+const MAX_COMPARE_REPLAYS = 8;
+const MIN_COMPARE_REPLAYS = 2;
 
-const MAX_WEBHOOK_URL = 2048;
-const MAX_TOOL_CALLS_PER_TURN = 64;
-const MAX_HISTORY = 1024;
+export const ReplayIdSchema = v.pipe(v.string(), v.regex(/^[0-9a-fA-F-]{36}$/, "Must be a UUID"));
 
-export const ReplayStatusSchema = v.picklist(REPLAY_RUN_STATUSES);
-export type ReplayStatus = ReplayRunStatus;
-
-export const ReplayModeSchema = v.picklist(REPLAY_RUN_MODES);
-export type ReplayMode = ReplayRunMode;
+export const ReplayStatusSchema = v.picklist(REPLAY_STATUSES);
+export const ReplayFailureReasonSchema = v.picklist(REPLAY_FAILURE_REASONS);
+export const ReplayModalitySchema = v.picklist(REPLAY_MODALITIES);
+export const JudgeStatusSchema = v.picklist(JUDGE_STATUSES);
+export const AssertionStatusSchema = v.picklist(ASSERTION_STATUSES);
+export const TurnRoleSchema = v.picklist(TURN_ROLES);
+export const SpanVocabularySchema = v.picklist(SPAN_VOCABULARIES);
 
 /**
- * Body of `POST /v1/replays`. The webhook URL must be parseable as a URL and
- * must use `http:` or `https:` — `file://`, `gopher://`, `javascript:` etc.
- * are rejected at the boundary so the worker's `fetch` can never be coerced
- * into reading from the filesystem or following non-HTTP schemes. SSRF against
- * internal HTTP hosts (cloud metadata, localhost services) is NOT prevented
- * here — see `replays.service.ts` where `redirect: "manual"` blocks chained
- * redirects to internal endpoints, and the README for the residual operator
- * threat model.
+ * Body of `POST /v1/replays`. The SDK posts this before joining the room
+ * so the replay row exists when the first OTLP span arrives. `runConfig`
+ * is a free-form JSON blob — xray stores it opaquely and surfaces it in
+ * the UI for diffs across the same Conversation.
  */
-const HTTP_URL_SCHEMES = new Set(["http:", "https:"]);
 export const CreateReplayRequestSchema = v.object({
-	sourceSessionId: SessionIdSchema,
-	webhookUrl: v.pipe(
-		v.string(),
-		v.url(),
-		v.maxLength(MAX_WEBHOOK_URL),
-		v.check((u) => {
-			try {
-				return HTTP_URL_SCHEMES.has(new URL(u).protocol);
-			} catch {
-				return false;
-			}
-		}, "Webhook URL must use http or https"),
-	),
+	conversationId: ConversationIdSchema,
+	conversationVersion: ConversationVersionSchema,
+	modality: v.optional(ReplayModalitySchema, "voice"),
+	runConfig: v.optional(v.unknown()),
 });
 export type CreateReplayRequest = v.InferOutput<typeof CreateReplayRequestSchema>;
 
 /**
- * Response of `POST /v1/replays` and `GET /v1/replays/:id`. Same shape so a
- * client polling progress doesn't need to branch on which call it's reading.
+ * Body of `PATCH /v1/replays/:id`. Every field is optional; the SDK calls
+ * this multiple times during a run to set status, then judge result, etc.
+ * Validation enforces value vocabularies; the service enforces transition
+ * legality (e.g. can't move out of `failed`).
  */
-export const ReplayRunResponseSchema = v.object({
+export const UpdateReplayRequestSchema = v.object({
+	status: v.optional(ReplayStatusSchema),
+	failureReason: v.optional(v.nullable(ReplayFailureReasonSchema)),
+	finishedAt: v.optional(v.nullable(v.pipe(v.string(), v.isoTimestamp()))),
+	transcript: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(MAX_TRANSCRIPT)))),
+	audioPath: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(1024)))),
+	runConfig: v.optional(v.nullable(v.unknown())),
+	judge: v.optional(
+		v.object({
+			status: JudgeStatusSchema,
+			score: v.optional(v.nullable(v.pipe(v.number(), v.integer()))),
+			reason: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(MAX_JUDGE_REASON)))),
+			error: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(MAX_JUDGE_REASON)))),
+		}),
+	),
+});
+export type UpdateReplayRequest = v.InferOutput<typeof UpdateReplayRequestSchema>;
+
+export const RUN_CONFIG_MAX_BYTES = MAX_RUN_CONFIG_BYTES;
+
+/** A single tool call (extracted from a recognized span). */
+export const ToolCallResponseSchema = v.object({
+	id: v.number(),
+	turnIdx: v.nullable(v.number()),
+	spanId: v.nullable(v.string()),
+	name: v.string(),
+	argsJson: v.nullable(v.string()),
+	resultJson: v.nullable(v.string()),
+	startedAt: v.nullable(v.string()),
+	endedAt: v.nullable(v.string()),
+	latencyMs: v.nullable(v.number()),
+});
+export type ToolCallResponse = v.InferOutput<typeof ToolCallResponseSchema>;
+
+export const ModelUsageResponseSchema = v.object({
+	id: v.number(),
+	turnIdx: v.nullable(v.number()),
+	spanId: v.nullable(v.string()),
+	provider: v.nullable(v.string()),
+	model: v.nullable(v.string()),
+	inputTokens: v.nullable(v.number()),
+	outputTokens: v.nullable(v.number()),
+	totalTokens: v.nullable(v.number()),
+	startedAt: v.nullable(v.string()),
+	endedAt: v.nullable(v.string()),
+	latencyMs: v.nullable(v.number()),
+});
+export type ModelUsageResponse = v.InferOutput<typeof ModelUsageResponseSchema>;
+
+export const ReplayTurnResponseSchema = v.object({
+	idx: v.number(),
+	role: TurnRoleSchema,
+	key: v.nullable(v.string()),
+	startedAt: v.nullable(v.string()),
+	endedAt: v.nullable(v.string()),
+	transcript: v.nullable(v.string()),
+	audioPath: v.nullable(v.string()),
+});
+export type ReplayTurnResponse = v.InferOutput<typeof ReplayTurnResponseSchema>;
+
+export const AssertionResponseSchema = v.object({
+	id: v.number(),
+	turnIdx: v.number(),
+	name: v.string(),
+	status: AssertionStatusSchema,
+	message: v.nullable(v.string()),
+	recordedAt: v.string(),
+});
+export type AssertionResponse = v.InferOutput<typeof AssertionResponseSchema>;
+
+export const SpanResponseSchema = v.object({
+	id: v.number(),
+	traceId: v.string(),
+	spanId: v.string(),
+	parentSpanId: v.nullable(v.string()),
+	name: v.string(),
+	vocabulary: SpanVocabularySchema,
+	startedAt: v.string(),
+	endedAt: v.string(),
+	attributesJson: v.string(),
+});
+export type SpanResponse = v.InferOutput<typeof SpanResponseSchema>;
+
+/** Summary fields returned by `GET /v1/conversations/:id/replays`. */
+export const ReplaySummaryResponseSchema = v.object({
 	id: v.string(),
-	sourceSessionId: v.string(),
-	targetSessionId: v.string(),
+	conversationId: v.string(),
+	conversationVersion: v.string(),
 	status: ReplayStatusSchema,
-	mode: ReplayModeSchema,
-	progress: v.object({
-		completed: v.number(),
-		total: v.number(),
-	}),
+	failureReason: v.nullable(ReplayFailureReasonSchema),
+	modality: ReplayModalitySchema,
 	startedAt: v.string(),
 	finishedAt: v.nullable(v.string()),
-	error: v.nullable(v.string()),
+	judgeStatus: v.nullable(JudgeStatusSchema),
+	judgeScore: v.nullable(v.number()),
+	runConfig: v.unknown(),
 });
-export type ReplayRunResponse = v.InferOutput<typeof ReplayRunResponseSchema>;
+export type ReplaySummaryResponse = v.InferOutput<typeof ReplaySummaryResponseSchema>;
 
-/**
- * Webhook request body. Sent as `POST {webhookUrl}` once per user turn in
- * the source session. `recordedToolResults` carries the original agent's
- * tool calls + results — the webhook decides whether to re-use them or
- * call real tools again.
- */
-export const WebhookRequestSchema = v.object({
-	sessionId: v.string(),
-	turnIdx: v.number(),
-	userText: v.string(),
-	history: v.array(
-		v.object({
-			role: RoleSchema,
-			text: v.string(),
-		}),
-	),
-	recordedToolResults: v.array(
-		v.object({
-			name: v.string(),
-			args: v.unknown(),
-			result: v.unknown(),
-		}),
+/** Full detail returned by `GET /v1/replays/:id`. */
+export const ReplayDetailResponseSchema = v.object({
+	id: v.string(),
+	conversationId: v.string(),
+	conversationVersion: v.string(),
+	status: ReplayStatusSchema,
+	failureReason: v.nullable(ReplayFailureReasonSchema),
+	modality: ReplayModalitySchema,
+	startedAt: v.string(),
+	finishedAt: v.nullable(v.string()),
+	audioPath: v.nullable(v.string()),
+	transcript: v.nullable(v.string()),
+	runConfig: v.unknown(),
+	judge: v.object({
+		status: v.nullable(JudgeStatusSchema),
+		score: v.nullable(v.number()),
+		reason: v.nullable(v.string()),
+		error: v.nullable(v.string()),
+	}),
+	turns: v.array(ReplayTurnResponseSchema),
+	assertions: v.array(AssertionResponseSchema),
+	toolCalls: v.array(ToolCallResponseSchema),
+	modelUsage: v.array(ModelUsageResponseSchema),
+	spans: v.array(SpanResponseSchema),
+});
+export type ReplayDetailResponse = v.InferOutput<typeof ReplayDetailResponseSchema>;
+
+export const ListReplaysResponseSchema = v.object({
+	items: v.array(ReplaySummaryResponseSchema),
+});
+export type ListReplaysResponse = v.InferOutput<typeof ListReplaysResponseSchema>;
+
+export const CompareReplaysRequestSchema = v.object({
+	replayIds: v.pipe(
+		v.array(ReplayIdSchema),
+		v.minLength(MIN_COMPARE_REPLAYS),
+		v.maxLength(MAX_COMPARE_REPLAYS),
 	),
 });
-export type WebhookRequest = v.InferOutput<typeof WebhookRequestSchema>;
+export type CompareReplaysRequest = v.InferOutput<typeof CompareReplaysRequestSchema>;
 
-/**
- * Webhook response body. The contract is intentionally narrow — `agentText`
- * is the only required field. `toolCalls` defaults to empty, the latency and
- * barge-in fields are optional. Voice-to-voice loops set them; text-only loops
- * don't.
- */
-export const WebhookResponseSchema = v.object({
-	agentText: v.pipe(v.string(), v.maxLength(MAX_TURN_TEXT)),
-	toolCalls: v.optional(
-		v.pipe(
-			v.array(
-				v.object({
-					name: v.pipe(v.string(), v.nonEmpty(), v.maxLength(MAX_TOOL_NAME)),
-					args: v.unknown(),
-				}),
-			),
-			v.maxLength(MAX_TOOL_CALLS_PER_TURN),
-		),
-		[],
-	),
-	responseLatencyMs: v.optional(
-		v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(MAX_DURATION_MS)),
-	),
-	interrupted: v.optional(v.boolean()),
+export const CompareReplaysResponseSchema = v.object({
+	replays: v.array(ReplayDetailResponseSchema),
 });
-export type WebhookResponse = v.InferOutput<typeof WebhookResponseSchema>;
+export type CompareReplaysResponse = v.InferOutput<typeof CompareReplaysResponseSchema>;
 
-export const REPLAY_HISTORY_CAP = MAX_HISTORY;
-
-/** Path-param schema for `GET /v1/replays/:id`. UUID v4-ish (any UUID shape works). */
-export const ReplayIdSchema = v.pipe(v.string(), v.regex(/^[0-9a-fA-F-]{36}$/, "Must be a UUID"));
-
-/**
- * Response of `GET /v1/sessions/:sessionId/replays`. Wraps `items` so a future
- * `nextCursor` can slot in without breaking clients — pagination isn't required
- * for v1 (replay counts per session are small) but the envelope is.
- */
-export const ListReplayRunsResponseSchema = v.object({
-	items: v.array(ReplayRunResponseSchema),
-});
-export type ListReplayRunsResponse = v.InferOutput<typeof ListReplayRunsResponseSchema>;
+export const COMPARE_MIN = MIN_COMPARE_REPLAYS;
+export const COMPARE_MAX = MAX_COMPARE_REPLAYS;

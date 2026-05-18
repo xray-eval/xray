@@ -5,22 +5,14 @@ import { server } from "@/test-server.ts";
 import { registerHappyDom } from "./test-happy-dom.ts";
 import { describe, expect, it } from "bun:test";
 
-// happy-dom must be registered before @testing-library/react evaluates — it
-// reads `document` at module load. Dynamic import preserves that ordering.
 registerHappyDom();
 const { render, screen } = await import("@testing-library/react");
 const { App } = await import("./app.tsx");
 
 describe("App", () => {
 	it("renders the xray heading", async () => {
-		// App mounts the list route at "/" which fires GET /v1/sessions on
-		// mount. MSW's onUnhandledRequest is "error", so a stub handler must
-		// exist. The router's initial route load is async, so the heading
-		// appears after a tick — use findByRole, not getByRole.
 		server.use(
-			http.get("http://localhost/v1/sessions", () =>
-				HttpResponse.json({ sessions: [], nextCursor: null }),
-			),
+			http.get("http://localhost/v1/conversations", () => HttpResponse.json({ items: [] })),
 		);
 		render(<App />);
 		expect(await screen.findByRole("heading", { name: /xray/i })).toBeTruthy();

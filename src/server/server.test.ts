@@ -26,15 +26,16 @@ describe("server composition", () => {
 		expect(await res.json()).toEqual({ ok: true });
 	});
 
-	it("mounts the ingest router at /v1/sessions/:id/events", async () => {
-		const res = await app.request("/v1/sessions/sess-1/events", {
+	it("mounts the conversations router at /v1/conversations", async () => {
+		const res = await app.request("/v1/conversations");
+		expect(res.status).toBe(200);
+	});
+
+	it("mounts the OTLP router at /v1/otlp/v1/traces", async () => {
+		const res = await app.request("/v1/otlp/v1/traces", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				type: "session_started",
-				agentId: "agent-x",
-				startedAt: "2026-05-16T12:00:00.000Z",
-			}),
+			body: JSON.stringify({ resourceSpans: [] }),
 		});
 		expect(res.status).toBe(200);
 	});

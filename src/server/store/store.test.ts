@@ -7,10 +7,24 @@ import { eq, sql } from "drizzle-orm";
 import { makeEnv } from "@/server/env/test-utils.ts";
 
 import { StoreParentDirNotFoundError } from "./errors.ts";
-import { sessions, toolCalls, turns } from "./schema.ts";
-import { saveSession } from "./sessions-repo.ts";
+import {
+	assertions,
+	conversations,
+	modelUsage,
+	replayMeta,
+	replays,
+	replayTurns,
+	spans,
+	toolCalls,
+} from "./schema.ts";
 import { openStore, openStoreFromEnv } from "./store.ts";
-import { makeSession } from "./test-utils.ts";
+import {
+	makeConversationInput,
+	makeReplayInput,
+	makeReplayMetaInput,
+	makeReplayTurnInput,
+	makeSpanInput,
+} from "./test-utils.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 interface PragmaRow {
@@ -37,7 +51,18 @@ describe("openStore", () => {
 		const tables = store.db
 			.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
 			.map((r) => r.name);
-		expect(tables).toEqual(expect.arrayContaining(["sessions", "turns", "tool_calls"]));
+		expect(tables).toEqual(
+			expect.arrayContaining([
+				"assertions",
+				"conversations",
+				"model_usage",
+				"replay_meta",
+				"replay_turns",
+				"replays",
+				"spans",
+				"tool_calls",
+			]),
+		);
 		store.close();
 	});
 
@@ -59,13 +84,18 @@ describe("openStore", () => {
 	it("is idempotent: reopening the same file preserves data", () => {
 		const path = tmpDbPath();
 		const first = openStore({ path });
-		saveSession(first.db, makeSession({ id: "persist-me" }));
+		first.db
+			.insert(conversations)
+			.values(makeConversationInput({ id: "persist-me" }))
+			.run();
 		first.close();
 
-		// Reopen — drizzle's __drizzle_migrations table records that 0000_initial
-		// already ran, so `migrate()` is a no-op and data stays.
 		const second = openStore({ path });
-		const row = second.db.select().from(sessions).where(eq(sessions.id, "persist-me")).get();
+		const row = second.db
+			.select()
+			.from(conversations)
+			.where(eq(conversations.id, "persist-me"))
+			.get();
 		expect(row?.id).toBe("persist-me");
 		second.close();
 	});
@@ -75,29 +105,53 @@ describe("openStore", () => {
 		expect(() => openStore({ path: missing })).toThrow(StoreParentDirNotFoundError);
 	});
 
-	it("cascades session deletes to turns and tool_calls", () => {
+	it("cascades replay deletes to all replay-scoped tables", () => {
 		const store = openStore({ path: ":memory:" });
-		saveSession(store.db, makeSession({ id: "cascade-me" }));
 		store.db
-			.insert(turns)
-			.values({
-				id: "turn-1",
-				sessionId: "cascade-me",
-				idx: 0,
-				role: "user",
-				text: "hi",
-				ts: "2026-05-16T12:00:00.000Z",
-			})
+			.insert(conversations)
+			.values(makeConversationInput({ id: "conv-cascade" }))
+			.run();
+		const replay = makeReplayInput({ id: "replay-cascade", conversationId: "conv-cascade" });
+		store.db.insert(replays).values(replay).run();
+		store.db
+			.insert(replayMeta)
+			.values(makeReplayMetaInput({ replayId: replay.id }))
+			.run();
+		store.db
+			.insert(replayTurns)
+			.values(makeReplayTurnInput({ replayId: replay.id, idx: 0 }))
+			.run();
+		store.db
+			.insert(spans)
+			.values(makeSpanInput({ replayId: replay.id }))
 			.run();
 		store.db
 			.insert(toolCalls)
-			.values({ turnId: "turn-1", idx: 0, name: "lookup", argsJson: "{}" })
+			.values({ replayId: replay.id, name: "lookup", argsJson: "{}" })
+			.run();
+		store.db
+			.insert(modelUsage)
+			.values({ replayId: replay.id, provider: "openai", model: "gpt-4o" })
+			.run();
+		store.db
+			.insert(assertions)
+			.values({
+				replayId: replay.id,
+				turnIdx: 0,
+				name: "first",
+				status: "passed",
+				recordedAt: "2026-05-16T12:00:01.000Z",
+			})
 			.run();
 
-		store.db.delete(sessions).where(eq(sessions.id, "cascade-me")).run();
+		store.db.delete(replays).where(eq(replays.id, replay.id)).run();
 
-		expect(store.db.select().from(turns).all()).toEqual([]);
+		expect(store.db.select().from(replayMeta).all()).toEqual([]);
+		expect(store.db.select().from(replayTurns).all()).toEqual([]);
+		expect(store.db.select().from(spans).all()).toEqual([]);
 		expect(store.db.select().from(toolCalls).all()).toEqual([]);
+		expect(store.db.select().from(modelUsage).all()).toEqual([]);
+		expect(store.db.select().from(assertions).all()).toEqual([]);
 		store.close();
 	});
 });
@@ -114,11 +168,18 @@ describe("openStoreFromEnv", () => {
 	it("is idempotent when the dir and db file already exist", () => {
 		const env = makeEnv({ XRAY_DATA_DIR: join(tmpDir, "existing-data-dir") });
 		const first = openStoreFromEnv(env);
-		saveSession(first.db, makeSession({ id: "persist-me" }));
+		first.db
+			.insert(conversations)
+			.values(makeConversationInput({ id: "persist-me" }))
+			.run();
 		first.close();
 
 		const second = openStoreFromEnv(env);
-		const row = second.db.select().from(sessions).where(eq(sessions.id, "persist-me")).get();
+		const row = second.db
+			.select()
+			.from(conversations)
+			.where(eq(conversations.id, "persist-me"))
+			.get();
 		expect(row?.id).toBe("persist-me");
 		second.close();
 	});

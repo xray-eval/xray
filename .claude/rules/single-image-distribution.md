@@ -12,7 +12,7 @@ The workload, in concrete numbers:
 
 - **One writer.** A single Bun process owns the database. No write fan-in from multiple machines, no contended-write scenarios.
 - **Local I/O.** The DB file lives on a volume mounted into the same container that writes to it. No network round-trip, no driver, no connection pool.
-- **Modest data.** Voice-agent conversations are minutes long, tens to hundreds of events each, text + small JSON payloads. Tens of thousands of sessions fits comfortably in a single SQLite file; queries on indexed columns are sub-millisecond.
+- **Modest data.** Each Replay carries minutes of audio + tens to hundreds of OTLP spans + a small JSON `run_config`. Tens of thousands of Replays fit comfortably in a single SQLite file; queries on indexed columns are sub-millisecond. Audio bytes live on disk under `XRAY_AUDIO_ROOT`, not in the DB.
 - **Embedded reads.** The UI reads through the same Bun process via `bun:sqlite` — no separate query service, no ORM round-trip across a wire.
 
 `bun:sqlite` is in the Bun standard library. That means **zero added supply-chain surface for the database driver** — no `pg`, no `better-sqlite3` (with its native build step), no `mysql2`. The 7-day cooldown in `.claude/rules/supply-chain.md` does not apply to a thing we don't depend on.

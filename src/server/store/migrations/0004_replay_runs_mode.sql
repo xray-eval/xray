@@ -1,1 +1,0 @@
-ALTER TABLE `replay_runs` ADD `mode` text DEFAULT 'text' NOT NULL;

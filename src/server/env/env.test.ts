@@ -3,7 +3,11 @@ import { describe, expect, test } from "bun:test";
 
 describe("loadEnv", () => {
 	test("applies defaults when keys are missing", () => {
-		expect(loadEnv({})).toEqual({ PORT: 8080, HOST: "127.0.0.1", XRAY_DATA_DIR: "/data" });
+		expect(loadEnv({})).toEqual({
+			PORT: 8080,
+			HOST: "127.0.0.1",
+			XRAY_DATA_DIR: "/data",
+		});
 	});
 
 	test("parses PORT as integer and keeps HOST and XRAY_DATA_DIR", () => {
@@ -11,6 +15,15 @@ describe("loadEnv", () => {
 			PORT: 3000,
 			HOST: "127.0.0.1",
 			XRAY_DATA_DIR: "./data",
+		});
+	});
+
+	test("honors XRAY_AUDIO_ROOT when provided", () => {
+		expect(loadEnv({ XRAY_AUDIO_ROOT: "/mnt/audio" })).toEqual({
+			PORT: 8080,
+			HOST: "127.0.0.1",
+			XRAY_DATA_DIR: "/data",
+			XRAY_AUDIO_ROOT: "/mnt/audio",
 		});
 	});
 

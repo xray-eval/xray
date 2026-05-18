@@ -12,25 +12,41 @@ Organize the tree by **feature / domain**, not by technical role. One folder per
 
 ```
 src/
-  adapters/
-    elevenlabs/
-      adapter.ts
-      adapter.test.ts
-      types.ts
-      signed-url.ts
-      signed-url.test.ts
-    registry.ts
-    types.ts
-  graph/
-    workflow-graph.tsx
-    workflow-graph.test.tsx
-    node.tsx
-    edge.tsx
-  inspector/
-    inspector.tsx
-    inspector.test.tsx
-    format-tool-call.ts
-    format-tool-call.test.ts
+  server/
+    conversations/
+      conversations.router.ts
+      conversations.service.ts
+      conversations.types.ts
+      conversations.errors.ts
+      conversations.router.test.ts
+      conversations.service.test.ts
+      conversations.errors.test.ts
+      conversations.test-utils.ts
+    replays/
+      replays.router.ts
+      replays.service.ts
+      replays.types.ts
+      replays.errors.ts
+      ...
+    otlp/
+      otlp.router.ts
+      otlp.service.ts
+      otlp.types.ts
+      otlp.errors.ts
+      vocabularies/
+        registry.ts
+        xray.ts
+        gen-ai-semconv.ts
+        langfuse.ts
+        vocabularies.types.ts
+  client/
+    conversations/
+      conversations.tsx
+      conversation-detail.tsx
+    inspector/
+      inspector.tsx
+    replays/
+      compare.tsx
 ```
 
 **Bad** (layers):
@@ -44,12 +60,12 @@ src/
   utils/         ← the death pile
 ```
 
-**Why.** Layered trees couple unrelated features through their shared layer ("I changed `services/foo.ts`, what else broke?"). Slices localize change: editing the graph feature touches one folder; deleting a provider deletes one folder. New contributors find code by *what it does*, not *what kind of code it is*. The adapter pattern in this repo is the canonical example — `src/adapters/elevenlabs/` is the entire ElevenLabs feature.
+**Why.** Layered trees couple unrelated features through their shared layer ("I changed `services/foo.ts`, what else broke?"). Slices localize change: editing the conversations feature touches one folder; deleting a vocabulary deletes one file. New contributors find code by *what it does*, not *what kind of code it is*. The vocabulary registry in `src/server/otlp/vocabularies/` is the canonical example — each recognized OTLP vocabulary is one file plus one line in `registry.ts`.
 
 **Edge cases.**
-- Genuinely cross-slice code (shared types like `Agent`, `Workflow`; the adapter registry) lives at the parent level (`src/adapters/types.ts`, `src/adapters/registry.ts`). Don't invent a `src/shared/` god-folder.
+- Genuinely cross-slice code (shared error-response Valibot schemas, the `openApiSchemaFromValibot` helper) lives at `src/server/core/types.ts`. Don't invent a `src/shared/` god-folder.
 - A `utils.ts` *inside a slice* is fine. A top-level `src/utils/` is the smell — it means you couldn't find a slice it belongs to, which usually means the slice is missing.
-- React-Flow nodes, hooks, and component logic for the graph all live in `src/graph/`. There is no `src/hooks/` or `src/components/`.
+- Inspector sub-components live inside `src/client/inspector/`. There is no `src/hooks/` or top-level `src/components/feature-*`. The only `src/client/components/` folder is `components/ui/` — stock shadcn primitives only.
 - **The "service" ban is about top-level folders, not file suffixes inside a slice.** A `src/services/` folder is banned (it pools every API client). But a `src/server/<feature>/<feature>.service.ts` file *inside a feature slice* is allowed when the slice has internal layering — see §3 for the role-suffix convention.
 
 ## 2 · Tests live next to the file they test
@@ -85,40 +101,36 @@ Inside any slice folder:
 | `<slice>.test.ts` | Co-located tests for `<slice>.ts`                                | No implementation to test                 |
 | `test-utils.ts`   | Fixture builders, mock factories, suite helpers FOR this slice's types | Slice has nothing reusable in tests |
 
-Multi-file slices (e.g. `graph/` with `graph.tsx` + `node.tsx` + `edge.tsx`) keep each implementation file paired with its own `.test.tsx`; **one** shared `types.ts` and **one** shared `test-utils.ts` per slice.
+Multi-file slices (e.g. the inspector with `inspector.tsx` + sub-component files) keep each implementation file paired with its own `.test.tsx`; **one** shared `types.ts` and **one** shared `test-utils.ts` per slice.
 
 Example — types-only slice:
 
 ```
-src/adapters/agent/
-  types.ts          ← Agent, AgentId
-  test-utils.ts     ← makeAgent() fixture
+src/server/store/
+  types.ts          ← ReplayRow, AssertionStatus, ...
+  test-utils.ts     ← makeReplayInput() / makeConversationInput() fixtures
 ```
 
-Example — logic slice:
+Example — logic slice (the OTLP vocabulary registry):
 
 ```
-src/adapters/registry/
-  registry.ts       ← registerAdapter, getAdapter, listAdapters
-  registry.test.ts  ← unit tests
-  test-utils.ts     ← useCleanRegistry() suite helper
+src/server/otlp/vocabularies/
+  registry.ts       ← ordered SPAN_VOCABULARIES array
+  vocabularies.types.ts
+  xray.ts
+  gen-ai-semconv.ts
+  langfuse.ts
 ```
 
-Example — UI slice:
+Example — UI slice (the Conversations index):
 
 ```
-src/graph/
-  types.ts          ← GraphNode, GraphEdge, GraphProps
-  graph.tsx
-  graph.test.tsx
-  node.tsx
-  node.test.tsx
-  edge.tsx
-  edge.test.tsx
-  test-utils.ts     ← renderGraphWithFlow(), makeGraphProps()
+src/client/conversations/
+  conversations.tsx
+  conversation-detail.tsx
 ```
 
-**Why `test-utils.ts` is per-slice, not central.** A central `test/fixtures.ts` becomes a god-file that everyone edits and nobody owns. Per-slice fixtures co-locate the test helper with the type it builds — when the type changes, the fixture builder lives one folder away, not in a separate directory tree. Any test (inside or outside the slice) imports directly: `import { makeAgent } from "@/adapters/agent/test-utils.ts"`.
+**Why `test-utils.ts` is per-slice, not central.** A central `test/fixtures.ts` becomes a god-file that everyone edits and nobody owns. Per-slice fixtures co-locate the test helper with the type it builds — when the type changes, the fixture builder lives one folder away, not in a separate directory tree. Any test (inside or outside the slice) imports directly: `import { makeReplayInput } from "@/server/store/test-utils.ts"`.
 
 ### Alternative — role-suffixed files for slices with internal layering
 
@@ -137,14 +149,15 @@ Each gets a co-located `.test.ts` next to it.
 Example — HTTP endpoint slice:
 
 ```
-src/server/ingest/
-  ingest.router.ts
-  ingest.router.test.ts
-  ingest.service.ts
-  ingest.types.ts
-  ingest.errors.ts
-  ingest.errors.test.ts
-  ingest.test-utils.ts
+src/server/conversations/
+  conversations.router.ts
+  conversations.router.test.ts
+  conversations.service.ts
+  conversations.service.test.ts
+  conversations.types.ts
+  conversations.errors.ts
+  conversations.errors.test.ts
+  conversations.test-utils.ts
 ```
 
 **When to reach for this convention vs. the bare default:**
@@ -153,7 +166,7 @@ src/server/ingest/
 
 **Banned regardless of which convention is used:**
 - `services/`, `controllers/`, `routes/` *folders* — that's §1's layered tree.
-- Mixing the two conventions inside one slice (`types.ts` next to `ingest.errors.ts`). Pick one per slice.
+- Mixing the two conventions inside one slice (`types.ts` next to `conversations.errors.ts`). Pick one per slice.
 - A `<slice>.service.ts` that imports Hono or sets HTTP status codes. The point of the split is that the service is HTTP-agnostic.
 
 ---
@@ -163,22 +176,21 @@ src/server/ingest/
 A **barrel file** is an `index.ts` (or similarly-named) whose only job is to re-export the contents of its sibling files:
 
 ```typescript
-// BANNED — src/adapters/index.ts
-export * from "./adapter.ts";
-export * from "./agent.ts";
-export * from "./conversation.ts";
-export * from "./workflow.ts";
+// BANNED — src/server/replays/index.ts
+export * from "./replays.router.ts";
+export * from "./replays.service.ts";
+export * from "./replays.types.ts";
 ```
 
 **Imports must reference the defining file directly**:
 
 ```typescript
 // Good
-import type { VoiceAgentAdapter } from "@/adapters/adapter.ts";
-import type { Agent } from "@/adapters/agent.ts";
+import { createReplaysRouter } from "@/server/replays/replays.router.ts";
+import type { ReplayDetailResponse } from "@/server/replays/replays.types.ts";
 
 // Banned
-import type { VoiceAgentAdapter, Agent } from "@/adapters";
+import { createReplaysRouter, type ReplayDetailResponse } from "@/server/replays";
 ```
 
 **Why.**
@@ -188,9 +200,9 @@ import type { VoiceAgentAdapter, Agent } from "@/adapters";
 - **Discoverability.** "Where is `Agent` defined?" Direct import answers it in one click. Barrel forces a hop.
 - **Refactor safety.** Splitting a file behind a barrel is invisible to consumers — fine, but it means the consumer never sees *the actual shape of the slice*. Direct imports keep dependencies legible.
 
-The vertical-slice rule (§1) plus the per-slice convention (§3) already make barrels redundant: a slice IS the unit of cohesion and its file layout is predictable (`types.ts`, `<slice>.ts`, `test-utils.ts`). You don't need an `index.ts` to advertise it. Callers reach into specific files inside the slice (`@/adapters/agent/types.ts`).
+The vertical-slice rule (§1) plus the per-slice convention (§3) already make barrels redundant: a slice IS the unit of cohesion and its file layout is predictable (`types.ts`, `<slice>.ts`, `test-utils.ts`). You don't need an `index.ts` to advertise it. Callers reach into specific files inside the slice (`@/server/conversations/conversations.types.ts`).
 
-**Allowed exception.** None. If you find yourself wanting a barrel, the actual fix is one of: (a) the import sites are too verbose because the slice is too granular — consolidate, or (b) you're crossing a slice boundary that should be a single typed entry point — give that entry point its own file with a real name (`adapter.ts`, `client.ts`), not `index.ts`.
+**Allowed exception.** None. If you find yourself wanting a barrel, the actual fix is one of: (a) the import sites are too verbose because the slice is too granular — consolidate, or (b) you're crossing a slice boundary that should be a single typed entry point — give that entry point its own file with a real name (`api.ts`, `client.ts`), not `index.ts`.
 
 ---
 
@@ -203,51 +215,51 @@ A `<slice>.ts` or `<concept>.tsx` should do **one thing**. The moment it handles
 1. **Multiple responsibilities in one file.** The primary criterion. If you can name two things the file does that could change independently, split now — regardless of LOC. A 120-line file with four responsibilities is worse than a 320-line file with one.
 2. **File crosses ~300 lines.** A secondary smell. Long files almost always hide latent responsibilities; the fix is to find them, not to cut by line count.
 
-**Worked example — concern-driven (small file).** An HTTP ingest endpoint that handles (a) Hono wiring + error→response mapping, (b) request body parsing/validation, and (c) a `switch (event.type)` dispatch over event variants is three responsibilities in one file — even at ~120 lines. Split by role (see §3's role-suffix convention):
+**Worked example — concern-driven (small file).** An OTLP receiver that handles (a) Hono wiring + error→response mapping, (b) request body parsing/validation, and (c) a vocabulary-registry walk over each span is three responsibilities in one file — even at ~120 lines. Split by role (see §3's role-suffix convention):
 
 ```
-src/server/ingest/
-  ingest.router.ts            ← Hono wiring + body parse + error→HTTP mapping
-  ingest.router.test.ts       ← integration tests via app.request()
-  ingest.service.ts           ← applyEvent: validated event → store calls
-  ingest.types.ts             ← Valibot schemas + inferred types
-  ingest.errors.ts            ← typed errors
-  ingest.errors.test.ts
-  ingest.test-utils.ts        ← event factories + request builders
+src/server/otlp/
+  otlp.router.ts              ← Hono wiring + body parse + error→HTTP mapping
+  otlp.router.test.ts         ← integration tests via app.request()
+  otlp.service.ts             ← ingestOtlpTraces: validated request → store rows
+  otlp.types.ts               ← Valibot schemas + inferred types
+  otlp.errors.ts              ← typed errors
+  otlp.errors.test.ts
+  otlp.test-utils.ts          ← OTLP request fixture builders
+  vocabularies/               ← one file per recognized span vocabulary
+    registry.ts
+    xray.ts
+    gen-ai-semconv.ts
+    langfuse.ts
+    vocabularies.types.ts
 ```
 
-`ingest.router.ts` becomes pure HTTP plumbing — testable without touching the store. `ingest.service.ts` is a pure dispatcher — testable without spinning up Hono. If a single event variant grows large enough to merit its own sub-slice (e.g. `tool-called/` with its own store interactions, types, and tests), extract *that variant* into a sub-slice while keeping the router/service split at the top.
+`otlp.router.ts` becomes pure HTTP plumbing — testable without touching the store. `otlp.service.ts` is a pure dispatcher — testable without spinning up Hono. Each vocabulary is its own file under `vocabularies/`: adding a fourth vocabulary is a new file plus one line in `registry.ts`, not a refactor.
 
 **Worked example — LOC-driven (long file).**
 
 ```
 # Day 1 — small
-src/adapters/elevenlabs/
-  adapter.ts (180 lines)
-  adapter.test.ts
-  types.ts
-  test-utils.ts
+src/server/replays/
+  replays.router.ts (180 lines)
+  replays.router.test.ts
+  replays.service.ts
+  replays.types.ts
 
-# Day 14 — adapter.ts has grown to 450 lines:
-#   - listAgents/getWorkflow (~150 LOC)
-#   - live conversation (~200 LOC: SDK wiring, event mapping, mic lifecycle)
-#   - signed URL minting (~100 LOC)
+# Day 14 — replays.service.ts has grown to 450 lines:
+#   - createReplay / updateReplay (~150 LOC)
+#   - listReplaysForConversation aggregation (~80 LOC)
+#   - compareReplays + per-key alignment (~200 LOC)
 # Three responsibilities, one file. Extract the bulging ones into sub-slices.
 
-src/adapters/elevenlabs/
-  adapter.ts (180 lines, back down — just composes the sub-slices)
-  adapter.test.ts
-  types.ts
-  test-utils.ts
-  live/
-    live.ts
-    live.test.ts
-    types.ts
-    test-utils.ts
-  signed-url/
-    signed-url.ts
-    signed-url.test.ts
-    types.ts
+src/server/replays/
+  replays.router.ts
+  replays.service.ts (180 lines, back down — composes the sub-slices)
+  replays.types.ts
+  compare/
+    compare.ts
+    compare.test.ts
+    compare.types.ts
 ```
 
 **Why.** A file with mixed concerns is a slice with mixed concerns — and a mixed slice is a slice nobody owns. Extracting each responsibility gives it its own type surface, test file, and future deletion target. LOC is a heuristic for spotting trouble; *concerns* are the actual unit of cohesion. A 320-line file of one cohesive concept stays as it is; a 120-line file with three responsibilities should split now.

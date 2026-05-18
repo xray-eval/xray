@@ -7,6 +7,9 @@ export function formatAbsolute(iso: string): string {
 	return new Date(iso).toLocaleString();
 }
 
+/** Alias used by the Conversation/Replay views — same as `formatAbsolute`. */
+export const formatTimestamp = formatAbsolute;
+
 /**
  * Render a duration in ms as `123ms` / `42s` / `2m05s`. `null` means the
  * session/turn has no recorded duration yet — "in progress" reads better

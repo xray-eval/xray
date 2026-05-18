@@ -14,8 +14,8 @@ A **boundary** is any value entering the program from outside the bytes we shipp
 
 | Boundary                                | Validate before use? |
 |-----------------------------------------|----------------------|
-| Provider REST/WS responses (ElevenLabs, Vapi, Retell, OpenAI Realtime, Voiceflow) | **Yes** |
-| Hono proxy request bodies + query params | **Yes** |
+| OTLP/HTTP trace request bodies (from any agent's exporter) | **Yes** |
+| Hono request bodies + query params (SDK control plane: conversations, replays, audio) | **Yes** |
 | Env vars consumed by the server          | **Yes** (parse once at startup) |
 | Files / JSON we read at runtime          | **Yes** |
 | Browser inputs handed to the API         | **Yes** (client-side) |
@@ -43,36 +43,38 @@ Not Zod: ~5–10× larger bundle and an OO-chaining API that resists tree-shakin
 Per [`code-layout.md`](./code-layout.md) §3: in the slice that owns the boundary.
 
 ```
-src/adapters/elevenlabs/
-  types.ts           ← *Schema constants + `v.InferOutput` type aliases
-  adapter.ts         ← imports schemas, calls v.safeParse at the I/O edge
-  errors.ts          ← ElevenLabsInvalidResponseError (carries issues)
+src/server/otlp/
+  otlp.types.ts      ← OTLP/JSON Valibot schemas + `v.InferOutput` type aliases
+  otlp.router.ts     ← imports schemas, calls v.safeParse at the HTTP edge
+  otlp.service.ts    ← projects the parsed request through the vocab registry
+  otlp.errors.ts     ← InvalidOtlpBodyError (carries issues)
 ```
 
-The `types.ts` file becomes "schemas + their inferred types", not "hand-written interfaces". You almost never write `interface FooResponse { ... }` — you write `const FooResponseSchema = v.object({...})` and export `type FooResponse = v.InferOutput<typeof FooResponseSchema>`.
+The `*.types.ts` file becomes "schemas + their inferred types", not "hand-written interfaces". You almost never write `interface FooResponse { ... }` — you write `const FooResponseSchema = v.object({...})` and export `type FooResponse = v.InferOutput<typeof FooResponseSchema>`.
 
-For the server proxy, the same shape:
+For other server endpoints, the same shape:
 
 ```
-src/server/agents/
-  agents.ts          ← Hono router calling adapter; parses request via schema
-  agents.test.ts
-  types.ts           ← request/response schemas + inferred types
+src/server/conversations/
+  conversations.router.ts    ← Hono router; v.safeParse at the body edge
+  conversations.service.ts
+  conversations.types.ts     ← request/response schemas + inferred types
+  conversations.errors.ts    ← InvalidConversationRequestError, etc.
 ```
 
 ---
 
 ## 4 · The pattern
 
-**Inside the adapter / route, at the boundary:**
+**Inside the route / service, at the boundary:**
 
 ```ts
-const raw: unknown = await response.json();         // 1. unknown — never typed by fiat
-const result = v.safeParse(SomeResponseSchema, raw); // 2. validate + narrow
+const raw: unknown = await c.req.json();              // 1. unknown — never typed by fiat
+const result = v.safeParse(SomeRequestSchema, raw);   // 2. validate + narrow
 if (!result.success) {
-  throw new ElevenLabsInvalidResponseError(path, result.issues);
+  throw new InvalidRequestError(result.issues);
 }
-return result.output;                                // 3. typed value, proven shape
+return result.output;                                 // 3. typed value, proven shape
 ```
 
 Use `v.safeParse` (returns a discriminated union), not `v.parse` (throws a `ValiError` with no domain context). The thrown error must be a typed subclass per [`errors.md`](./errors.md), with a `readonly issues: readonly BaseIssue<unknown>[]` field so callers and the inspector UI can surface the failure cause.

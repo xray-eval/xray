@@ -10,25 +10,29 @@ The failure mode this prevents: someone writes `throw new Error("Adapter for pro
 
 Every error slice has:
 
-- One **base class** named after the slice's domain (`AdapterError`, `ProxyError`, `WorkflowError`). Extends `Error`. Sets `this.name` in the constructor.
-- One **subclass per semantically distinct failure** (`DuplicateAdapterError`, `UnknownProviderError`, `MissingApiKeyError`). Each extends the base. Each sets its own `this.name` and exposes any structured data as `readonly` fields.
+- One **base class** named after the slice's domain (`ConversationError`, `ReplayError`, `OtlpError`). Extends `Error`. Sets `this.name` in the constructor.
+- One **subclass per semantically distinct failure** (`VersionFingerprintMismatchError`, `ReplayNotFoundError`, `TooManySpansForReplayError`). Each extends the base. Each sets its own `this.name` and exposes any structured data as `readonly` fields.
 
-Canonical shape (see `src/adapters/errors/errors.ts`):
+Canonical shape (see `src/server/conversations/conversations.errors.ts`):
 
 ```ts
-export class AdapterError extends Error {
+export class ConversationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = "AdapterError";
+    this.name = "ConversationError";
   }
 }
 
-export class DuplicateAdapterError extends AdapterError {
-  readonly provider: ProviderId;
-  constructor(provider: ProviderId) {
-    super(`Adapter for provider "${provider}" is already registered`);
-    this.name = "DuplicateAdapterError";
-    this.provider = provider;
+export class VersionFingerprintMismatchError extends ConversationError {
+  readonly conversationId: string;
+  readonly conversationVersion: string;
+  constructor(conversationId: string, conversationVersion: string) {
+    super(
+      `Conversation "${conversationId}" version "${conversationVersion}" already exists with a different turn structure`,
+    );
+    this.name = "VersionFingerprintMismatchError";
+    this.conversationId = conversationId;
+    this.conversationVersion = conversationVersion;
   }
 }
 ```
@@ -36,13 +40,13 @@ export class DuplicateAdapterError extends AdapterError {
 Callers narrow without casting:
 
 ```ts
-try { registerAdapter(...) }
+try { upsertConversation(...) }
 catch (e) {
-  if (e instanceof DuplicateAdapterError) {
-    // e.provider is typed as ProviderId here — no cast
-    return Response.json({ error: "duplicate", provider: e.provider }, { status: 409 });
+  if (e instanceof VersionFingerprintMismatchError) {
+    // e.conversationId / e.conversationVersion are typed here — no cast
+    return Response.json({ error: "version_fingerprint_mismatch", ... }, { status: 409 });
   }
-  if (e instanceof AdapterError) { /* generic adapter-layer failure */ }
+  if (e instanceof ConversationError) { /* generic conversation-layer failure */ }
   throw e;
 }
 ```
@@ -51,8 +55,8 @@ Pairs cleanly with `ts-pattern`:
 
 ```ts
 match(e)
-  .with(P.instanceOf(DuplicateAdapterError), (err) => ...)
-  .with(P.instanceOf(AdapterError), (err) => ...)
+  .with(P.instanceOf(VersionFingerprintMismatchError), (err) => ...)
+  .with(P.instanceOf(ConversationError), (err) => ...)
   .otherwise(() => { throw e });
 ```
 
@@ -61,29 +65,28 @@ match(e)
 ## 2 · Per-class invariants
 
 - **`this.name` is set explicitly in every constructor.** Do NOT use `this.name = new.target.name` — minifiers mangle class names, so `new.target.name` returns `"a"` in production. The constant string survives minification.
-- **Structured fields are `readonly` and typed against the slice's domain types** (`ProviderId`, `AgentId`, etc. — not raw strings). The error becomes a typed payload, not a stringly-typed bag.
+- **Structured fields are `readonly` and typed against the slice's domain types** (a branded `ReplayId`, a `ConversationVersion` string alias, etc. — not raw `string`). The error becomes a typed payload, not a stringly-typed bag.
 - **Wrap underlying errors via `cause`**, not by string-concatenating: `super(message, { cause: originalError })`. Preserves the full stack chain for debugging without bleeding internal detail into the message.
-- **No `static` factory methods** (`AdapterError.duplicate(...)`) — they hide the constructor and break `instanceof` narrowing on the call site. Call the subclass constructor directly.
+- **No `static` factory methods** (`ConversationError.versionMismatch(...)`) — they hide the constructor and break `instanceof` narrowing on the call site. Call the subclass constructor directly.
 
 ---
 
 ## 3 · File layout
 
-Errors live in an `errors/` slice following the per-slice file convention from [`code-layout.md`](./code-layout.md) §3:
+Errors live in `<slice>.errors.ts` next to the slice they belong to, following the role-suffixed file convention from [`code-layout.md`](./code-layout.md) §3:
 
 ```
-src/adapters/errors/
-  errors.ts        ← AdapterError base + subclasses
-  errors.test.ts   ← instanceof checks + field-shape tests
+src/server/replays/
+  replays.errors.ts        ← ReplayError base + subclasses
+  replays.errors.test.ts   ← instanceof checks + field-shape tests
 ```
 
-**Where the `errors/` slice goes** depends on scope:
+**Where the errors file goes** depends on scope:
 
 | Scope | Location |
 |---|---|
-| Errors thrown by code inside one provider adapter | `src/adapters/<provider>/errors.ts` (slice-local file, not a sub-slice) |
-| Errors thrown across an entire layer's public surface | `src/<layer>/errors/errors.ts` (a slice of its own). Example: `src/adapters/errors/` because both `registry/` and individual `<provider>/` slices throw `AdapterError` subclasses that route handlers catch. |
-| Errors thrown by the server proxy | `src/server/errors/errors.ts` once it exists |
+| Errors thrown by one slice (router + service) | `src/<layer>/<slice>/<slice>.errors.ts` (file co-located with the slice) |
+| Errors thrown across many sub-slices of one feature | `src/<layer>/<feature>/errors/errors.ts` (a slice of its own) when there are genuinely multiple consumers; otherwise stay co-located |
 
 **No central `src/errors/` god-folder.** Each layer owns its error vocabulary.
 

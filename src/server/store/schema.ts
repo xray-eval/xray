@@ -1,119 +1,247 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import {
+	check,
+	index,
+	integer,
+	primaryKey,
+	sqliteTable,
+	text,
+	unique,
+} from "drizzle-orm/sqlite-core";
 
-import type { AgentId, ProviderId, Role } from "@/adapters/types.ts";
+import type {
+	AssertionStatus,
+	JudgeStatus,
+	ReplayFailureReason,
+	ReplayModality,
+	ReplayStatus,
+	SpanVocabulary,
+	TurnRole,
+} from "./types.ts";
 
-import type { ReplayRunMode, ReplayRunStatus, SessionSource } from "./types.ts";
+// Each `.$type<...>()` narrows the column's TypeScript type without changing
+// the stored SQL type — keeps row shapes branded with the same identifiers
+// the server services use end-to-end.
+//
+// Conventions (kept consistent with the rest of the codebase):
+// - Primary keys are `text` UUIDs unless the table is a child collection
+//   keyed by a parent + ordinal (e.g. `replay_turns`).
+// - Timestamps are UTC ISO 8601 stored as `text`; numeric durations as
+//   `integer` milliseconds.
+// - JSON payloads stay as JSON-encoded `text` columns; deserialization is
+//   the reader's job. SQLite's JSON1 functions are intentionally avoided
+//   so a future migration to a different embedded engine has no
+//   storage-engine-specific surface to port.
 
-// Each `.$type<...>()` narrows the column's TypeScript type without affecting
-// the stored SQL type — keeps the row shapes branded with the same identifiers
-// the adapters use, so the same `ProviderId` / `Role` flow end-to-end.
-
-export const sessions = sqliteTable(
-	"sessions",
+// ============================================================================
+// Conversations — dev-authored test definitions
+//
+// Composite primary key `(id, version)`: the dev controls `id`, the SDK
+// computes `version` as a fingerprint over turn structure. Two POSTs with
+// the same `(id, version)` upsert idempotently; an upsert against an
+// existing `(id, version)` with a different `turns_json` is rejected by
+// the service as `VersionFingerprintMismatchError`.
+// ============================================================================
+export const conversations = sqliteTable(
+	"conversations",
 	{
-		id: text("id").primaryKey(),
-		source: text("source").$type<SessionSource>().notNull(),
-		provider: text("provider").$type<ProviderId | null>(),
-		agentId: text("agent_id").$type<AgentId>().notNull(),
-		startedAt: text("started_at").notNull(),
-		endedAt: text("ended_at"),
-		durationMs: integer("duration_ms"),
+		id: text("id").notNull(),
+		version: text("version").notNull(),
+		// JSON-encoded array of turn descriptors. Schema validated at the wire
+		// boundary; storage is opaque to the DB.
+		turnsJson: text("turns_json").notNull(),
+		title: text("title"),
+		createdAt: text("created_at").notNull(),
 	},
 	(t) => [
-		index("idx_sessions_started_at").on(t.startedAt),
-		check("sessions_source_ck", sql`${t.source} IN ('adapter', 'ingest')`),
+		primaryKey({ columns: [t.id, t.version], name: "conversations_pk" }),
+		index("idx_conversations_id_created_at").on(t.id, t.createdAt),
 	],
 );
 
-export const turns = sqliteTable(
-	"turns",
+// ============================================================================
+// Replays — one execution of one Conversation
+//
+// `conversation_id` + `conversation_version` together reference a row in
+// `conversations`. We do NOT declare it as a composite FK because Drizzle's
+// SQLite dialect spells composite FKs inconsistently across versions; the
+// service validates the (id, version) pair on insert.
+// ============================================================================
+export const replays = sqliteTable(
+	"replays",
 	{
 		id: text("id").primaryKey(),
-		sessionId: text("session_id")
+		conversationId: text("conversation_id").notNull(),
+		conversationVersion: text("conversation_version").notNull(),
+		status: text("status").$type<ReplayStatus>().notNull(),
+		failureReason: text("failure_reason").$type<ReplayFailureReason | null>(),
+		startedAt: text("started_at").notNull(),
+		finishedAt: text("finished_at"),
+		// Path under XRAY_AUDIO_ROOT to the full-replay audio mixdown, if any.
+		// Per-turn segments live on `replay_turns`.
+		audioPath: text("audio_path"),
+		transcript: text("transcript"),
+	},
+	(t) => [
+		index("idx_replays_conversation").on(t.conversationId, t.conversationVersion, t.startedAt),
+		index("idx_replays_started_at").on(t.startedAt),
+		check("replays_status_ck", sql`${t.status} IN ('running', 'completed', 'failed')`),
+	],
+);
+
+// ============================================================================
+// Replay meta — 1:1 side table for fields that change after the row exists
+//
+// Split out so creating a replay (single insert into `replays`) is cheap and
+// the read-heavy fields (status chip, judge result, run_config diff in the UI)
+// can be updated without rewriting the main row's wide audio/transcript blobs.
+// ============================================================================
+export const replayMeta = sqliteTable(
+	"replay_meta",
+	{
+		replayId: text("replay_id")
+			.primaryKey()
+			.references(() => replays.id, { onDelete: "cascade" }),
+		modality: text("modality").$type<ReplayModality>().notNull().default("voice"),
+		// Dev-supplied snapshot of the system-under-test's external config
+		// (env vars, model rev, feature flags) at run start. Diffed in the UI
+		// between replays; opaque to xray.
+		runConfigJson: text("run_config_json"),
+		judgeStatus: text("judge_status").$type<JudgeStatus | null>(),
+		judgeScore: integer("judge_score"),
+		judgeReason: text("judge_reason"),
+		judgeError: text("judge_error"),
+	},
+	(t) => [check("replay_meta_modality_ck", sql`${t.modality} IN ('voice')`)],
+);
+
+// ============================================================================
+// Replay turns — per-turn audio segments + transcripts + cross-replay key
+//
+// `idx` is the ordinal within the replay (0-based). `key` is a dev-declared
+// cross-Conversation alignment key; the UI joins on it for compare views.
+// ============================================================================
+export const replayTurns = sqliteTable(
+	"replay_turns",
+	{
+		replayId: text("replay_id")
 			.notNull()
-			.references(() => sessions.id, { onDelete: "cascade" }),
-		// Ordinal position within the session (0-based). UNIQUE so repeat appends
-		// with the same idx are caught by the DB, not by application code.
+			.references(() => replays.id, { onDelete: "cascade" }),
 		idx: integer("idx").notNull(),
-		role: text("role").$type<Role>().notNull(),
-		text: text("text").notNull(),
-		ts: text("ts").notNull(),
-		activeNodeId: text("active_node_id"),
-		edgeFiredId: text("edge_fired_id"),
-		edgeReasoning: text("edge_reasoning"),
-		promptSeen: text("prompt_seen"),
-		responseLatencyMs: integer("response_latency_ms"),
-		interrupted: integer("interrupted", { mode: "boolean" }),
-		interruptedAtMs: integer("interrupted_at_ms"),
-		// Relative to the audio root; bytes live on the mounted volume, not
-		// in SQLite (BLOBs > a few MB are a SQLite anti-pattern).
+		role: text("role").$type<TurnRole>().notNull(),
+		// Optional cross-replay/cross-conversation alignment key.
+		key: text("key"),
+		startedAt: text("started_at"),
+		endedAt: text("ended_at"),
+		transcript: text("transcript"),
 		audioPath: text("audio_path"),
 	},
 	(t) => [
-		index("idx_turns_session_idx").on(t.sessionId, t.idx),
-		unique("turns_session_idx_uk").on(t.sessionId, t.idx),
-		check("turns_role_ck", sql`${t.role} IN ('user', 'agent', 'tool', 'system')`),
+		primaryKey({ columns: [t.replayId, t.idx], name: "replay_turns_pk" }),
+		index("idx_replay_turns_replay_idx").on(t.replayId, t.idx),
+		check("replay_turns_role_ck", sql`${t.role} IN ('user', 'agent')`),
 	],
 );
 
+// ============================================================================
+// Spans — recognized OTLP spans persisted under a replay
+//
+// One row per accepted span. Unrecognized vocabularies are dropped at the
+// OTLP receiver and never reach this table.
+// ============================================================================
+export const spans = sqliteTable(
+	"spans",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		replayId: text("replay_id")
+			.notNull()
+			.references(() => replays.id, { onDelete: "cascade" }),
+		traceId: text("trace_id").notNull(),
+		spanId: text("span_id").notNull(),
+		parentSpanId: text("parent_span_id"),
+		name: text("name").notNull(),
+		vocabulary: text("vocabulary").$type<SpanVocabulary>().notNull(),
+		startedAt: text("started_at").notNull(),
+		endedAt: text("ended_at").notNull(),
+		// JSON-encoded attribute bag, post-filter (only the fields the
+		// vocabulary recognized).
+		attributesJson: text("attributes_json").notNull(),
+	},
+	(t) => [
+		index("idx_spans_replay_started").on(t.replayId, t.startedAt),
+		index("idx_spans_trace").on(t.traceId),
+		unique("spans_replay_span_uk").on(t.replayId, t.spanId),
+		check("spans_vocabulary_ck", sql`${t.vocabulary} IN ('xray', 'gen_ai', 'langfuse')`),
+	],
+);
+
+// ============================================================================
+// Tool calls — extracted from gen_ai / langfuse / xray.* tool-call spans
+// ============================================================================
 export const toolCalls = sqliteTable(
 	"tool_calls",
 	{
 		id: integer("id").primaryKey({ autoIncrement: true }),
-		turnId: text("turn_id")
+		replayId: text("replay_id")
 			.notNull()
-			.references(() => turns.id, { onDelete: "cascade" }),
-		idx: integer("idx").notNull(),
+			.references(() => replays.id, { onDelete: "cascade" }),
+		// Optional pointer to the replay_turn this call landed under, by ordinal.
+		// Some span vocabularies don't carry per-turn context; that's fine.
+		turnIdx: integer("turn_idx"),
+		spanId: text("span_id"),
 		name: text("name").notNull(),
-		argsJson: text("args_json").notNull(),
+		argsJson: text("args_json"),
 		resultJson: text("result_json"),
+		startedAt: text("started_at"),
+		endedAt: text("ended_at"),
 		latencyMs: integer("latency_ms"),
 	},
-	(t) => [
-		index("idx_tool_calls_turn_idx").on(t.turnId, t.idx),
-		unique("tool_calls_turn_idx_uk").on(t.turnId, t.idx),
-	],
+	(t) => [index("idx_tool_calls_replay").on(t.replayId, t.startedAt)],
 );
 
-// `target_session_id` is NOT an FK to sessions.id: the worker creates the
-// target row lazily through the ingest path on its first event. An FK would
-// force the writer to pre-insert a stub purely to satisfy referential
-// integrity, which is the opposite of how ingest's "stub on first event"
-// model works for every other session.
-//
-// On startup we sweep any `status='running'` row to `failed` — a single Bun
-// process owns the DB (per single-image-distribution.md), so any "running"
-// state on boot is by definition from a previous, now-dead worker.
-export const replayRuns = sqliteTable(
-	"replay_runs",
+// ============================================================================
+// Model usage — extracted from gen_ai / langfuse LLM-call spans
+// ============================================================================
+export const modelUsage = sqliteTable(
+	"model_usage",
 	{
-		id: text("id").primaryKey(),
-		sourceSessionId: text("source_session_id")
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		replayId: text("replay_id")
 			.notNull()
-			.references(() => sessions.id, { onDelete: "cascade" }),
-		targetSessionId: text("target_session_id").notNull().unique(),
-		status: text("status").$type<ReplayRunStatus>().notNull(),
-		// Default 'text' so existing rows pre-dating realtime replay get the
-		// right value on migration without a hand-written backfill.
-		mode: text("mode").$type<ReplayRunMode>().notNull().default("text"),
-		webhookUrl: text("webhook_url").notNull(),
-		progressCompleted: integer("progress_completed").notNull().default(0),
-		progressTotal: integer("progress_total").notNull(),
-		startedAt: text("started_at").notNull(),
-		finishedAt: text("finished_at"),
-		error: text("error"),
+			.references(() => replays.id, { onDelete: "cascade" }),
+		turnIdx: integer("turn_idx"),
+		spanId: text("span_id"),
+		provider: text("provider"),
+		model: text("model"),
+		inputTokens: integer("input_tokens"),
+		outputTokens: integer("output_tokens"),
+		totalTokens: integer("total_tokens"),
+		startedAt: text("started_at"),
+		endedAt: text("ended_at"),
+		latencyMs: integer("latency_ms"),
+	},
+	(t) => [index("idx_model_usage_replay").on(t.replayId, t.startedAt)],
+);
+
+// ============================================================================
+// Assertions — per-turn predicate results posted by the SDK as xray.* spans
+// ============================================================================
+export const assertions = sqliteTable(
+	"assertions",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		replayId: text("replay_id")
+			.notNull()
+			.references(() => replays.id, { onDelete: "cascade" }),
+		turnIdx: integer("turn_idx").notNull(),
+		name: text("name").notNull(),
+		status: text("status").$type<AssertionStatus>().notNull(),
+		message: text("message"),
+		recordedAt: text("recorded_at").notNull(),
 	},
 	(t) => [
-		index("idx_replay_runs_source").on(t.sourceSessionId),
-		index("idx_replay_runs_started_at").on(t.startedAt),
-		check(
-			"replay_runs_status_ck",
-			sql`${t.status} IN ('pending', 'running', 'completed', 'failed')`,
-		),
-		// No CHECK on `mode` — would force a table rebuild on every migration that
-		// touches replay_runs. TS `$type<ReplayRunMode>()` + Valibot picklist at
-		// the boundary enforce the value set; nothing inside our process writes a
-		// raw string here.
+		index("idx_assertions_replay_turn").on(t.replayId, t.turnIdx),
+		unique("assertions_replay_turn_name_uk").on(t.replayId, t.turnIdx, t.name),
+		check("assertions_status_ck", sql`${t.status} IN ('passed', 'failed', 'errored')`),
 	],
 );

@@ -1,57 +1,83 @@
 import type { InferInsertModel, InferSelectModel } from "drizzle-orm";
 
-import type { replayRuns, sessions, toolCalls, turns } from "./schema.ts";
+import type {
+	assertions,
+	conversations,
+	modelUsage,
+	replayMeta,
+	replays,
+	replayTurns,
+	spans,
+	toolCalls,
+} from "./schema.ts";
 
-export type SessionSource = "adapter" | "ingest";
+// One source of truth: the runtime-visible array drives the Valibot picklist
+// at the wire boundary AND the static union type.
+export const REPLAY_STATUSES = ["running", "completed", "failed"] as const;
+export type ReplayStatus = (typeof REPLAY_STATUSES)[number];
 
-// Single source of truth: the `as const` array is runtime-visible (used
-// by Valibot's picklist in `replays.types.ts`) AND the static type. Adding
-// a value in one place updates both.
-export const REPLAY_RUN_STATUSES = ["pending", "running", "completed", "failed"] as const;
-export type ReplayRunStatus = (typeof REPLAY_RUN_STATUSES)[number];
+// Reasons that explain a `failed` replay. Always paired with `status='failed'`.
+export const REPLAY_FAILURE_REASONS = [
+	"agent_not_joined",
+	"runtime_error",
+	"audio_missing",
+	"sdk_aborted",
+	"other",
+] as const;
+export type ReplayFailureReason = (typeof REPLAY_FAILURE_REASONS)[number];
 
-/**
- * Replay run flavors. `text` is the HTTP-webhook flow (text → text per turn);
- * `realtime` is the WebSocket V2V flow (recorded user audio → agent audio
- * + transcript per turn). Same `replay_runs` row shape, different worker.
- */
-export const REPLAY_RUN_MODES = ["text", "realtime"] as const;
-export type ReplayRunMode = (typeof REPLAY_RUN_MODES)[number];
+// Judge result. `errored` is a first-class state, not a synonym for null —
+// it means the judge ran and the LLM call itself failed.
+export const JUDGE_STATUSES = ["pending", "passed", "failed", "errored"] as const;
+export type JudgeStatus = (typeof JUDGE_STATUSES)[number];
 
-/**
- * A unified session record. Covers provider-adapter polls (source='adapter',
- * provider set) and HTTP ingest pushes (source='ingest', provider null).
- *
- * Derived from the Drizzle schema in `schema.ts` — adding a column there
- * automatically widens this type.
- */
-export type Session = InferSelectModel<typeof sessions>;
+// Assertion result for one turn. `errored` covers the predicate itself
+// throwing — separate from a clean `fail`.
+export const ASSERTION_STATUSES = ["passed", "failed", "errored"] as const;
+export type AssertionStatus = (typeof ASSERTION_STATUSES)[number];
 
-/**
- * One conversation step persisted in `turns`. Mirrors `Turn` from
- * `@/adapters/types.ts` but flattens tool calls into a separate table.
- */
-export type TurnRow = InferSelectModel<typeof turns>;
+// Conversation turn role on the script. Voice in v1 is two-sided.
+export const TURN_ROLES = ["user", "agent"] as const;
+export type TurnRole = (typeof TURN_ROLES)[number];
 
-/** Builder shape for `appendTurns` — `sessionId` is filled by the repo. */
-export type TurnInput = Omit<InferInsertModel<typeof turns>, "sessionId">;
+// Modality of the recorded run. Voice in v1; video/text reserved without a
+// schema migration — receiver only enforces 'voice' for now.
+export const REPLAY_MODALITIES = ["voice"] as const;
+export type ReplayModality = (typeof REPLAY_MODALITIES)[number];
 
-/**
- * One tool invocation persisted in `tool_calls`. `argsJson` / `resultJson`
- * stay as JSON-encoded strings — the inspector deserializes on display so
- * the DB stays schema-agnostic about tool payload shapes.
- */
+// Recognized OTLP span vocabularies. Used when persisting raw spans so the
+// inspector can group + label without re-parsing attributes.
+export const SPAN_VOCABULARIES = ["xray", "gen_ai", "langfuse"] as const;
+export type SpanVocabulary = (typeof SPAN_VOCABULARIES)[number];
+
+/** A row in `conversations`. Composite primary key is `(id, version)`. */
+export type ConversationRow = InferSelectModel<typeof conversations>;
+export type ConversationInput = InferInsertModel<typeof conversations>;
+
+/** A row in `replays`. */
+export type ReplayRow = InferSelectModel<typeof replays>;
+export type ReplayInput = InferInsertModel<typeof replays>;
+
+/** A row in `replay_meta`. 1:1 with `replays`. */
+export type ReplayMetaRow = InferSelectModel<typeof replayMeta>;
+export type ReplayMetaInput = InferInsertModel<typeof replayMeta>;
+
+/** A row in `replay_turns`. Indexed under a replay. */
+export type ReplayTurnRow = InferSelectModel<typeof replayTurns>;
+export type ReplayTurnInput = InferInsertModel<typeof replayTurns>;
+
+/** A raw OTLP span persisted under a replay. */
+export type SpanRow = InferSelectModel<typeof spans>;
+export type SpanInput = InferInsertModel<typeof spans>;
+
+/** A tool call extracted from a recognized span. */
 export type ToolCallRow = InferSelectModel<typeof toolCalls>;
+export type ToolCallInput = InferInsertModel<typeof toolCalls>;
 
-/** Builder shape for `appendToolCalls` — `id` is auto-assigned, `turnId` comes from the arg. */
-export type ToolCallInput = Omit<InferInsertModel<typeof toolCalls>, "id" | "turnId">;
+/** LLM token-usage row extracted from gen_ai or langfuse spans. */
+export type ModelUsageRow = InferSelectModel<typeof modelUsage>;
+export type ModelUsageInput = InferInsertModel<typeof modelUsage>;
 
-/**
- * Persisted replay-run row. One row per `POST /v1/replays` call; the worker
- * walks user turns from `source_session_id` and writes the replayed agent
- * responses into a fresh session whose id is `target_session_id`.
- */
-export type ReplayRunRow = InferSelectModel<typeof replayRuns>;
-
-/** Builder shape for `createReplayRun`. */
-export type ReplayRunInput = InferInsertModel<typeof replayRuns>;
+/** Per-turn assertion result posted by the SDK. */
+export type AssertionRow = InferSelectModel<typeof assertions>;
+export type AssertionInput = InferInsertModel<typeof assertions>;
