@@ -22,14 +22,14 @@ Open-source replay/eval framework for LiveKit voice agents. One Docker image, on
 The image is published to GHCR:
 
 ```bash
-docker pull ghcr.io/basilebong/xray:0.0.1-alpha
+docker pull ghcr.io/xray-eval/xray:0.0.1-alpha
 ```
 
 Tagged releases are signed with cosign keyless (OIDC). To verify:
 
 ```bash
-cosign verify ghcr.io/basilebong/xray:<tag> \
-  --certificate-identity-regexp 'https://github.com/basilebong/xray/' \
+cosign verify ghcr.io/xray-eval/xray:<tag> \
+  --certificate-identity-regexp 'https://github.com/xray-eval/xray/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -57,7 +57,7 @@ Drop xray into your existing compose stack alongside your LiveKit agent:
 # compose.yaml
 services:
   xray:
-    image: ghcr.io/basilebong/xray:0.0.1-alpha
+    image: ghcr.io/xray-eval/xray:0.0.1-alpha
     ports:
       - "127.0.0.1:8080:8080"   # bind to localhost only — see Security below
     volumes:

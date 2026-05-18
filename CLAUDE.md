@@ -45,7 +45,7 @@ The Python SDK lives at [`sdk/python/`](./sdk/python). Three modules:
 
 ## Distribution
 
-Shipped artifact: a Docker image published to **GHCR** (`ghcr.io/basilebong/xray`) by CI on tagged releases. Operators `docker pull` and run it. No SaaS, no hosted version.
+Shipped artifact: a Docker image published to **GHCR** (`ghcr.io/xray-eval/xray`) by CI on tagged releases. Operators `docker pull` and run it. No SaaS, no hosted version.
 
 ## Local-first
 
