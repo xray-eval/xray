@@ -22,7 +22,7 @@ export function ConversationDetail() {
 
 	const conversation = useQuery({
 		queryKey: ["conversations", { id: conversationId }],
-		queryFn: ({ signal }) => getConversation(conversationId, signal),
+		queryFn: ({ signal }) => getConversation(conversationId, { signal }),
 	});
 
 	const replays = useQuery({
