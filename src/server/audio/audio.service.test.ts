@@ -1,14 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { and, eq } from "drizzle-orm";
 
-import { replayTurns } from "@/server/store/schema.ts";
+import { replays, replayTurns } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import {
 	AudioNotUploadedError,
+	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
 	AudioTurnNotFoundError,
 } from "./audio.errors.ts";
@@ -187,6 +188,46 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 		).rejects.toBeInstanceOf(AudioReplayNotFoundError);
 	});
 });
+
+describe("path-traversal defense", () => {
+	it("readReplayAudio throws AudioPathOutsideRootError when a tampered row escapes the root", async () => {
+		const { replayId } = seedReplayWithTurn(store);
+		store.db
+			.update(replays)
+			.set({ audioPath: "../escape/secret" })
+			.where(eq(replays.id, replayId))
+			.run();
+		const err = await captureThrown(() => readReplayAudio(store, audio.path, replayId));
+		expect(err).toBeInstanceOf(AudioPathOutsideRootError);
+		if (!(err instanceof AudioPathOutsideRootError)) throw err;
+		expect(err.audioRoot).toBe(resolve(audio.path));
+		expect(err.attemptedPath.endsWith(join("escape", "secret"))).toBe(true);
+		expect(err.attemptedPath.startsWith(`${resolve(audio.path)}/`)).toBe(false);
+	});
+
+	it("readTurnAudio throws AudioPathOutsideRootError when a tampered turn row escapes the root", async () => {
+		const { replayId, turnIdx } = seedReplayWithTurn(store);
+		store.db
+			.update(replayTurns)
+			.set({ audioPath: "../escape/turn-secret" })
+			.where(and(eq(replayTurns.replayId, replayId), eq(replayTurns.idx, turnIdx)))
+			.run();
+		const err = await captureThrown(() => readTurnAudio(store, audio.path, replayId, turnIdx));
+		expect(err).toBeInstanceOf(AudioPathOutsideRootError);
+		if (!(err instanceof AudioPathOutsideRootError)) throw err;
+		expect(err.audioRoot).toBe(resolve(audio.path));
+		expect(err.attemptedPath.endsWith(join("escape", "turn-secret"))).toBe(true);
+	});
+});
+
+async function captureThrown(fn: () => Promise<unknown>): Promise<unknown> {
+	try {
+		await fn();
+	} catch (e) {
+		return e;
+	}
+	throw new Error("expected function to throw, but it resolved");
+}
 
 async function streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array<ArrayBuffer>> {
 	const chunks: Uint8Array[] = [];
