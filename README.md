@@ -23,21 +23,21 @@ There are two ways to get sessions into xray: an HTTP ingest endpoint your loop 
 The image is published to GHCR:
 
 ```bash
-docker pull ghcr.io/basilebong/xray:0.0.1-alpha
+docker pull ghcr.io/xray-eval/xray:0.0.1-alpha
 ```
 
 Tagged releases are signed with cosign keyless (OIDC). If you want to verify:
 
 ```bash
-cosign verify ghcr.io/basilebong/xray:<tag> \
-  --certificate-identity-regexp 'https://github.com/basilebong/xray/' \
+cosign verify ghcr.io/xray-eval/xray:<tag> \
+  --certificate-identity-regexp 'https://github.com/xray-eval/xray/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/basilebong/xray.git
+git clone https://github.com/xray-eval/xray.git
 cd xray
 docker build -t xray:local .
 ```
@@ -52,7 +52,7 @@ xray is designed to sit in the same Docker network as your voice agent so your l
 # compose.yaml
 services:
   xray:
-    image: ghcr.io/basilebong/xray:0.0.1-alpha
+    image: ghcr.io/xray-eval/xray:0.0.1-alpha
     ports:
       - "8080:8080"          # only expose if you want the UI reachable from the host
     volumes:
@@ -157,7 +157,7 @@ If you use ElevenLabs Convai, you can skip the ingest step entirely. Set `ELEVEN
 ```yaml
 services:
   xray:
-    image: ghcr.io/basilebong/xray:0.0.1-alpha
+    image: ghcr.io/xray-eval/xray:0.0.1-alpha
     ports:
       - "8080:8080"
     volumes:

@@ -58,7 +58,7 @@ Bumping the major in \`protocolVersion\` is a breaking change. The engine refuse
 - Chunks within one turn MUST share the same \`contentType\` — mid-turn changes are rejected.
 - The webhook satisfies in-flight tool calls using the recorded results in the manifest (\`turns[i].recordedToolResults\`) so replays don't re-execute real tool side effects.
 
-The full Valibot schemas live in [\`src/server/replays/realtime/realtime.types.ts\`](https://github.com/basilebong/xray/blob/main/src/server/replays/realtime/realtime.types.ts).`;
+The full Valibot schemas live in [\`src/server/replays/realtime/realtime.types.ts\`](https://github.com/xray-eval/xray/blob/main/src/server/replays/realtime/realtime.types.ts).`;
 
 /**
  * Build the AsyncAPI 3.0 document describing the realtime-replay protocol.
