@@ -10,6 +10,8 @@ detach token.
 from __future__ import annotations
 
 import asyncio
+import json
+from dataclasses import dataclass
 
 import pytest
 from opentelemetry import baggage, context
@@ -21,6 +23,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from opentelemetry.trace import set_tracer_provider
 
 from xray import trace as xray_trace
+from xray.errors import MissingReplayContextError
 from xray.trace import (
     XRAY_CONVERSATION_ID,
     XRAY_CONVERSATION_VERSION,
@@ -30,12 +33,19 @@ from xray.trace import (
     XRAY_TURN_KEY,
     astage,
     aturn,
+    bind_from_livekit_room,
     detach,
     replay_context,
     set_replay_context,
     stage,
     turn,
 )
+
+
+@dataclass
+class _StubRoom:
+    metadata: str | None
+
 
 # Module-level OTEL state — installed exactly once per pytest process.
 # Setting a TracerProvider twice in one process is a no-op + warning, so
@@ -168,3 +178,61 @@ def test_context_is_clean_between_tests():
     # property of the current context which we never installed.
     assert baggage.get_baggage(XRAY_REPLAY_ID) is None
     assert context.get_current() is not None
+
+
+def test_bind_from_livekit_room_populates_baggage():
+    room = _StubRoom(
+        metadata=json.dumps(
+            {
+                XRAY_REPLAY_ID: "rep-1",
+                XRAY_CONVERSATION_ID: "conv-A",
+                XRAY_CONVERSATION_VERSION: "v123",
+                XRAY_MODALITY: "voice",
+            }
+        )
+    )
+    token = bind_from_livekit_room(room)
+    try:
+        assert baggage.get_baggage(XRAY_REPLAY_ID) == "rep-1"
+        assert baggage.get_baggage(XRAY_CONVERSATION_ID) == "conv-A"
+        assert baggage.get_baggage(XRAY_CONVERSATION_VERSION) == "v123"
+        assert baggage.get_baggage(XRAY_MODALITY) == "voice"
+    finally:
+        detach(token)
+
+
+def test_bind_from_livekit_room_defaults_modality_to_voice():
+    room = _StubRoom(
+        metadata=json.dumps(
+            {
+                XRAY_REPLAY_ID: "rep-1",
+                XRAY_CONVERSATION_ID: "conv-A",
+                XRAY_CONVERSATION_VERSION: "v123",
+            }
+        )
+    )
+    token = bind_from_livekit_room(room)
+    try:
+        assert baggage.get_baggage(XRAY_MODALITY) == "voice"
+    finally:
+        detach(token)
+
+
+def test_bind_from_livekit_room_raises_on_empty_metadata():
+    with pytest.raises(MissingReplayContextError):
+        bind_from_livekit_room(_StubRoom(metadata=""))
+
+
+def test_bind_from_livekit_room_raises_on_none_metadata():
+    with pytest.raises(MissingReplayContextError):
+        bind_from_livekit_room(_StubRoom(metadata=None))
+
+
+def test_bind_from_livekit_room_raises_on_malformed_json():
+    with pytest.raises(MissingReplayContextError):
+        bind_from_livekit_room(_StubRoom(metadata="{not json"))
+
+
+def test_bind_from_livekit_room_raises_on_missing_keys():
+    with pytest.raises(MissingReplayContextError):
+        bind_from_livekit_room(_StubRoom(metadata=json.dumps({XRAY_REPLAY_ID: "rep-1"})))

@@ -24,11 +24,14 @@ import contextvars
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from functools import wraps
-from typing import Final, Literal, ParamSpec, TypeAlias, TypeVar
+from typing import Final, Literal, ParamSpec, Protocol, TypeAlias, TypeVar
 
 from opentelemetry import baggage, context, trace
 from opentelemetry.context.context import Context
 from opentelemetry.trace import Span
+from pydantic import BaseModel, Field, ValidationError
+
+from xray.errors import MissingReplayContextError
 
 # OTEL's public re-exports don't expose ``Token`` cleanly under strict
 # typing, so we type ``attach``'s return as the underlying
@@ -135,6 +138,46 @@ async def aturn(idx: int, key: str | None = None) -> AsyncGenerator[None, None]:
         detach(token)
 
 
+class _HasMetadata(Protocol):
+    """Duck-type for ``livekit.rtc.Room`` — only ``.metadata`` is read."""
+
+    metadata: str | None
+
+
+class _RoomMetadata(BaseModel):
+    """Pydantic narrow of the JSON shape the orchestrator writes into
+    ``Room.metadata`` before the agent joins. Field aliases match the
+    ``xray.*`` baggage keys verbatim so the dev's runtime + the SDK speak
+    the same wire vocab."""
+
+    replay_id: str = Field(alias=XRAY_REPLAY_ID, min_length=1)
+    conversation_id: str = Field(alias=XRAY_CONVERSATION_ID, min_length=1)
+    conversation_version: str = Field(alias=XRAY_CONVERSATION_VERSION, min_length=1)
+    modality: Modality = Field(alias=XRAY_MODALITY, default="voice")
+
+
+def bind_from_livekit_room(room: _HasMetadata) -> _Token:
+    """Read ``room.metadata`` (set by the orchestrator before the agent
+    joined), parse the xray replay-context keys, and push them onto baggage.
+
+    Raises ``MissingReplayContextError`` if the metadata is empty, isn't
+    JSON, or doesn't carry the expected keys. Returns a detach token.
+    """
+    raw = room.metadata
+    if raw is None or raw == "":
+        raise MissingReplayContextError("room metadata is empty")
+    try:
+        meta = _RoomMetadata.model_validate_json(raw)
+    except ValidationError as e:
+        raise MissingReplayContextError(f"room metadata invalid: {e}") from e
+    return set_replay_context(
+        replay_id=meta.replay_id,
+        conversation_id=meta.conversation_id,
+        conversation_version=meta.conversation_version,
+        modality=meta.modality,
+    )
+
+
 def _stamp_baggage(span: Span) -> None:
     """Lift current baggage onto the span as xray.* attrs."""
     keys: tuple[BaggageKey, ...] = (
@@ -205,6 +248,7 @@ __all__ = [
     "XRAY_TURN_KEY",
     "astage",
     "aturn",
+    "bind_from_livekit_room",
     "detach",
     "replay_context",
     "set_replay_context",

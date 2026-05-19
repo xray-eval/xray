@@ -34,10 +34,18 @@ from xray.conversation import (
     Conversation,
     JudgeOutcome,
     JudgePredicate,
+    RecordedAudio,
     ReplayResult,
     TurnRecord,
 )
-from xray.errors import FAILURE_REASONS, AudioTooLargeError, FailureReason, XrayError
+from xray.errors import (
+    FAILURE_REASONS,
+    AudioMissingError,
+    AudioTooLargeError,
+    FailureReason,
+    VersionFingerprintMismatchError,
+    XrayError,
+)
 from xray.runtime.base import Runtime, RuntimeBindable, RuntimeResult
 
 logger = logging.getLogger(__name__)
@@ -129,7 +137,13 @@ async def run_async(
         # 1. Upsert Conversation.
         spec = conversation.to_spec_payload()
         r = await client.post("/v1/conversations", json=spec)
+        if r.status_code == 409:
+            _raise_conversation_conflict(r, conversation)
         r.raise_for_status()
+
+        # Pre-flight every RecordedAudio reference before the Replay row is
+        # created — a missing file later would leave an orphan server-side.
+        _check_recorded_audio_exists(conversation)
 
         # 2. Create Replay eagerly so the SDK can propagate the id BEFORE
         #    the runtime joins the room.
@@ -306,6 +320,42 @@ def _is_failure_reason(s: str) -> TypeGuard[FailureReason]:
     pyright doesn't propagate narrowing through a frozenset `in` check,
     so we make it explicit."""
     return s in FAILURE_REASONS
+
+
+class _ConversationConflictBody(BaseModel):
+    """Best-effort narrow of the 409 response from ``POST /v1/conversations``.
+    Both fields are optional — the server may omit them when the conflict
+    is detected purely by lookup. Any extra keys are ignored."""
+
+    conversationId: str | None = None
+    conversationVersion: str | None = None
+
+
+def _raise_conversation_conflict(response: httpx.Response, conversation: Conversation) -> None:
+    """Map a 409 from ``POST /v1/conversations`` to the typed
+    ``VersionFingerprintMismatchError``. Falls back to the SDK's known
+    ``(id, version)`` when the server body is missing the fields."""
+    try:
+        body = _ConversationConflictBody.model_validate(response.json())
+    except (ValueError, ValidationError):
+        body = _ConversationConflictBody()
+    raise VersionFingerprintMismatchError(
+        body.conversationId or conversation.id,
+        body.conversationVersion or conversation.version,
+    )
+
+
+def _check_recorded_audio_exists(conversation: Conversation) -> None:
+    """Pre-flight every ``RecordedAudio`` reference. Raises ``AudioMissingError``
+    before the Replay row is created so a missing file can't produce an orphan
+    replay."""
+    for idx, turn in enumerate(conversation.turns):
+        audio = turn.audio
+        if not isinstance(audio, RecordedAudio):
+            continue
+        path = Path(audio.path)
+        if not path.is_file():
+            raise AudioMissingError(f"recorded audio file not found: {path}", turn_idx=idx)
 
 
 def _classify_failure(e: BaseException) -> FailureReason:
