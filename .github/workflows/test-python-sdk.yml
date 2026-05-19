@@ -80,25 +80,28 @@ jobs:
       # `importlib.import_module` + a `@runtime_checkable` Protocol
       # isinstance, so the static check doesn't need the package
       # installed. Saves ~60s of livekit + livekit-api download per run.
-      # `--system` installs into the runner's interpreter so ruff /
-      # pyright / pytest land on PATH without venv activation.
-      - name: Install SDK + dev extras
+      #
+      # `--system` would target Ubuntu 24.04's PEP 668-protected system
+      # Python and fail. Create a uv-managed venv and invoke the tools
+      # via `.venv/bin/<tool>` — same flow as the local instructions
+      # above.
+      - name: Create venv + install SDK + dev extras
         working-directory: sdk/python
-        run: uv pip install --system -e '.[dev]'
+        run: |
+          uv venv --python "$(cat ../../.python-version)"
+          uv pip install -e '.[dev]'
 
       - name: ruff (lint + format check)
         working-directory: sdk/python
         run: |
-          ruff check src tests
-          ruff format --check src tests
+          .venv/bin/ruff check src tests
+          .venv/bin/ruff format --check src tests
 
       # Strict mode is configured in sdk/python/pyproject.toml.
-      # `--outputjson` is intentionally NOT used — the human-readable
-      # output is what reviewers paste back in PR comments.
       - name: pyright (strict)
         working-directory: sdk/python
-        run: pyright src tests
+        run: .venv/bin/pyright src tests
 
       - name: pytest
         working-directory: sdk/python
-        run: pytest -v
+        run: .venv/bin/pytest -v
