@@ -33,7 +33,7 @@ flowchart LR
     subgraph DRV["Driver — test side (Python)"]
       direction TB
       D1["<b>xray.run(...)</b><br/>orchestrator<br/>(POSTs control plane,<br/>installs OTLP pipeline,<br/>attaches replay baggage)"]
-      D2["<b>LiveKitDriver</b><br/>plays user audio,<br/>emits xray.turn role=user span,<br/>captures mixdown WAV"]
+      D2["<b>LiveKitDriver</b><br/>plays user audio,<br/>captures agent audio + transcripts,<br/>emits xray.turn for <i>both</i> roles<br/>(sole owner of (replay_id, idx)),<br/>writes mixdown WAV"]
       D1 --> D2
     end
 
@@ -44,7 +44,7 @@ flowchart LR
     subgraph AGT["Agent worker — dev's code (Python)"]
       direction TB
       A1["<b>async with xray.attach(ctx)</b><br/>reads JWT 'xray' attribute,<br/>sets OTEL baggage,<br/>installs OTLP pipeline"]
-      A2["dev's agent code:<br/>strategy, STT, TTS, tool-calls<br/>emits gen_ai.* + xray.turn role=agent<br/>+ xray.assertion + xray.judge spans"]
+      A2["dev's agent code:<br/>strategy, STT, TTS, tool-calls<br/>emits gen_ai.* + xray.stage.*<br/>+ xray.assertion + xray.judge spans<br/><i>(does NOT emit xray.turn —<br/>that's the driver's job)</i>"]
       A1 --> A2
     end
 
@@ -64,10 +64,10 @@ flowchart LR
 
     D1 -- "POST /v1/conversations<br/>POST /v1/replays<br/>POST /audio<br/>PATCH /v1/replays/:id" --> CTL
     D1 -. "GET /v1/replays/:id<br/>(enrichment fetch<br/>before assertions)" .-> CTL
-    D2 -- "xray.turn role=user span" --> OTLP
+    D2 -- "xray.turn role=user (per user turn)<br/>xray.turn role=agent (per agent turn)" --> OTLP
     D2 -- "publish audio track" --> LKR
     LKR -- "deliver audio +<br/>live transcripts" --> A2
-    A2 -- "gen_ai.* + xray.* spans" --> OTLP
+    A2 -- "gen_ai.* / xray.stage.* /<br/>xray.assertion / xray.judge spans" --> OTLP
 ```
 
 ### Why three processes
@@ -171,12 +171,16 @@ line in `registry.ts`. The receiver is a **filter, not a gate**:
   production, where there is no replay context, doesn't write rows).
 
 The four xray-specific span kinds the registry knows about:
-- `xray.turn` (role=user from driver, role=agent from agent worker) →
+- `xray.turn` (both roles, **emitted only by the driver**) →
   `replay_turns` row carrying idx, role, key, transcript, timestamps.
-- `xray.assertion` → `assertions` row.
-- `xray.judge` → judge fields on `replay_meta`.
-- `xray.stage` (stt, tts) → raw span only; surfaced for per-stage
-  latency in the inspector.
+  Sole emitter avoids a `(replay_id, idx)` PK collision that would
+  otherwise occur if the agent worker also emitted its own
+  `xray.turn` for the same idx.
+- `xray.assertion` (emitted by the agent worker) → `assertions` row.
+- `xray.judge` (emitted by the agent worker, or by the driver via the
+  judge predicate path) → judge fields on `replay_meta`.
+- `xray.stage` (stt, tts — emitted by the agent worker) → raw span
+  only; surfaced for per-stage latency in the inspector.
 
 GenAI semconv (`gen_ai.tool` → `tool_calls`, `gen_ai.client.operation`
 → `model_usage`) flows the same way.
@@ -209,9 +213,9 @@ sequenceDiagram
         A->>A: STT → strategy → tool-calls → TTS
         A->>X: xray.stage.stt span
         A->>X: gen_ai.* tool spans
-        A->>X: xray.turn span<br/>(role=agent, observed transcript)
         A->>LK: publish agent audio
         LK->>D: capture agent audio +<br/>live transcripts
+        D->>X: xray.turn span<br/>(role=agent, idx, captured transcript, key)
       end
     end
 

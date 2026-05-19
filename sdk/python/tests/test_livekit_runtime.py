@@ -361,6 +361,82 @@ def test_user_turn_emits_xray_turn_span(tmp_path: Path, monkeypatch: pytest.Monk
     assert span.end_time >= span.start_time
 
 
+def test_driver_emits_xray_turn_for_user_and_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The driver is the sole emitter of ``replay_turns`` rows. For a
+    user+agent conversation it must emit one ``xray.turn`` span per
+    turn — role=user for the played audio, role=agent for the captured
+    response — with monotonically increasing idx values, so the server
+    PK ``(replay_id, idx)`` doesn't collide with anything an agent
+    worker might emit on its own.
+    """
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    import xray.runtime.livekit as livekit_mod
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(livekit_mod, "_TRACER", provider.get_tracer("xray-py-driver", "0.0.1"))
+
+    wav_path = tmp_path / "u0.wav"
+    _write_recorded_wav(wav_path, ms=40)
+
+    rtc = _build_fake_lk_rtc(
+        staged_events=[
+            _stage_agent_join(),
+            _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)]),
+            _stage_transcription_final("confirmed at 7pm"),
+        ]
+    )
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api)
+    rt.agent_turn_timeout_s = 2.0
+
+    conv = Conversation(
+        id="c",
+        turns=[
+            Turn.user("hello", key="u0", audio=RecordedAudio(path=str(wav_path))),
+            Turn.agent(key="a0"),
+        ],
+    )
+    asyncio.run(rt.run(conv))
+
+    turn_spans = [s for s in exporter.get_finished_spans() if s.name == "xray.turn"]
+    assert len(turn_spans) == 2, f"expected 2 xray.turn spans, got {len(turn_spans)}"
+    user_attrs = (
+        next(
+            (
+                s.attributes
+                for s in turn_spans
+                if (s.attributes or {}).get("xray.turn.role") == "user"
+            ),
+            None,
+        )
+        or {}
+    )
+    agent_attrs = (
+        next(
+            (
+                s.attributes
+                for s in turn_spans
+                if (s.attributes or {}).get("xray.turn.role") == "agent"
+            ),
+            None,
+        )
+        or {}
+    )
+    assert user_attrs.get("xray.turn.idx") == 0
+    assert user_attrs.get("xray.turn.transcript") == "hello"
+    assert user_attrs.get("xray.turn.key") == "u0"
+    assert agent_attrs.get("xray.turn.idx") == 1
+    assert agent_attrs.get("xray.turn.transcript") == "confirmed at 7pm"
+    assert agent_attrs.get("xray.turn.key") == "a0"
+    # Distinct idx values rule out the (replay_id, idx) PK collision.
+    assert user_attrs.get("xray.turn.idx") != agent_attrs.get("xray.turn.idx")
+
+
 def test_tts_path_uses_openai_injection_and_caches(tmp_path: Path):
     calls: list[dict[str, Any]] = []
 

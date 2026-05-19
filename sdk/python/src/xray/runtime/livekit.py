@@ -370,7 +370,6 @@ class LiveKitDriver(Runtime):
         stream = lk_rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS)
 
         segment = _TurnSegment(role="agent", idx=idx, key=turn.key)
-        segment.started_at = time.time()
         transcript_buf: list[str] = []
         final_seen = asyncio.Event()
 
@@ -382,40 +381,56 @@ class LiveKitDriver(Runtime):
                     final_seen.set()
                     return
 
-        transcript_task = asyncio.create_task(_drain_transcripts())
-        deadline = time.time() + self.agent_turn_timeout_s
+        # Emit the agent-role ``xray.turn`` span from the driver too.
+        # The driver owns turn-idx allocation end-to-end (enumerated
+        # from ``conversation.turns``), so it is the only side that can
+        # emit replay_turns rows without colliding on the
+        # ``(replay_id, idx)`` primary key — an agent worker emitting
+        # its own ``xray.turn`` for the same idx would have its row
+        # last-write-win over the driver's.
+        with _TRACER.start_as_current_span("xray.turn") as span:
+            span.set_attribute("xray.turn.idx", idx)
+            span.set_attribute("xray.turn.role", "agent")
+            if turn.key is not None:
+                span.set_attribute("xray.turn.key", turn.key)
+            segment.started_at = time.time()
+            transcript_task = asyncio.create_task(_drain_transcripts())
+            deadline = time.time() + self.agent_turn_timeout_s
 
-        async def _consume_frames() -> None:
-            async for event in stream:
-                segment.pcm.extend(bytes(event.frame.data))
-                if final_seen.is_set():
-                    break
+            async def _consume_frames() -> None:
+                async for event in stream:
+                    segment.pcm.extend(bytes(event.frame.data))
+                    if final_seen.is_set():
+                        break
 
-        try:
-            # asyncio.wait_for caps the consume loop so a silent agent
-            # can't hang the iterator forever; the inner `final_seen`
-            # short-circuits as soon as the transcript flips final.
-            remaining = max(0.0, deadline - time.time())
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(_consume_frames(), timeout=remaining)
-        finally:
-            await stream.aclose()
-            # Drain anything in the queue before tearing down the task —
-            # segments may have arrived before the task got a turn on the
-            # loop (common when the stream finishes synchronously, as in
-            # the test mocks).
-            while not transcription_queue.empty():
-                seg = transcription_queue.get_nowait()
-                transcript_buf.append(seg.text)
-                if seg.final:
-                    final_seen.set()
-            if not transcript_task.done():
-                transcript_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await transcript_task
+            try:
+                # asyncio.wait_for caps the consume loop so a silent agent
+                # can't hang the iterator forever; the inner `final_seen`
+                # short-circuits as soon as the transcript flips final.
+                remaining = max(0.0, deadline - time.time())
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(_consume_frames(), timeout=remaining)
+            finally:
+                await stream.aclose()
+                # Drain anything in the queue before tearing down the task —
+                # segments may have arrived before the task got a turn on the
+                # loop (common when the stream finishes synchronously, as in
+                # the test mocks).
+                while not transcription_queue.empty():
+                    seg = transcription_queue.get_nowait()
+                    transcript_buf.append(seg.text)
+                    if seg.final:
+                        final_seen.set()
+                if not transcript_task.done():
+                    transcript_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await transcript_task
 
-        segment.ended_at = time.time()
-        segment.transcript = " ".join(transcript_buf).strip()
+            segment.ended_at = time.time()
+            segment.transcript = " ".join(transcript_buf).strip()
+            if segment.transcript:
+                span.set_attribute("xray.turn.transcript", segment.transcript)
+
         return segment, AgentResponse(
             transcript=segment.transcript,
             duration_ms=int((segment.ended_at - segment.started_at) * 1000),
