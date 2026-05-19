@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from xray.errors import (
     AgentNotJoinedError,
     AudioMissingError,
     AudioTooLargeError,
+    FailureReason,
     LiveKitDependencyError,
     MixdownError,
     RuntimeBindError,
@@ -24,7 +27,9 @@ from xray.errors import (
         (lambda: LiveKitDependencyError("install [livekit]"), "runtime_error"),
     ],
 )
-def test_each_error_carries_its_failure_reason(ctor, expected):
+def test_each_error_carries_its_failure_reason(
+    ctor: Callable[[], XrayError], expected: FailureReason
+) -> None:
     err = ctor()
     assert isinstance(err, XrayError)
     assert err.failure_reason == expected

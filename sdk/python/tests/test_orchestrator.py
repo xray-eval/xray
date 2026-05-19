@@ -9,10 +9,38 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
+from typing_extensions import override
 
 from xray import Conversation, Turn, expect_agent_turn, run
 from xray.conversation import AgentResponse, JudgeOutcome
 from xray.runtime.base import Runtime, RuntimeResult
+
+
+def _raw_body(route: respx.Route, idx: int = 0) -> bytes:
+    """Walk respx's loosely-typed ``Call.request.content`` -> ``bytes``.
+
+    ``respx.CallList`` subclasses ``unittest.mock.NonCallableMock``, so
+    every attribute on it surfaces as ``Unknown`` to pyright. One typed
+    helper narrows the chain once; the tests stay readable."""
+    call: object = route.calls[idx]
+    request: object = getattr(call, "request", None)
+    content: object = getattr(request, "content", None)
+    if not isinstance(content, bytes):
+        raise AssertionError(f"unexpected request content type: {type(content).__name__}")
+    return content
+
+
+def _decoded_body(route: respx.Route, idx: int = 0) -> str:
+    return _raw_body(route, idx).decode()
+
+
+def _request_headers(route: respx.Route, idx: int = 0) -> dict[str, str]:
+    call: object = route.calls[idx]
+    request: object = getattr(call, "request", None)
+    headers: object = getattr(request, "headers", None)
+    if not isinstance(headers, httpx.Headers):
+        raise AssertionError(f"unexpected request headers type: {type(headers).__name__}")
+    return dict(headers)
 
 
 class StubRuntime(Runtime):
@@ -36,11 +64,11 @@ class StubRuntime(Runtime):
             "conversation_version": conversation_version,
         }
 
+    @override
     async def run(self, conversation: Conversation) -> RuntimeResult:
-        return RuntimeResult(
-            responses=self.responses, full_audio_path=self.full_audio_path
-        )
+        return RuntimeResult(responses=self.responses, full_audio_path=self.full_audio_path)
 
+    @override
     async def aclose(self) -> None:
         self.closed = True
 
@@ -103,8 +131,7 @@ def test_run_creates_conversation_then_replay_then_patches_with_judge():
     assert post_replay.called
     assert patch_replay.called
 
-    patch_call = patch_replay.calls[0]
-    body = patch_call.request.content.decode()
+    body = _decoded_body(patch_replay)
     assert '"status":"completed"' in body
     assert '"judge"' in body
     assert '"score":99' in body
@@ -125,9 +152,11 @@ def test_run_marks_failed_when_runtime_raises():
     conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
 
     class BoomRuntime(Runtime):
+        @override
         async def run(self, conversation: Conversation) -> RuntimeResult:
             raise RuntimeError("agent_not_joined")
 
+        @override
         async def aclose(self) -> None: ...
 
     respx.post("http://xray.local/v1/conversations").mock(
@@ -143,7 +172,7 @@ def test_run_marks_failed_when_runtime_raises():
     result = run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
     assert result.status == "failed"
     assert patch_replay.called
-    body = patch_replay.calls[0].request.content.decode()
+    body = _decoded_body(patch_replay)
     assert '"status":"failed"' in body
     # The raised message matches the server's failureReason picklist
     # ("agent_not_joined"), so it survives the classifier verbatim.
@@ -158,9 +187,11 @@ def test_run_falls_back_to_runtime_error_for_unmapped_exception():
     conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
 
     class BoomRuntime(Runtime):
+        @override
         async def run(self, conversation: Conversation) -> RuntimeResult:
             raise RuntimeError("connection refused to wss://livekit.example")
 
+        @override
         async def aclose(self) -> None: ...
 
     respx.post("http://xray.local/v1/conversations").mock(
@@ -174,7 +205,7 @@ def test_run_falls_back_to_runtime_error_for_unmapped_exception():
     ).mock(return_value=httpx.Response(200, json={}))
 
     run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
-    body = patch_replay.calls[0].request.content.decode()
+    body = _decoded_body(patch_replay)
     assert '"failureReason":"runtime_error"' in body
 
 
@@ -183,7 +214,7 @@ def test_run_falls_back_to_runtime_error_for_unmapped_exception():
     [(True, "passed"), (False, "failed")],
 )
 @respx.mock
-def test_assertion_outcomes(passes, expected):
+def test_assertion_outcomes(passes: bool, expected: str) -> None:
     conv = Conversation(
         id="x",
         turns=[
@@ -191,9 +222,7 @@ def test_assertion_outcomes(passes, expected):
             expect_agent_turn(key="a0", assertion=lambda agent: passes, assertion_name="n"),
         ],
     )
-    runtime = StubRuntime(
-        responses=[AgentResponse(transcript=""), AgentResponse(transcript="ok")]
-    )
+    runtime = StubRuntime(responses=[AgentResponse(transcript=""), AgentResponse(transcript="ok")])
     respx.post("http://xray.local/v1/conversations").mock(
         return_value=httpx.Response(200, json=conv.to_spec_payload())
     )
@@ -231,15 +260,15 @@ def test_audio_uploaded_when_runtime_returns_full_audio_path(tmp_path: Path):
     audio_upload = respx.post(
         "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000bb/audio"
     ).mock(return_value=httpx.Response(200, json={"ok": True}))
-    respx.patch(
-        "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000bb"
-    ).mock(return_value=httpx.Response(200, json={}))
+    respx.patch("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000bb").mock(
+        return_value=httpx.Response(200, json={})
+    )
 
     result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert audio_upload.called
-    upload_call = audio_upload.calls[0]
-    assert upload_call.request.headers["content-type"] == "audio/wav"
-    assert upload_call.request.content == wav_bytes
+    headers = _request_headers(audio_upload)
+    assert headers["content-type"] == "audio/wav"
+    assert _raw_body(audio_upload) == wav_bytes
     assert result.status == "completed"
 
 
@@ -258,9 +287,9 @@ def test_audio_upload_skipped_when_runtime_returns_no_path():
     audio_upload = respx.post(
         "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000cc/audio"
     ).mock(return_value=httpx.Response(200, json={"ok": True}))
-    respx.patch(
-        "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000cc"
-    ).mock(return_value=httpx.Response(200, json={}))
+    respx.patch("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000cc").mock(
+        return_value=httpx.Response(200, json={})
+    )
 
     run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert not audio_upload.called
@@ -285,16 +314,16 @@ def test_audio_upload_failure_demotes_replay_to_failed(tmp_path: Path):
     respx.post("http://xray.local/v1/replays").mock(
         return_value=httpx.Response(201, json={"id": "00000000-0000-0000-0000-0000000000dd"})
     )
-    respx.post(
-        "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000dd/audio"
-    ).mock(return_value=httpx.Response(500, json={"error": "store_failure"}))
+    respx.post("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000dd/audio").mock(
+        return_value=httpx.Response(500, json={"error": "store_failure"})
+    )
     patch_replay = respx.patch(
         "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000dd"
     ).mock(return_value=httpx.Response(200, json={}))
 
     result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert result.status == "failed"
-    body = patch_replay.calls[0].request.content.decode()
+    body = _decoded_body(patch_replay)
     assert '"status":"failed"' in body
 
 
@@ -331,7 +360,7 @@ def test_audio_upload_caps_at_50mib_locally(tmp_path: Path):
     result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert not audio_upload.called
     assert result.status == "failed"
-    body = patch_replay.calls[0].request.content.decode()
+    body = _decoded_body(patch_replay)
     assert '"failureReason":"runtime_error"' in body
     # Sanity: the typed error class is still importable for SDK users
     # who catch it explicitly.

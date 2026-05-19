@@ -28,6 +28,7 @@ from xray.trace import (
     XRAY_REPLAY_ID,
     XRAY_TURN_IDX,
     XRAY_TURN_KEY,
+    astage,
     aturn,
     detach,
     replay_context,
@@ -109,7 +110,7 @@ def test_nested_turn_restores_outer_scope():
         assert baggage.get_baggage(XRAY_TURN_KEY) == "u0"
 
 
-def test_stage_decorator_emits_named_span_with_baggage(_exporter):
+def test_stage_decorator_emits_named_span_with_baggage(_exporter: InMemorySpanExporter) -> None:
     @stage("stt")
     def transcribe(x: int) -> int:
         return x * 2
@@ -121,14 +122,15 @@ def test_stage_decorator_emits_named_span_with_baggage(_exporter):
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "xray.stage.stt"
-    assert span.attributes[XRAY_REPLAY_ID] == "r-7"
-    assert span.attributes[XRAY_CONVERSATION_ID] == "c-7"
-    assert span.attributes[XRAY_TURN_IDX] == "4"
-    assert span.attributes[XRAY_TURN_KEY] == "u4"
+    attrs = span.attributes or {}
+    assert attrs[XRAY_REPLAY_ID] == "r-7"
+    assert attrs[XRAY_CONVERSATION_ID] == "c-7"
+    assert attrs[XRAY_TURN_IDX] == "4"
+    assert attrs[XRAY_TURN_KEY] == "u4"
 
 
-def test_stage_async_decorator(_exporter):
-    @stage("tts")
+def test_stage_async_decorator(_exporter: InMemorySpanExporter) -> None:
+    @astage("tts")
     async def synth(text: str) -> str:
         return text + "!"
 
@@ -140,10 +142,11 @@ def test_stage_async_decorator(_exporter):
     spans = _exporter.get_finished_spans()
     assert len(spans) == 1
     assert spans[0].name == "xray.stage.tts"
-    assert spans[0].attributes[XRAY_REPLAY_ID] == "r-8"
+    attrs = spans[0].attributes or {}
+    assert attrs[XRAY_REPLAY_ID] == "r-8"
 
 
-def test_stage_records_exception_on_failure(_exporter):
+def test_stage_records_exception_on_failure(_exporter: InMemorySpanExporter) -> None:
     @stage("stt")
     def boom() -> int:
         raise RuntimeError("nope")

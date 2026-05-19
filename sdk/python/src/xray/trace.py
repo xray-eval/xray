@@ -11,22 +11,29 @@ spans the agent emits inherit it via baggage propagation.
 ``xray.turn.key``) — spans emitted inside the scope get attributed to
 that turn on the server side.
 
-Type safety: ``stage()`` exposes two overloads so sync and async
-callables keep their signatures end-to-end. ``BaggageKey`` is a closed
-``Literal`` so a typo on a baggage key is a static error.
+Type safety: ``stage()`` decorates sync functions; ``astage()`` decorates
+async ones. Splitting keeps the wrapped function's ``ParamSpec`` and
+return type exact, which a single-decorator variant can't express
+under ``pyright --strict``. ``BaggageKey`` is a closed ``Literal`` so
+a typo on a baggage key is a static error.
 """
 
 from __future__ import annotations
 
-import inspect
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+import contextvars
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from functools import wraps
-from typing import Final, Literal, ParamSpec, TypeAlias, TypeGuard, TypeVar, overload
+from typing import Final, Literal, ParamSpec, TypeAlias, TypeVar
 
 from opentelemetry import baggage, context, trace
-from opentelemetry.context import Token
+from opentelemetry.context.context import Context
 from opentelemetry.trace import Span
+
+# OTEL's public re-exports don't expose ``Token`` cleanly under strict
+# typing, so we type ``attach``'s return as the underlying
+# ``contextvars.Token[Context]`` shape that OTEL actually returns.
+_Token: TypeAlias = "contextvars.Token[Context]"
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -60,7 +67,7 @@ def set_replay_context(
     conversation_id: str,
     conversation_version: str,
     modality: Modality = "voice",
-) -> Token:
+) -> _Token:
     """Attach the replay's identity to the current OTEL context so every
     span emitted from now on (in this task / thread) inherits it.
 
@@ -74,7 +81,7 @@ def set_replay_context(
     return context.attach(ctx)
 
 
-def detach(token: Token) -> None:
+def detach(token: _Token) -> None:
     """Undo a prior ``set_replay_context`` / ``_attach_turn_context`` attach."""
     context.detach(token)
 
@@ -85,7 +92,7 @@ def replay_context(
     conversation_id: str,
     conversation_version: str,
     modality: Modality = "voice",
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Scoped variant of ``set_replay_context``."""
     token = set_replay_context(replay_id, conversation_id, conversation_version, modality)
     try:
@@ -94,7 +101,7 @@ def replay_context(
         detach(token)
 
 
-def _attach_turn_context(idx: int, key: str | None) -> Token:
+def _attach_turn_context(idx: int, key: str | None) -> _Token:
     ctx = context.get_current()
     ctx = baggage.set_baggage(XRAY_TURN_IDX, str(idx), context=ctx)
     if key is not None:
@@ -103,7 +110,7 @@ def _attach_turn_context(idx: int, key: str | None) -> Token:
 
 
 @contextmanager
-def turn(idx: int, key: str | None = None) -> Iterator[None]:
+def turn(idx: int, key: str | None = None) -> Generator[None, None, None]:
     """Scope ``xray.turn.idx`` (and optionally ``xray.turn.key``) baggage to
     a block. Every ``gen_ai.*`` / ``langfuse.*`` span emitted inside the
     block inherits the turn attribution via baggage propagation — the
@@ -118,7 +125,7 @@ def turn(idx: int, key: str | None = None) -> Iterator[None]:
 
 
 @asynccontextmanager
-async def aturn(idx: int, key: str | None = None) -> AsyncIterator[None]:
+async def aturn(idx: int, key: str | None = None) -> AsyncGenerator[None, None]:
     """Async variant of :func:`turn` — same semantics, usable from
     ``async with``."""
     token = _attach_turn_context(idx, key)
@@ -144,65 +151,46 @@ def _stamp_baggage(span: Span) -> None:
             span.set_attribute(key, str(value))
 
 
-def _is_coroutine_callable(
-    fn: Callable[P, Awaitable[R]] | Callable[P, R],
-) -> TypeGuard[Callable[P, Awaitable[R]]]:
-    """Narrow the sync/async union via a real TypeGuard so neither
-    branch of ``stage()`` needs a cast or a type-checker suppression."""
-    return inspect.iscoroutinefunction(fn)
+def stage(name: StageName) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Decorator for STT/TTS stage timing on a **sync** function.
 
-
-def stage(name: StageName) -> _AsyncOrSyncDecorator:
-    """Decorator for STT/TTS stage timing.
-
-    Wraps the decorated function in a span named ``xray.stage.<name>`` and
-    stamps the current baggage on it. Sync and async functions both work;
-    ``_AsyncOrSyncDecorator.__call__`` is overloaded so the wrapped
-    function keeps its exact signature.
+    Wraps the decorated function in a span named ``xray.stage.<name>``
+    and stamps the current baggage on it. For ``async def`` functions
+    use :func:`astage` — Python's type system can't express a
+    signature-preserving decorator that works for both kinds without
+    losing the wrapped function's exact ``ParamSpec`` + return type.
     """
-    return _AsyncOrSyncDecorator(f"xray.stage.{name}")
+    span_name = f"xray.stage.{name}"
 
-
-class _AsyncOrSyncDecorator:
-    """Callable object whose ``__call__`` is overloaded so sync- and
-    async-decorated functions both keep their signatures.
-
-    Implemented as a class (not a closure) because pyright resolves
-    ``__call__`` overloads on the class, which is the simplest way to
-    write a signature-preserving decorator without ``Any``.
-    """
-
-    def __init__(self, span_name: str) -> None:
-        self._span_name = span_name
-
-    @overload
-    def __call__(self, fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]: ...
-    @overload
-    def __call__(self, fn: Callable[P, R]) -> Callable[P, R]: ...
-    def __call__(
-        self, fn: Callable[P, Awaitable[R]] | Callable[P, R]
-    ) -> Callable[P, Awaitable[R]] | Callable[P, R]:
-        span_name = self._span_name
-        if _is_coroutine_callable(fn):
-            async_fn: Callable[P, Awaitable[R]] = fn
-
-            @wraps(async_fn)
-            async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-                with _tracer.start_as_current_span(span_name) as span:
-                    _stamp_baggage(span)
-                    return await async_fn(*args, **kwargs)
-
-            return async_wrapper
-
-        sync_fn: Callable[P, R] = fn
-
-        @wraps(sync_fn)
-        def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+    def decorator(fn: Callable[P, R]) -> Callable[P, R]:
+        @wraps(fn)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             with _tracer.start_as_current_span(span_name) as span:
                 _stamp_baggage(span)
-                return sync_fn(*args, **kwargs)
+                return fn(*args, **kwargs)
 
-        return sync_wrapper
+        return wrapper
+
+    return decorator
+
+
+def astage(
+    name: StageName,
+) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
+    """Async variant of :func:`stage`. Use on ``async def`` functions —
+    e.g. ``@astage("stt")`` around your STT call."""
+    span_name = f"xray.stage.{name}"
+
+    def decorator(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+        @wraps(fn)
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            with _tracer.start_as_current_span(span_name) as span:
+                _stamp_baggage(span)
+                return await fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 __all__ = [
@@ -215,6 +203,7 @@ __all__ = [
     "XRAY_REPLAY_ID",
     "XRAY_TURN_IDX",
     "XRAY_TURN_KEY",
+    "astage",
     "aturn",
     "detach",
     "replay_context",

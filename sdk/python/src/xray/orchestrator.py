@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Final, Literal, NotRequired, TypeAlias, TypedDict, TypeGuard
 
 import httpx
+from pydantic import BaseModel, ValidationError
 
 from xray._json import JsonObject
 from xray.conversation import (
@@ -59,7 +60,11 @@ class ReplayCreateBody(TypedDict):
     runConfig: NotRequired[JsonObject]
 
 
-class ReplayCreateResponse(TypedDict):
+class _ReplayCreateResponse(BaseModel):
+    """Inbound shape for ``POST /v1/replays`` — pydantic validates the
+    JSON at the trust boundary so the rest of the SDK receives a typed
+    object, not ``Unknown``."""
+
     id: str
 
 
@@ -189,9 +194,9 @@ async def run_async(
                 idx=idx,
                 role=turn.role,
                 key=turn.key,
-                transcript=response.transcript if response is not None else None,
+                transcript=response.transcript,
             )
-            if turn.assertion is not None and response is not None:
+            if turn.assertion is not None:
                 outcome = await _evaluate_assertion(
                     turn.assertion, turn.assertion_name or f"turn_{idx}", response
                 )
@@ -206,9 +211,7 @@ async def run_async(
                 conversation_id=conversation.id,
                 conversation_version=conversation.version,
                 turns=turn_records,
-                transcript=(
-                    runtime_result.full_transcript if runtime_result is not None else None
-                ),
+                transcript=(runtime_result.full_transcript if runtime_result is not None else None),
             )
             judge_outcome = await _evaluate_judge(conversation.judge, replay_result)
 
@@ -236,12 +239,10 @@ def _read_replay_id(raw: object) -> str:
     """Validate the ``POST /v1/replays`` response shape at the trust
     boundary — ``httpx`` hands us an untyped ``object``, and we don't
     propagate the field without checking it."""
-    if not isinstance(raw, dict):
-        raise XrayError(f"POST /v1/replays returned non-object body: {type(raw).__name__}")
-    replay_id = raw.get("id")
-    if not isinstance(replay_id, str):
-        raise XrayError("POST /v1/replays response missing string 'id'")
-    return replay_id
+    try:
+        return _ReplayCreateResponse.model_validate(raw).id
+    except ValidationError as e:
+        raise XrayError(f"POST /v1/replays response malformed: {e}") from e
 
 
 def _build_patch_body(
@@ -339,10 +340,8 @@ async def _evaluate_judge(predicate: JudgePredicate, replay: ReplayResult) -> Ju
     try:
         result = predicate(replay)
         if inspect.isawaitable(result):
-            result = await result
-        if isinstance(result, JudgeOutcome):
-            return result
-        return JudgeOutcome(status="errored", error="judge did not return a JudgeOutcome")
+            return await result
+        return result
     except Exception as e:
         return JudgeOutcome(status="errored", error=str(e))
 
@@ -351,7 +350,6 @@ __all__ = [
     "JudgePatchBody",
     "MAX_AUDIO_BYTES",
     "ReplayCreateBody",
-    "ReplayCreateResponse",
     "ReplayPatchBody",
     "ReplayStatus",
     "RunResult",

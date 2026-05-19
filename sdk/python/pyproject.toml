@@ -71,10 +71,29 @@ extend-select = ["I", "B", "UP", "SIM"]
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
 typeCheckingMode = "strict"
-reportMissingTypeStubs = "error"
+useLibraryCodeForTypes = true
 reportUnnecessaryTypeIgnoreComment = "error"
 reportImplicitOverride = "error"
-# LiveKit + httpx + opentelemetry currently ship partial / loose stubs;
-# we still demand strict on our own code via the per-file overrides above.
-useLibraryCodeForTypes = true
+
+# OTEL ships with partial type stubs; this would fire on every
+# `from opentelemetry import …`. Not our bug to fix.
+reportMissingTypeStubs = "none"
+
+# `tests/` legitimately:
+#  - exercises module-private helpers (_TurnSegment, _upsample_2x_int16, _tracer);
+#  - defines pytest fixtures whose names pyright sees as unused (the
+#    framework resolves them by string lookup);
+#  - uses respx, whose `CallList` subclasses `unittest.mock.NonCallableMock` —
+#    every `call.request.content` chain surfaces as `Unknown` no matter how
+#    carefully we narrow. We contain the looseness via `_raw_body` /
+#    `_request_headers` helpers in test_orchestrator.py; this relaxation
+#    just acknowledges the inbound `route.calls[idx]` itself is Unknown.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportPrivateUsage = "none"
+reportUnusedFunction = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"

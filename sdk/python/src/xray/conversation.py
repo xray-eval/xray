@@ -19,7 +19,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal, NotRequired, TypeAlias, TypedDict, assert_never
 
-
 Role: TypeAlias = Literal["user", "agent"]
 AssertionStatus: TypeAlias = Literal["passed", "failed", "errored"]
 
@@ -29,9 +28,7 @@ AssertionPredicate: TypeAlias = Callable[["AgentResponse"], bool | Awaitable[boo
 
 # Judge: receives the whole replay; returns a score + reason. Runs once per
 # replay against the dev's LLM credentials — xray never holds them.
-JudgePredicate: TypeAlias = Callable[
-    ["ReplayResult"], "JudgeOutcome | Awaitable[JudgeOutcome]"
-]
+JudgePredicate: TypeAlias = Callable[["ReplayResult"], "JudgeOutcome | Awaitable[JudgeOutcome]"]
 
 
 # ─── AudioRef: discriminated union ────────────────────────────────────
@@ -185,9 +182,12 @@ def _audio_to_wire(audio: AudioRef) -> AudioWirePayload:
     match audio:
         case RecordedAudio(path=path):
             return {"kind": "recorded", "path": path}
-        case TtsAudio(voice_id=None):
-            return {"kind": "tts"}
         case TtsAudio(voice_id=voice_id):
+            # Narrow inside the arm — pyright doesn't propagate the
+            # voice_id field type through the match pattern, so
+            # destructure-then-guard is what keeps NotRequired[str] honest.
+            if voice_id is None:
+                return {"kind": "tts"}
             return {"kind": "tts", "voiceId": voice_id}
         case _:
             assert_never(audio)

@@ -45,7 +45,7 @@ def test_spec_payload_matches_wire_shape():
     payload = c.to_spec_payload()
     assert payload["id"] == "conv-A"
     assert payload["version"] == c.version
-    assert payload["title"] == "hello"
+    assert payload.get("title") == "hello"
     assert payload["turns"] == [
         {"role": "user", "text": "hi there", "key": "u0"},
         {"role": "agent", "key": "a0"},

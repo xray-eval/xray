@@ -34,20 +34,6 @@ from xray.runtime.livekit import (
 # ─── Fakes ────────────────────────────────────────────────────────────
 
 
-@dataclass
-class _FakeRoomFactory:
-    """Builds a single ``_FakeRoom`` per call, but holds the staged
-    events that the room fires inside ``connect``."""
-
-    staged_events: list[tuple[str, tuple[Any, ...]]] = field(default_factory=list)
-    rooms: list[_FakeRoom] = field(default_factory=list)
-
-    def __call__(self) -> _FakeRoom:
-        room = _FakeRoom(staged_events=self.staged_events)
-        self.rooms.append(room)
-        return room
-
-
 class _FakeRoom:
     def __init__(self, staged_events: list[tuple[str, tuple[Any, ...]]]) -> None:
         self._handlers: dict[str, list[Any]] = {}
@@ -59,6 +45,7 @@ class _FakeRoom:
 
     def on(self, event: str, callback: Any = None) -> Any:
         if callback is None:
+
             def _decorator(cb: Any) -> Any:
                 self._handlers.setdefault(event, []).append(cb)
                 return cb
@@ -75,6 +62,22 @@ class _FakeRoom:
         # Replay staged events now that the runtime's handlers are wired.
         for name, args in self._staged_events:
             self.fire(name, *args)
+
+
+@dataclass
+class _FakeRoomFactory:
+    """Builds a single ``_FakeRoom`` per call, but holds the staged
+    events that the room fires inside ``connect``."""
+
+    staged_events: list[tuple[str, tuple[Any, ...]]] = field(
+        default_factory=list[tuple[str, tuple[Any, ...]]]
+    )
+    rooms: list[_FakeRoom] = field(default_factory=list[_FakeRoom])
+
+    def __call__(self) -> _FakeRoom:
+        room = _FakeRoom(staged_events=self.staged_events)
+        self.rooms.append(room)
+        return room
 
 
 @dataclass
@@ -288,6 +291,7 @@ def test_runtime_captures_agent_turn_via_transcription(tmp_path: Path):
     result = asyncio.run(rt.run(conv))
     assert len(result.responses) == 2
     assert "confirmed at 7pm" in result.responses[1].transcript
+    assert result.full_audio_path is not None
     out = Path(result.full_audio_path)
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2

@@ -27,7 +27,7 @@ class RuntimeResult:
     # Per-turn outcomes, indexed by the same order as ``Conversation.turns``.
     # User turns have a synthesized ``AgentResponse`` with empty fields so the
     # caller can iterate uniformly.
-    responses: list[AgentResponse] = field(default_factory=list)
+    responses: list[AgentResponse] = field(default_factory=list[AgentResponse])
     # Path under the runtime's working dir to the full-replay audio mixdown
     # (if produced). The orchestrator uploads it to xray.
     full_audio_path: str | None = None

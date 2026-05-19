@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import ClassVar, Final, assert_never
 
 import httpx
+from typing_extensions import override
 
 from xray.conversation import (
     AgentResponse,
@@ -135,6 +136,7 @@ class LiveKitRuntime(Runtime):
         self.conversation_id = conversation_id
         self.conversation_version = conversation_version
 
+    @override
     async def run(self, conversation: Conversation) -> RuntimeResult:
         if (
             self.replay_id is None
@@ -161,12 +163,15 @@ class LiveKitRuntime(Runtime):
         agent_audio_track_holder: list[LkTrack] = []
         transcription_queue: asyncio.Queue[LkTranscriptionSegment] = asyncio.Queue()
 
-        @room.on("participant_connected")
+        # `@room.on("event")` is a decorator that re-binds the function
+        # name to its own return value — pyright then flags the inner
+        # function as unused. Calling `room.on("event")(...)` directly
+        # keeps the function as a read reference and discards the
+        # decorator's return value.
         def _on_join(participant: LkParticipant) -> None:
             if participant.identity != self.identity:
                 agent_joined.set()
 
-        @room.on("track_subscribed")
         def _on_track(track: LkTrack, _publication: object, participant: LkParticipant) -> None:
             if participant.identity == self.identity:
                 return
@@ -178,7 +183,6 @@ class LiveKitRuntime(Runtime):
                 agent_audio_track_holder.append(track)
                 agent_track_event.set()
 
-        @room.on("transcription_received")
         def _on_transcription(
             segments: list[LkTranscriptionSegment],
             participant: LkParticipant,
@@ -189,13 +193,15 @@ class LiveKitRuntime(Runtime):
             for seg in segments:
                 transcription_queue.put_nowait(seg)
 
+        room.on("participant_connected")(_on_join)
+        room.on("track_subscribed")(_on_track)
+        room.on("transcription_received")(_on_transcription)
+
         await room.connect(self.url, token, options=lk_rtc.RoomOptions())
         try:
             await self._set_room_metadata(room.local_participant)
             try:
-                await asyncio.wait_for(
-                    agent_joined.wait(), timeout=self.agent_join_timeout_s
-                )
+                await asyncio.wait_for(agent_joined.wait(), timeout=self.agent_join_timeout_s)
             except TimeoutError as e:
                 raise AgentNotJoinedError(self.room, self.agent_join_timeout_s) from e
 
@@ -297,9 +303,7 @@ class LiveKitRuntime(Runtime):
         pcm = await self._load_or_synth_user_pcm(conv_id=conv_id, idx=idx, turn=turn)
         segment = _TurnSegment(role="user", idx=idx, key=turn.key, transcript=turn.text or "")
         segment.started_at = time.time()
-        await self._publish_pcm(
-            audio_source=audio_source, lk_rtc=lk_rtc, pcm=pcm, segment=segment
-        )
+        await self._publish_pcm(audio_source=audio_source, lk_rtc=lk_rtc, pcm=pcm, segment=segment)
         segment.ended_at = time.time()
         return segment
 
@@ -343,15 +347,11 @@ class LiveKitRuntime(Runtime):
         # configured `agent_turn_timeout_s` would silently no-op.
         if not agent_audio_track_holder:
             try:
-                await asyncio.wait_for(
-                    agent_track_event.wait(), timeout=self.agent_turn_timeout_s
-                )
+                await asyncio.wait_for(agent_track_event.wait(), timeout=self.agent_turn_timeout_s)
             except TimeoutError as e:
                 raise AgentNotJoinedError(self.room, self.agent_turn_timeout_s) from e
         track = agent_audio_track_holder[-1]
-        stream = lk_rtc.AudioStream(
-            track, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS
-        )
+        stream = lk_rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS)
 
         segment = _TurnSegment(role="agent", idx=idx, key=turn.key)
         segment.started_at = time.time()
@@ -417,9 +417,7 @@ class LiveKitRuntime(Runtime):
             raise MixdownError(f"could not write mixdown WAV: {e}") from e
         return out_path
 
-    async def _load_or_synth_user_pcm(
-        self, *, conv_id: str, idx: int, turn: Turn
-    ) -> bytes:
+    async def _load_or_synth_user_pcm(self, *, conv_id: str, idx: int, turn: Turn) -> bytes:
         match turn.audio:
             case RecordedAudio(path=path):
                 return _read_wav_as_pcm48k_mono(Path(path), turn_idx=idx)
@@ -430,9 +428,7 @@ class LiveKitRuntime(Runtime):
             case None:
                 # No explicit audio → fall back to TTS. The missing-text
                 # case is raised inside _synth_tts_pcm.
-                return await self._synth_tts_pcm(
-                    conv_id=conv_id, idx=idx, turn=turn, voice_id=None
-                )
+                return await self._synth_tts_pcm(conv_id=conv_id, idx=idx, turn=turn, voice_id=None)
             case _:
                 assert_never(turn.audio)
 
@@ -453,9 +449,7 @@ class LiveKitRuntime(Runtime):
                 f"turn {idx}: TTS requested but OPENAI_API_KEY is not set",
                 turn_idx=idx,
             )
-        voice = voice_id or os.environ.get(
-            "OPENAI_TTS_VOICE", self.DEFAULT_OPENAI_TTS_VOICE
-        )
+        voice = voice_id or os.environ.get("OPENAI_TTS_VOICE", self.DEFAULT_OPENAI_TTS_VOICE)
         model = os.environ.get("OPENAI_TTS_MODEL", self.DEFAULT_OPENAI_TTS_MODEL)
         return await self._tts_to_cached_pcm(
             conv_id=conv_id, text=turn.text, voice=voice, model=model, api_key=api_key or ""
@@ -480,9 +474,7 @@ class LiveKitRuntime(Runtime):
         if self._openai_tts is not None:
             pcm_24k = await self._openai_tts(text=text, voice=voice, model=model)
         else:
-            pcm_24k = await _openai_tts_pcm(
-                text=text, voice=voice, model=model, api_key=api_key
-            )
+            pcm_24k = await _openai_tts_pcm(text=text, voice=voice, model=model, api_key=api_key)
         pcm_48k = _upsample_2x_int16(pcm_24k)
         _write_pcm_as_wav(pcm_48k, cached, sample_rate=SAMPLE_RATE)
         return pcm_48k
@@ -522,6 +514,7 @@ class LiveKitRuntime(Runtime):
             )
         return lk_rtc_mod, lk_api_mod
 
+    @override
     async def aclose(self) -> None:
         return None
 
@@ -602,8 +595,7 @@ async def _openai_tts_pcm(
         )
         if response.status_code >= 400:
             raise AudioMissingError(
-                f"OpenAI TTS returned HTTP {response.status_code}: "
-                f"{response.text[:200]}"
+                f"OpenAI TTS returned HTTP {response.status_code}: {response.text[:200]}"
             )
         return response.content
 

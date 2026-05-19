@@ -16,7 +16,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Protocol, runtime_checkable
 
-
 # ─── Runtime objects (instances) ──────────────────────────────────────
 
 
@@ -57,9 +56,7 @@ class LkTrack(Protocol):
 
 class LkLocalParticipant(Protocol):
     async def set_metadata(self, metadata: str) -> None: ...
-    async def publish_track(
-        self, track: LkTrack, options: LkTrackPublishOptions
-    ) -> object: ...
+    async def publish_track(self, track: LkTrack, options: LkTrackPublishOptions) -> object: ...
 
 
 class LkTrackPublishOptions(Protocol):

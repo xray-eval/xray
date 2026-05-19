@@ -59,9 +59,7 @@ class AgentNotJoinedError(XrayError):
     timeout_s: float
 
     def __init__(self, room: str, timeout_s: float) -> None:
-        super().__init__(
-            f"agent participant did not join room {room!r} within {timeout_s}s"
-        )
+        super().__init__(f"agent participant did not join room {room!r} within {timeout_s}s")
         self.room = room
         self.timeout_s = timeout_s
 
@@ -92,9 +90,7 @@ class AudioTooLargeError(XrayError):
     max_bytes: int
 
     def __init__(self, *, byte_size: int, max_bytes: int) -> None:
-        super().__init__(
-            f"replay mixdown is {byte_size} bytes; server cap is {max_bytes} bytes"
-        )
+        super().__init__(f"replay mixdown is {byte_size} bytes; server cap is {max_bytes} bytes")
         self.byte_size = byte_size
         self.max_bytes = max_bytes
 

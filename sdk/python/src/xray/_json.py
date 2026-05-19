@@ -11,9 +11,7 @@ from typing import TypeAlias
 
 # Recursive structural type for arbitrary JSON. Pyright resolves the
 # string forward refs lazily.
-JsonValue: TypeAlias = (
-    None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
-)
+JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 __all__ = ["JsonObject", "JsonValue"]
