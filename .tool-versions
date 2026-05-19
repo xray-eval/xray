@@ -6,3 +6,6 @@
 nodejs 24.15.0
 bun 1.3.14
 pnpm 11.1.2
+# Python is also pinned via .python-version (pyenv / setup-python read that
+# file directly; .tool-versions is here for mise/asdf parity).
+python 3.12.7

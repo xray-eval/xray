@@ -24,6 +24,7 @@ import array
 import asyncio
 import contextlib
 import hashlib
+import importlib
 import json
 import logging
 import os
@@ -499,15 +500,30 @@ class LiveKitRuntime(Runtime):
         )
 
     def _load_livekit(self) -> tuple[LkRtcModule, LkApiModule]:
+        # Loaded via importlib so pyright doesn't try to resolve `livekit`
+        # at type-check time — the Protocols in `_livekit_types` are the
+        # static contract; `isinstance` against them is the runtime gate.
+        # CI therefore doesn't need `pip install ...[livekit]`.
         if self._lk_rtc is not None and self._lk_api is not None:
             return self._lk_rtc, self._lk_api
         try:
-            from livekit import api as lk_api_mod
-            from livekit import rtc as lk_rtc_mod
+            lk_rtc_mod: object = importlib.import_module("livekit.rtc")
+            lk_api_mod: object = importlib.import_module("livekit.api")
         except ImportError as e:
             raise LiveKitDependencyError(
                 "LiveKitRuntime requires `pip install xray-py[livekit]`."
             ) from e
+        if not isinstance(lk_rtc_mod, LkRtcModule):
+            raise LiveKitDependencyError(
+                "livekit.rtc is missing one of the required attributes "
+                "(AudioSource / AudioFrame / Room / …). Installed livekit "
+                "version may be incompatible."
+            )
+        if not isinstance(lk_api_mod, LkApiModule):
+            raise LiveKitDependencyError(
+                "livekit.api is missing AccessToken / VideoGrants. "
+                "Installed livekit-api version may be incompatible."
+            )
         return lk_rtc_mod, lk_api_mod
 
     async def aclose(self) -> None:

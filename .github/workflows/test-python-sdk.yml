@@ -1,0 +1,96 @@
+# Python SDK test gate — ruff + pyright (strict) + pytest.
+#
+# Path-filtered to sdk/python/** so PRs that don't touch the SDK skip it.
+# Local equivalent (from sdk/python/):
+#
+#     pip install -e .[dev]
+#     ruff check src tests
+#     pyright src tests
+#     pytest -v
+#
+# The strict-mode gate lives in sdk/python/pyproject.toml `[tool.pyright]`;
+# CI just runs the binary. Type policy is documented at
+# sdk/python/.claude/rules/no-any.md / assert-never.md / typed-boundaries.md.
+#
+# DO NOT add this check to GitHub branch protection's "required status
+# checks" without also adding a path-ignored skip job: workflows with
+# `paths:` filters never report status on PRs that don't match, so a
+# required check would hang non-SDK PRs forever waiting on a job that
+# never queues.
+
+name: Python SDK
+
+on:
+  pull_request:
+    paths:
+      - 'sdk/python/**'
+      - '.python-version'
+      - '.tool-versions'
+      - '.github/workflows/test-python-sdk.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/python/**'
+      - '.python-version'
+      - '.tool-versions'
+      - '.github/workflows/test-python-sdk.yml'
+
+permissions: {}
+
+concurrency:
+  group: test-python-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ruff + pyright + pytest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5  # v2.19.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      # `.python-version` is the single source of truth (pyenv format).
+      # `.tool-versions` carries the same pin for mise/asdf parity.
+      - name: Setup Python (pinned via .python-version)
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version-file: '.python-version'
+          cache: 'pip'
+          # Re-cache when the dep set changes.
+          cache-dependency-path: sdk/python/pyproject.toml
+
+      # `[livekit]` is intentionally omitted: `_load_livekit` uses
+      # `importlib.import_module` + a `@runtime_checkable` Protocol
+      # isinstance, so the static check doesn't need the package
+      # installed. Saves ~60s of livekit + livekit-api download per run.
+      - name: Install SDK + dev extras
+        working-directory: sdk/python
+        run: pip install -e '.[dev]'
+
+      - name: ruff (lint + format check)
+        working-directory: sdk/python
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+
+      # Strict mode is configured in sdk/python/pyproject.toml.
+      # `--outputjson` is intentionally NOT used — the human-readable
+      # output is what reviewers paste back in PR comments.
+      - name: pyright (strict)
+        working-directory: sdk/python
+        run: pyright src tests
+
+      - name: pytest
+        working-directory: sdk/python
+        run: pytest -v
