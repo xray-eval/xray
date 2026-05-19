@@ -17,7 +17,7 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Literal, NotRequired, TypeAlias, TypedDict, Union, assert_never
+from typing import Literal, NotRequired, TypeAlias, TypedDict, assert_never
 
 
 Role: TypeAlias = Literal["user", "agent"]
@@ -25,12 +25,12 @@ AssertionStatus: TypeAlias = Literal["passed", "failed", "errored"]
 
 # Assertion predicate receives the agent's response for one turn. May be sync
 # or async. Returns True / False / raises (counts as 'errored').
-AssertionPredicate: TypeAlias = Callable[["AgentResponse"], Union[bool, Awaitable[bool]]]
+AssertionPredicate: TypeAlias = Callable[["AgentResponse"], bool | Awaitable[bool]]
 
 # Judge: receives the whole replay; returns a score + reason. Runs once per
 # replay against the dev's LLM credentials — xray never holds them.
 JudgePredicate: TypeAlias = Callable[
-    ["ReplayResult"], Union["JudgeOutcome", Awaitable["JudgeOutcome"]]
+    ["ReplayResult"], "JudgeOutcome | Awaitable[JudgeOutcome]"
 ]
 
 
@@ -54,7 +54,7 @@ class TtsAudio:
     kind: Literal["tts"] = field(default="tts", init=False)
 
 
-AudioRef: TypeAlias = Union[RecordedAudio, TtsAudio]
+AudioRef: TypeAlias = RecordedAudio | TtsAudio
 
 
 # ─── Turn + Conversation ──────────────────────────────────────────────

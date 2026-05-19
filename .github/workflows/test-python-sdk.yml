@@ -1,10 +1,13 @@
 # Python SDK test gate — ruff + pyright (strict) + pytest.
 #
 # Path-filtered to sdk/python/** so PRs that don't touch the SDK skip it.
-# Local equivalent (from sdk/python/):
+# Local equivalent (from sdk/python/), using uv:
 #
-#     pip install -e .[dev]
+#     uv venv --python 3.12.7
+#     source .venv/bin/activate
+#     uv pip install -e .[dev]
 #     ruff check src tests
+#     ruff format --check src tests
 #     pyright src tests
 #     pytest -v
 #
@@ -62,21 +65,26 @@ jobs:
 
       # `.python-version` is the single source of truth (pyenv format).
       # `.tool-versions` carries the same pin for mise/asdf parity.
-      - name: Setup Python (pinned via .python-version)
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      # setup-uv reads `.python-version` automatically and caches the
+      # resolved interpreter + wheel set across runs.
+      - name: Setup uv (pinned via SHA)
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
           python-version-file: '.python-version'
-          cache: 'pip'
-          # Re-cache when the dep set changes.
-          cache-dependency-path: sdk/python/pyproject.toml
+          # Re-key the wheel cache when the dep set changes. uv reads
+          # pyproject.toml directly; no separate lockfile yet.
+          cache-dependency-glob: 'sdk/python/pyproject.toml'
+          enable-cache: true
 
       # `[livekit]` is intentionally omitted: `_load_livekit` uses
       # `importlib.import_module` + a `@runtime_checkable` Protocol
       # isinstance, so the static check doesn't need the package
       # installed. Saves ~60s of livekit + livekit-api download per run.
+      # `--system` installs into the runner's interpreter so ruff /
+      # pyright / pytest land on PATH without venv activation.
       - name: Install SDK + dev extras
         working-directory: sdk/python
-        run: pip install -e '.[dev]'
+        run: uv pip install --system -e '.[dev]'
 
       - name: ruff (lint + format check)
         working-directory: sdk/python

@@ -38,7 +38,6 @@ import httpx
 
 from xray.conversation import (
     AgentResponse,
-    AudioRef,
     Conversation,
     RecordedAudio,
     Role,
@@ -58,7 +57,6 @@ from xray.runtime._livekit_types import (
     LkAudioSource,
     LkLocalParticipant,
     LkParticipant,
-    LkRoom,
     LkRtcModule,
     LkTrack,
     LkTranscriptionSegment,
@@ -198,7 +196,7 @@ class LiveKitRuntime(Runtime):
                 await asyncio.wait_for(
                     agent_joined.wait(), timeout=self.agent_join_timeout_s
                 )
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 raise AgentNotJoinedError(self.room, self.agent_join_timeout_s) from e
 
             audio_source = lk_rtc.AudioSource(SAMPLE_RATE, NUM_CHANNELS)
@@ -348,7 +346,7 @@ class LiveKitRuntime(Runtime):
                 await asyncio.wait_for(
                     agent_track_event.wait(), timeout=self.agent_turn_timeout_s
                 )
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 raise AgentNotJoinedError(self.room, self.agent_turn_timeout_s) from e
         track = agent_audio_track_holder[-1]
         stream = lk_rtc.AudioStream(
@@ -382,10 +380,8 @@ class LiveKitRuntime(Runtime):
             # can't hang the iterator forever; the inner `final_seen`
             # short-circuits as soon as the transcript flips final.
             remaining = max(0.0, deadline - time.time())
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(_consume_frames(), timeout=remaining)
-            except asyncio.TimeoutError:
-                pass
         finally:
             await stream.aclose()
             # Drain anything in the queue before tearing down the task —
@@ -575,7 +571,7 @@ def _upsample_2x_int16(pcm: bytes) -> bytes:
     # Interpolated midpoint between consecutive samples; last midpoint
     # repeats the final sample so the output length stays exactly 2x.
     out[1 : 2 * (n - 1) : 2] = array.array(
-        "h", [(a + b) // 2 for a, b in zip(src, src[1:])]
+        "h", [(a + b) // 2 for a, b in zip(src, src[1:], strict=False)]
     )
     out[-1] = src[-1]
     return out.tobytes()
