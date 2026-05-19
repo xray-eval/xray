@@ -34,7 +34,7 @@ class RunConfig:
 
     model: str | None = None
     temperature: float | None = None
-    extra: dict[str, JsonValue] = field(default_factory=dict)
+    extra: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
     def to_wire(self) -> RunConfigWirePayload:
         """Snake_case JSON body for ``POST /v1/replays``. ``extra`` keys

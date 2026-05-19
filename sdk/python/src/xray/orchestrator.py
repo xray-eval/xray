@@ -21,6 +21,7 @@ Matches the server's Valibot schemas in `src/server/**/*.types.ts`.
 
 from __future__ import annotations
 
+import datetime as _dt
 import inspect
 import logging
 from dataclasses import dataclass, replace
@@ -28,7 +29,7 @@ from pathlib import Path
 from typing import Literal, TypeAlias, TypedDict
 
 import httpx
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from typing_extensions import NotRequired
 
 from xray.config import RunConfig
@@ -370,6 +371,42 @@ class _ReplayEnrichment:
     stage_timings_by_turn: dict[int, StageTimings]
 
 
+class _ToolCallRow(BaseModel):
+    turn_idx: int | None = None
+    name: str = ""
+    args_json: str | None = None
+    result_json: str | None = None
+    latency_ms: int | None = None
+
+
+class _ModelUsageRow(BaseModel):
+    turn_idx: int | None = None
+    provider: str | None = None
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+class _SpanRow(BaseModel):
+    name: str = ""
+    attributes_json: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+
+
+class _ReplayEnrichmentBody(BaseModel):
+    tool_calls: list[_ToolCallRow] = Field(default_factory=list[_ToolCallRow])
+    model_usage: list[_ModelUsageRow] = Field(default_factory=list[_ModelUsageRow])
+    spans: list[_SpanRow] = Field(default_factory=list[_SpanRow])
+
+
+class _XrayStageAttrs(BaseModel):
+    xray_turn_idx: int | None = Field(default=None, alias="xray.turn.idx")
+
+    model_config = {"populate_by_name": True}
+
+
 async def _fetch_replay_enrichment(client: httpx.AsyncClient, replay_id: str) -> _ReplayEnrichment:
     """``GET /v1/replays/:id`` and bin the tool_calls / model_usage rows
     by ``turn_idx``. Silent fallback to empty maps on any error — the
@@ -377,7 +414,7 @@ async def _fetch_replay_enrichment(client: httpx.AsyncClient, replay_id: str) ->
     try:
         r = await client.get(f"/v1/replays/{replay_id}")
         r.raise_for_status()
-        body = r.json()
+        body = _ReplayEnrichmentBody.model_validate(r.json())
     except Exception:
         logger.warning(
             "failed to fetch replay enrichment for %s; assertions get thin view",
@@ -386,73 +423,55 @@ async def _fetch_replay_enrichment(client: httpx.AsyncClient, replay_id: str) ->
         return _ReplayEnrichment({}, {}, {})
 
     tool_calls_by_turn: dict[int, list[ToolCall]] = {}
-    for row in body.get("tool_calls", []) or []:
-        idx = row.get("turn_idx")
-        if not isinstance(idx, int):
+    for tc_row in body.tool_calls:
+        if tc_row.turn_idx is None:
             continue
-        tool_calls_by_turn.setdefault(idx, []).append(
+        tool_calls_by_turn.setdefault(tc_row.turn_idx, []).append(
             ToolCall(
-                name=str(row.get("name", "")),
-                args_json=row.get("args_json"),
-                result_json=row.get("result_json"),
-                latency_ms=row.get("latency_ms"),
+                name=tc_row.name,
+                args_json=tc_row.args_json,
+                result_json=tc_row.result_json,
+                latency_ms=tc_row.latency_ms,
             )
         )
 
     model_usage_by_turn: dict[int, list[ModelUsage]] = {}
-    for row in body.get("model_usage", []) or []:
-        idx = row.get("turn_idx")
-        if not isinstance(idx, int):
+    for mu_row in body.model_usage:
+        if mu_row.turn_idx is None:
             continue
-        model_usage_by_turn.setdefault(idx, []).append(
+        model_usage_by_turn.setdefault(mu_row.turn_idx, []).append(
             ModelUsage(
-                provider=row.get("provider"),
-                model=row.get("model"),
-                input_tokens=row.get("input_tokens"),
-                output_tokens=row.get("output_tokens"),
-                total_tokens=row.get("total_tokens"),
+                provider=mu_row.provider,
+                model=mu_row.model,
+                input_tokens=mu_row.input_tokens,
+                output_tokens=mu_row.output_tokens,
+                total_tokens=mu_row.total_tokens,
             )
         )
 
     # Stage timings ride on xray.stage.stt / xray.stage.tts spans.
     # Extract latencies from the spans array.
     stage_timings_by_turn: dict[int, StageTimings] = {}
-    import json as _json
-
-    for span in body.get("spans", []) or []:
-        name = span.get("name") or ""
-        if not name.startswith("xray.stage."):
+    for span in body.spans:
+        if not span.name.startswith("xray.stage."):
             continue
-        stage = name.split(".", 2)[2]
-        attrs_raw = span.get("attributes_json")
-        if not isinstance(attrs_raw, str):
+        stage = span.name.split(".", 2)[2]
+        if span.attributes_json is None or span.started_at is None or span.ended_at is None:
             continue
         try:
-            attrs: dict[str, object] = _json.loads(attrs_raw)
-        except Exception:
+            attrs = _XrayStageAttrs.model_validate_json(span.attributes_json)
+        except ValidationError:
             continue
-        idx_raw = attrs.get("xray.turn.idx")
-        idx_val = (
-            int(idx_raw)
-            if isinstance(idx_raw, (int, str)) and str(idx_raw).lstrip("-").isdigit()
-            else None
-        )
-        if idx_val is None:
+        if attrs.xray_turn_idx is None:
             continue
-        started = span.get("started_at")
-        ended = span.get("ended_at")
-        if not (isinstance(started, str) and isinstance(ended, str)):
-            continue
-        import datetime as _dt
-
         try:
             dur_ms = (
-                _dt.datetime.fromisoformat(ended.rstrip("Z"))
-                - _dt.datetime.fromisoformat(started.rstrip("Z"))
+                _dt.datetime.fromisoformat(span.ended_at.rstrip("Z"))
+                - _dt.datetime.fromisoformat(span.started_at.rstrip("Z"))
             ).total_seconds() * 1000.0
-        except Exception:
+        except ValueError:
             continue
-        stage_timings_by_turn.setdefault(idx_val, {})[stage] = float(dur_ms)
+        stage_timings_by_turn.setdefault(attrs.xray_turn_idx, {})[stage] = float(dur_ms)
 
     return _ReplayEnrichment(
         tool_calls_by_turn=tool_calls_by_turn,

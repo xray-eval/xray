@@ -270,7 +270,7 @@ class AgentResponse:
     duration_ms: int | None = None
     tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
     model_usage: tuple[ModelUsage, ...] = field(default_factory=tuple)
-    stage_timings: StageTimings = field(default_factory=dict)
+    stage_timings: StageTimings = field(default_factory=dict[str, float])
 
 
 @dataclass

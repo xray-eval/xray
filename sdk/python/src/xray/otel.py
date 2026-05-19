@@ -25,6 +25,7 @@ replay context is on baggage (see :func:`xray.instrument`).
 from __future__ import annotations
 
 import logging
+import weakref
 from collections.abc import Sequence
 from typing import ClassVar, Final
 
@@ -35,6 +36,7 @@ from opentelemetry.context.context import Context
 from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+from typing_extensions import override
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,7 @@ class XrayBaggageSpanProcessor(SpanProcessor):
 
     _BAGGAGE_KEYS: ClassVar[tuple[str, ...]] = _XRAY_BAGGAGE_KEYS
 
+    @override
     def on_start(self, span: Span, parent_context: Context | None = None) -> None:
         ctx = parent_context if parent_context is not None else context.get_current()
         for key in self._BAGGAGE_KEYS:
@@ -70,10 +73,13 @@ class XrayBaggageSpanProcessor(SpanProcessor):
             if value is not None:
                 span.set_attribute(key, str(value))
 
+    @override
     def on_end(self, span: ReadableSpan) -> None: ...
 
+    @override
     def shutdown(self) -> None: ...
 
+    @override
     def force_flush(self, timeout_millis: int = 30_000) -> bool:
         del timeout_millis
         return True
@@ -101,6 +107,7 @@ class XraySpanExporter(SpanExporter):
         self._client = httpx.Client(timeout=timeout_s)
         self._shutdown = False
 
+    @override
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         if self._shutdown:
             return SpanExportResult.FAILURE
@@ -124,10 +131,12 @@ class XraySpanExporter(SpanExporter):
             return SpanExportResult.FAILURE
         return SpanExportResult.SUCCESS
 
+    @override
     def shutdown(self) -> None:
         self._shutdown = True
         self._client.close()
 
+    @override
     def force_flush(self, timeout_millis: int = 30_000) -> bool:
         del timeout_millis
         return True
@@ -168,18 +177,21 @@ def install(
     return tracer_provider
 
 
+# Tracer providers don't expose their processor list; we track per-provider
+# install state in a WeakKeyDictionary so the entry disappears when the
+# provider is GC'd. Module-level state avoids monkey-patching TracerProvider.
+_INSTALLED_ENDPOINTS: weakref.WeakKeyDictionary[TracerProvider, set[str]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
 def _already_installed(tracer_provider: TracerProvider, endpoint: str) -> bool:
-    """Tracer providers don't expose their processor list; we stash a
-    marker on the instance to keep ``install`` idempotent across
-    multiple calls per process."""
-    installed: set[str] = getattr(tracer_provider, "_xray_installed_endpoints", set())
-    return endpoint in installed
+    return endpoint in _INSTALLED_ENDPOINTS.get(tracer_provider, set())
 
 
 def _mark_installed(tracer_provider: TracerProvider, endpoint: str) -> None:
-    installed: set[str] = getattr(tracer_provider, "_xray_installed_endpoints", set())
+    installed = _INSTALLED_ENDPOINTS.setdefault(tracer_provider, set())
     installed.add(endpoint)
-    tracer_provider._xray_installed_endpoints = installed
 
 
 __all__ = [

@@ -49,11 +49,12 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Protocol
+from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
 
 from opentelemetry import baggage, context, trace
 from opentelemetry.context.context import Context
 from opentelemetry.sdk.trace import TracerProvider
+from pydantic import BaseModel, Field, ValidationError
 
 from xray._json import JsonValue
 from xray.otel import install as install_otel
@@ -117,12 +118,16 @@ class _HasRoom(Protocol):
 class _HasRemoteParticipants(Protocol):
     remote_participants: dict[str, _HasAttributes]
 
-    def on(self, event: str) -> Callable[[Callable[..., object]], Callable[..., object]]: ...
+    def on(self, event: str, callback: Callable[..., object]) -> object: ...
+
+    def off(self, event: str, callback: Callable[..., object]) -> object: ...
 
 
+@runtime_checkable
 class _HasAttributes(Protocol):
     """Duck-type for ``livekit.rtc.RemoteParticipant`` — only
-    ``.attributes`` is read."""
+    ``.attributes`` is read. Runtime-checkable so we can narrow an
+    ``object`` from LiveKit's variable-shape event callback."""
 
     identity: str
     attributes: dict[str, str]
@@ -262,7 +267,6 @@ async def attach(
         attach_token = _attach_baggage(replay_context)
         if tracer_provider is not None:
             session = XraySession(replay_context, tracer_provider)
-            ctx.xray = session
             logger.info(
                 "xray attached: replay=%s service=%s",
                 replay_context.replay_id,
@@ -286,19 +290,7 @@ async def attach(
 # ─── Helpers ──────────────────────────────────────────────────────────
 
 
-def _find_ctx(args: tuple[object, ...], kwargs: dict[str, object]) -> object | None:
-    """LiveKit Agents calls ``entrypoint(ctx)`` positionally. We pick
-    the first arg that looks like a JobContext (has ``.room``)."""
-    for a in args:
-        if hasattr(a, "room") and hasattr(a.room, "remote_participants"):
-            return a
-    for v in kwargs.values():
-        if hasattr(v, "room") and hasattr(v.room, "remote_participants"):
-            return v
-    return None
-
-
-async def _wait_for_replay_context(ctx: object, timeout_s: float) -> ReplayContext | None:
+async def _wait_for_replay_context(ctx: _HasRoom, timeout_s: float) -> ReplayContext | None:
     """Poll for + listen for a remote participant exposing the xray
     JSON-blob attribute. Combine an initial scan with a one-shot
     ``participant_attributes_changed`` listener so whichever fires
@@ -307,13 +299,10 @@ async def _wait_for_replay_context(ctx: object, timeout_s: float) -> ReplayConte
     loop = asyncio.get_running_loop()
     found: asyncio.Future[ReplayContext] = loop.create_future()
 
-    def _try_capture(participant: object) -> bool:
+    def _try_capture(participant: _HasAttributes) -> bool:
         if found.done():
             return True
-        attributes = getattr(participant, "attributes", None)
-        if not isinstance(attributes, dict):
-            return False
-        parsed = _parse_xray_attribute(attributes)
+        parsed = _parse_xray_attribute(participant.attributes)
         if parsed is None:
             return False
         found.set_result(parsed)
@@ -323,19 +312,19 @@ async def _wait_for_replay_context(ctx: object, timeout_s: float) -> ReplayConte
         _changed: object, participant: object = None, *_args: object
     ) -> None:
         # LiveKit emits this with variable argument order across versions;
-        # the participant is somewhere in the args. Try both shapes.
+        # the participant is somewhere in the args. Pick whichever has
+        # the right shape.
         target = participant if participant is not None else _changed
-        _try_capture(target)
+        if isinstance(target, _HasAttributes):
+            _try_capture(target)
 
     # Hook the event handler before scanning so we don't miss a change
     # that fires between the scan and the await.
     room.on("participant_attributes_changed", _on_attributes_changed)
     try:
-        remote_participants = getattr(room, "remote_participants", {})
-        if isinstance(remote_participants, dict):
-            for participant in remote_participants.values():
-                if _try_capture(participant):
-                    break
+        for participant in room.remote_participants.values():
+            if _try_capture(participant):
+                break
 
         if not found.done():
             try:
@@ -347,36 +336,31 @@ async def _wait_for_replay_context(ctx: object, timeout_s: float) -> ReplayConte
         room.off("participant_attributes_changed", _on_attributes_changed)
 
 
+class _ReplayContextPayload(BaseModel):
+    """Inbound shape of the JWT ``xray`` attribute. Validates the JSON
+    blob at the trust boundary so the rest of the SDK works with a
+    typed value."""
+
+    replay_id: str = Field(min_length=1)
+    conversation_id: str = Field(min_length=1)
+    conversation_version: str = Field(min_length=1)
+    modality: str = "voice"
+
+
 def _parse_xray_attribute(attributes: dict[str, str]) -> ReplayContext | None:
     raw = attributes.get(XRAY_ATTRIBUTE_KEY)
     if not raw:
         return None
     try:
-        payload: object = json.loads(raw)
-    except json.JSONDecodeError:
+        parsed = _ReplayContextPayload.model_validate_json(raw)
+    except ValidationError:
         return None
-    if not isinstance(payload, dict):
-        return None
-    return _coerce_replay_context(payload)
-
-
-def _coerce_replay_context(payload: dict[str, object]) -> ReplayContext | None:
-    replay_id = _str_or_none(payload.get("replay_id"))
-    conversation_id = _str_or_none(payload.get("conversation_id"))
-    conversation_version = _str_or_none(payload.get("conversation_version"))
-    if replay_id is None or conversation_id is None or conversation_version is None:
-        return None
-    modality = _str_or_none(payload.get("modality")) or "voice"
     return ReplayContext(
-        replay_id=replay_id,
-        conversation_id=conversation_id,
-        conversation_version=conversation_version,
-        modality=modality,
+        replay_id=parsed.replay_id,
+        conversation_id=parsed.conversation_id,
+        conversation_version=parsed.conversation_version,
+        modality=parsed.modality,
     )
-
-
-def _str_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
 
 
 def _attach_baggage(replay_context: ReplayContext) -> contextvars.Token[Context]:
