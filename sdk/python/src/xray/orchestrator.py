@@ -21,7 +21,6 @@ Matches the server's Valibot schemas in `src/server/**/*.types.ts`.
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, replace
@@ -211,7 +210,7 @@ async def run(
         # 7. Per-turn assertions.
         assertions: list[AssertionOutcome] = []
         turn_records: list[TurnRecord] = []
-        for idx, (turn, response) in enumerate(zip(conversation.turns, responses)):
+        for idx, (turn, response) in enumerate(zip(conversation.turns, responses, strict=True)):
             record = TurnRecord(
                 idx=idx,
                 role=turn.role,
@@ -371,9 +370,7 @@ class _ReplayEnrichment:
     stage_timings_by_turn: dict[int, StageTimings]
 
 
-async def _fetch_replay_enrichment(
-    client: httpx.AsyncClient, replay_id: str
-) -> _ReplayEnrichment:
+async def _fetch_replay_enrichment(client: httpx.AsyncClient, replay_id: str) -> _ReplayEnrichment:
     """``GET /v1/replays/:id`` and bin the tool_calls / model_usage rows
     by ``turn_idx``. Silent fallback to empty maps on any error — the
     happy path is best-effort enrichment, not a failure dimension."""
@@ -473,11 +470,7 @@ def _merge_enrichment_into_responses(
     """Augment each ``AgentResponse`` with the per-turn server view."""
     out: list[AgentResponse] = []
     for idx, _turn in enumerate(conversation.turns):
-        base = (
-            responses[idx]
-            if idx < len(responses)
-            else AgentResponse(transcript="")
-        )
+        base = responses[idx] if idx < len(responses) else AgentResponse(transcript="")
         out.append(
             replace(
                 base,

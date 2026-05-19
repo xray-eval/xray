@@ -496,9 +496,7 @@ class LiveKitDriver(Runtime):
         )
         builder = lk_api.AccessToken(self.api_key, self.api_secret)
         builder = builder.with_identity(self.identity)
-        builder = builder.with_grants(
-            lk_api.VideoGrants(room_join=True, room=self.room)
-        )
+        builder = builder.with_grants(lk_api.VideoGrants(room_join=True, room=self.room))
         if hasattr(builder, "with_attributes"):
             builder = builder.with_attributes(attributes)
         return builder.to_jwt()

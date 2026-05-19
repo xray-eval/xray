@@ -162,9 +162,7 @@ def install(
         return tracer_provider
 
     tracer_provider.add_span_processor(XrayBaggageSpanProcessor())
-    tracer_provider.add_span_processor(
-        BatchSpanProcessor(XraySpanExporter(endpoint=endpoint))
-    )
+    tracer_provider.add_span_processor(BatchSpanProcessor(XraySpanExporter(endpoint=endpoint)))
     _mark_installed(tracer_provider, endpoint)
     logger.info("xray OTLP/JSON pipeline installed (endpoint=%s)", endpoint)
     return tracer_provider
@@ -181,7 +179,7 @@ def _already_installed(tracer_provider: TracerProvider, endpoint: str) -> bool:
 def _mark_installed(tracer_provider: TracerProvider, endpoint: str) -> None:
     installed: set[str] = getattr(tracer_provider, "_xray_installed_endpoints", set())
     installed.add(endpoint)
-    setattr(tracer_provider, "_xray_installed_endpoints", installed)
+    tracer_provider._xray_installed_endpoints = installed
 
 
 __all__ = [

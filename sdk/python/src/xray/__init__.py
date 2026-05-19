@@ -23,8 +23,8 @@ from xray.conversation import (
     AgentResponse,
     Conversation,
     ModelUsage,
-    Turn,
     ToolCall,
+    Turn,
 )
 from xray.instrument import XraySession, attach
 from xray.orchestrator import RunResult, run

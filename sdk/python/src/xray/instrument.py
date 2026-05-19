@@ -111,11 +111,11 @@ class _HasRoom(Protocol):
     object exposing ``.room.remote_participants`` (a dict) works.
     """
 
-    room: "_HasRemoteParticipants"
+    room: _HasRemoteParticipants
 
 
 class _HasRemoteParticipants(Protocol):
-    remote_participants: "dict[str, _HasAttributes]"
+    remote_participants: dict[str, _HasAttributes]
 
     def on(self, event: str) -> Callable[[Callable[..., object]], Callable[..., object]]: ...
 
@@ -162,9 +162,7 @@ class XraySession:
         return self._context.modality
 
     @asynccontextmanager
-    async def turn(
-        self, idx: int, key: str | None = None
-    ) -> AsyncGenerator[None, None]:
+    async def turn(self, idx: int, key: str | None = None) -> AsyncGenerator[None, None]:
         """Scope ``xray.turn.idx`` (and optionally ``xray.turn.key``) on
         baggage. Spans emitted inside the block pick up the turn
         attribution via the baggage processor."""
@@ -185,9 +183,7 @@ class XraySession:
                 try:
                     yield
                 finally:
-                    span.set_attribute(
-                        "xray.turn.duration_ms", int((time.time() - started) * 1000)
-                    )
+                    span.set_attribute("xray.turn.duration_ms", int((time.time() - started) * 1000))
         finally:
             context.detach(token)
 
@@ -220,7 +216,7 @@ class XraySession:
 
 @asynccontextmanager
 async def attach(
-    ctx: "_HasRoom",
+    ctx: _HasRoom,
     *,
     service_name: str | None = None,
     endpoint: str | None = None,
@@ -259,14 +255,14 @@ async def attach(
         tracer_provider = install_otel(endpoint=resolved_endpoint)
 
     replay_context = await _wait_for_replay_context(ctx, bind_timeout_s)
-    attach_token: "contextvars.Token[Context] | None" = None
+    attach_token: contextvars.Token[Context] | None = None
     session: XraySession | None = None
 
     if replay_context is not None:
         attach_token = _attach_baggage(replay_context)
         if tracer_provider is not None:
             session = XraySession(replay_context, tracer_provider)
-            setattr(ctx, "xray", session)
+            ctx.xray = session
             logger.info(
                 "xray attached: replay=%s service=%s",
                 replay_context.replay_id,
@@ -294,22 +290,20 @@ def _find_ctx(args: tuple[object, ...], kwargs: dict[str, object]) -> object | N
     """LiveKit Agents calls ``entrypoint(ctx)`` positionally. We pick
     the first arg that looks like a JobContext (has ``.room``)."""
     for a in args:
-        if hasattr(a, "room") and hasattr(getattr(a, "room"), "remote_participants"):
+        if hasattr(a, "room") and hasattr(a.room, "remote_participants"):
             return a
     for v in kwargs.values():
-        if hasattr(v, "room") and hasattr(getattr(v, "room"), "remote_participants"):
+        if hasattr(v, "room") and hasattr(v.room, "remote_participants"):
             return v
     return None
 
 
-async def _wait_for_replay_context(
-    ctx: object, timeout_s: float
-) -> ReplayContext | None:
+async def _wait_for_replay_context(ctx: object, timeout_s: float) -> ReplayContext | None:
     """Poll for + listen for a remote participant exposing the xray
     JSON-blob attribute. Combine an initial scan with a one-shot
     ``participant_attributes_changed`` listener so whichever fires
     first wins."""
-    room = getattr(ctx, "room")
+    room = ctx.room
     loop = asyncio.get_running_loop()
     found: asyncio.Future[ReplayContext] = loop.create_future()
 
@@ -385,12 +379,10 @@ def _str_or_none(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _attach_baggage(replay_context: ReplayContext) -> "contextvars.Token[Context]":
+def _attach_baggage(replay_context: ReplayContext) -> contextvars.Token[Context]:
     ctx = context.get_current()
     ctx = baggage.set_baggage(XRAY_REPLAY_ID, replay_context.replay_id, context=ctx)
-    ctx = baggage.set_baggage(
-        XRAY_CONVERSATION_ID, replay_context.conversation_id, context=ctx
-    )
+    ctx = baggage.set_baggage(XRAY_CONVERSATION_ID, replay_context.conversation_id, context=ctx)
     ctx = baggage.set_baggage(
         XRAY_CONVERSATION_VERSION, replay_context.conversation_version, context=ctx
     )
