@@ -148,7 +148,7 @@ class XraySession:
     def __init__(self, replay_context: ReplayContext, tracer_provider: TracerProvider) -> None:
         self._context = replay_context
         self._tracer_provider = tracer_provider
-        self._tracer = trace.get_tracer("xray-py", "0.1.0")
+        self._tracer = trace.get_tracer("xray-py", "0.0.1")
 
     @property
     def replay_id(self) -> str:
