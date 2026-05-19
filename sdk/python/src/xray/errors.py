@@ -11,7 +11,7 @@ no message parsing, ever.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import ClassVar, Final, Literal
 
 # Mirrors REPLAY_FAILURE_REASONS in src/server/store/types.ts. Kept as a
 # Literal alias so a typo on construction is a static error, not a runtime
@@ -24,28 +24,39 @@ FailureReason = Literal[
     "other",
 ]
 
+# Runtime-side mirror of the picklist for membership checks. Frozen so a
+# downstream mutation can't poison the orchestrator's classifier.
+FAILURE_REASONS: Final[frozenset[FailureReason]] = frozenset(
+    {"agent_not_joined", "runtime_error", "audio_missing", "sdk_aborted", "other"}
+)
+
 
 class XrayError(Exception):
     """Base class for every error raised by the SDK."""
 
-    failure_reason: FailureReason = "runtime_error"
+    # ClassVar so subclasses overwrite at class level, not per-instance.
+    failure_reason: ClassVar[FailureReason] = "runtime_error"
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
-        # __init__ sets type for IDE-friendliness; subclasses overwrite below.
-        self.name = type(self).__name__
+        # Stable name across minified / repackaged distributions — see
+        # `.claude/rules/errors.md` §2.
+        self.name: str = type(self).__name__
 
 
 class RuntimeBindError(XrayError):
     """A runtime was asked to ``run`` before ``bind(replay_id=...)``."""
 
-    failure_reason: FailureReason = "sdk_aborted"
+    failure_reason: ClassVar[FailureReason] = "sdk_aborted"
 
 
 class AgentNotJoinedError(XrayError):
     """The agent participant never joined the LiveKit room in time."""
 
-    failure_reason: FailureReason = "agent_not_joined"
+    failure_reason: ClassVar[FailureReason] = "agent_not_joined"
+
+    room: str
+    timeout_s: float
 
     def __init__(self, room: str, timeout_s: float) -> None:
         super().__init__(
@@ -58,11 +69,14 @@ class AgentNotJoinedError(XrayError):
 class AudioMissingError(XrayError):
     """A user turn requires audio but none is available.
 
-    Raised when ``Turn.audio.kind == 'recorded'`` and the file is missing,
-    or when ``kind == 'tts'`` and no OpenAI API key is configured.
+    Raised when an :class:`xray.conversation.RecordedAudio` points at a
+    missing file, or when a :class:`xray.conversation.TtsAudio` is used
+    without ``OPENAI_API_KEY`` configured.
     """
 
-    failure_reason: FailureReason = "audio_missing"
+    failure_reason: ClassVar[FailureReason] = "audio_missing"
+
+    turn_idx: int | None
 
     def __init__(self, message: str, *, turn_idx: int | None = None) -> None:
         super().__init__(message)
@@ -72,7 +86,10 @@ class AudioMissingError(XrayError):
 class AudioTooLargeError(XrayError):
     """Mixdown WAV exceeds the server's per-upload cap."""
 
-    failure_reason: FailureReason = "runtime_error"
+    failure_reason: ClassVar[FailureReason] = "runtime_error"
+
+    byte_size: int
+    max_bytes: int
 
     def __init__(self, *, byte_size: int, max_bytes: int) -> None:
         super().__init__(
@@ -85,16 +102,17 @@ class AudioTooLargeError(XrayError):
 class MixdownError(XrayError):
     """Encoding the per-turn PCM streams into a single WAV failed."""
 
-    failure_reason: FailureReason = "runtime_error"
+    failure_reason: ClassVar[FailureReason] = "runtime_error"
 
 
 class LiveKitDependencyError(XrayError):
     """The optional ``[livekit]`` extra is not installed."""
 
-    failure_reason: FailureReason = "runtime_error"
+    failure_reason: ClassVar[FailureReason] = "runtime_error"
 
 
 __all__ = [
+    "FAILURE_REASONS",
     "AgentNotJoinedError",
     "AudioMissingError",
     "AudioTooLargeError",

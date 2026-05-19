@@ -11,8 +11,8 @@ Run with::
 The Conversation below uses TTS for the user turn — the SDK calls
 OpenAI directly using OPENAI_API_KEY and caches the synth in
 ``~/.cache/xray-py/<conv_id>/<fingerprint>.wav`` so re-runs are
-deterministic. Swap to ``AudioRef(kind="recorded", path="...wav")``
-if you'd rather ship pre-recorded audio.
+deterministic. Swap to ``RecordedAudio(path="...wav")`` if you'd
+rather ship pre-recorded audio.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 
 from xray import Conversation, Turn, expect_agent_turn, run
-from xray.conversation import AgentResponse, AudioRef
+from xray.conversation import AgentResponse, TtsAudio
 from xray.runtime.livekit import LiveKitRuntime
 
 
@@ -36,7 +36,7 @@ def main() -> None:
             Turn.user(
                 "Hi, I'd like to book a table for two at 7pm.",
                 key="u0",
-                audio=AudioRef(kind="tts"),
+                audio=TtsAudio(),
             ),
             expect_agent_turn(
                 key="a0",

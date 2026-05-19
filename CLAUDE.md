@@ -65,6 +65,17 @@ Every CI step must be runnable on a developer machine with one command — image
 @.claude/rules/public-repo.md
 @.claude/rules/single-image-distribution.md
 
+### Python SDK rules (load when touching `sdk/python/`)
+
+The Python SDK ships with inline types and is gated by `pyright --strict`
+in `sdk/python/pyproject.toml` — there's no narrative rule for that
+because the config is the rule. The rules below are the parts strict
+mode doesn't enforce on its own:
+
+@sdk/python/.claude/rules/no-any.md
+@sdk/python/.claude/rules/assert-never.md
+@sdk/python/.claude/rules/typed-boundaries.md
+
 ## When to write a new rule
 
 A rule under `.claude/rules/` exists to prevent a concrete repeat mistake by future Claude sessions. **All four** of the following must hold before creating one:

@@ -6,6 +6,11 @@
 4. Upload the runtime's mixdown WAV (if produced).
 5. Evaluate per-turn assertions, then the per-replay judge (if any).
 6. PATCH the Replay row with final status + judge.
+
+Type safety: every outbound JSON body is a ``TypedDict``; the
+sync/async assertion + judge predicates are typed via the aliases in
+``xray.conversation``; runtime hooks are dispatched via the
+``RuntimeBindable`` Protocol; status branches end in ``assert_never``.
 """
 
 from __future__ import annotations
@@ -15,44 +20,78 @@ import inspect
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Final, Literal, NotRequired, TypeAlias, TypedDict, TypeGuard
 
 import httpx
 
+from xray._json import JsonObject
 from xray.conversation import (
     AgentResponse,
     AssertionOutcome,
+    AssertionPredicate,
+    AssertionStatus,
     Conversation,
     JudgeOutcome,
+    JudgePredicate,
     ReplayResult,
     TurnRecord,
 )
-from xray.errors import AudioTooLargeError, XrayError
-from xray.runtime.base import Runtime, RuntimeResult
+from xray.errors import FAILURE_REASONS, AudioTooLargeError, FailureReason, XrayError
+from xray.runtime.base import Runtime, RuntimeBindable, RuntimeResult
 
 logger = logging.getLogger(__name__)
-
-# Must match REPLAY_FAILURE_REASONS in src/server/store/types.ts.
-_FAILURE_REASONS = frozenset(
-    {"agent_not_joined", "runtime_error", "audio_missing", "sdk_aborted", "other"}
-)
 
 # Mirrors MAX_AUDIO_BYTES in src/server/audio/audio.types.ts. The server
 # enforces the cap independently; we surface a typed error before sending
 # bytes the server will reject anyway.
-MAX_AUDIO_BYTES = 50 * 1024 * 1024
+MAX_AUDIO_BYTES: Final[int] = 50 * 1024 * 1024
+
+ReplayStatus: TypeAlias = Literal["completed", "failed"]
 
 
-@dataclass
+# ─── Wire payloads ────────────────────────────────────────────────────
+
+
+class ReplayCreateBody(TypedDict):
+    conversationId: str
+    conversationVersion: str
+    modality: Literal["voice"]
+    runConfig: NotRequired[JsonObject]
+
+
+class ReplayCreateResponse(TypedDict):
+    id: str
+
+
+class JudgePatchBody(TypedDict):
+    status: AssertionStatus
+    score: NotRequired[int]
+    reason: NotRequired[str]
+    error: NotRequired[str]
+
+
+class ReplayPatchBody(TypedDict):
+    status: ReplayStatus
+    failureReason: NotRequired[FailureReason]
+    judge: NotRequired[JudgePatchBody]
+
+
+# ─── Orchestrator result ──────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
 class RunResult:
     """What ``run(...)`` returns. ``id`` matches the Replay row in xray."""
 
     id: str
     conversation_id: str
     conversation_version: str
-    status: str
+    status: ReplayStatus
     assertions: list[AssertionOutcome]
     judge: JudgeOutcome | None
+
+
+# ─── Public entrypoints ───────────────────────────────────────────────
 
 
 def run(
@@ -60,7 +99,7 @@ def run(
     conversation: Conversation,
     runtime: Runtime,
     xray_url: str = "http://localhost:8080",
-    run_config: dict[str, Any] | None = None,
+    run_config: JsonObject | None = None,
 ) -> RunResult:
     """Sync entrypoint. Wraps ``run_async`` in ``asyncio.run`` for users who
     don't want to set up their own event loop."""
@@ -79,7 +118,7 @@ async def run_async(
     conversation: Conversation,
     runtime: Runtime,
     xray_url: str = "http://localhost:8080",
-    run_config: dict[str, Any] | None = None,
+    run_config: JsonObject | None = None,
 ) -> RunResult:
     async with httpx.AsyncClient(base_url=xray_url, timeout=30.0) as client:
         # 1. Upsert Conversation.
@@ -89,22 +128,20 @@ async def run_async(
 
         # 2. Create Replay eagerly so the SDK can propagate the id BEFORE
         #    the runtime joins the room.
-        body: dict[str, Any] = {
+        create_body: ReplayCreateBody = {
             "conversationId": conversation.id,
             "conversationVersion": conversation.version,
             "modality": "voice",
         }
         if run_config is not None:
-            body["runConfig"] = run_config
-        r = await client.post("/v1/replays", json=body)
+            create_body["runConfig"] = run_config
+        r = await client.post("/v1/replays", json=create_body)
         r.raise_for_status()
-        replay_body = r.json()
-        replay_id: str = replay_body["id"]
+        replay_id = _read_replay_id(r.json())
 
-        # 3. Bind runtime if it accepts the hook (LiveKitRuntime does).
-        bind = getattr(runtime, "bind", None)
-        if callable(bind):
-            bind(
+        # 3. Bind runtime if it implements RuntimeBindable.
+        if isinstance(runtime, RuntimeBindable):
+            runtime.bind(
                 replay_id=replay_id,
                 conversation_id=conversation.id,
                 conversation_version=conversation.version,
@@ -114,19 +151,13 @@ async def run_async(
         #    orchestrating dev-provided code (runtime subclass) and a
         #    failed Replay must always be PATCHed — otherwise the row
         #    stays `running` forever and the inspector misleads.
-        status: str = "completed"
-        failure_reason: str | None = None
+        status: ReplayStatus = "completed"
+        failure_reason: FailureReason | None = None
         runtime_result: RuntimeResult | None = None
         try:
             runtime_result = await runtime.run(conversation)
-        except XrayError as e:
-            logger.exception("runtime failed during replay %s", replay_id)
-            status = "failed"
-            failure_reason = e.failure_reason
         except Exception as e:
-            logger.exception("runtime failed during replay %s", replay_id)
-            status = "failed"
-            failure_reason = _classify_failure(e)
+            status, failure_reason = _record_failure(e, replay_id, step="runtime")
         finally:
             await runtime.aclose()
 
@@ -144,18 +175,14 @@ async def run_async(
                     replay_id=replay_id,
                     audio_path=runtime_result.full_audio_path,
                 )
-            except XrayError as e:
-                logger.exception("audio upload failed for replay %s", replay_id)
-                status = "failed"
-                failure_reason = e.failure_reason
             except Exception as e:
-                logger.exception("audio upload failed for replay %s", replay_id)
-                status = "failed"
-                failure_reason = _classify_failure(e)
+                status, failure_reason = _record_failure(e, replay_id, step="audio_upload")
 
         # 6. Evaluate per-turn assertions on the runtime's recorded responses.
         assertions: list[AssertionOutcome] = []
-        responses = runtime_result.responses if runtime_result is not None else []
+        responses: list[AgentResponse] = (
+            runtime_result.responses if runtime_result is not None else []
+        )
         turn_records: list[TurnRecord] = []
         for idx, (turn, response) in enumerate(zip(conversation.turns, responses, strict=False)):
             record = TurnRecord(
@@ -179,21 +206,16 @@ async def run_async(
                 conversation_id=conversation.id,
                 conversation_version=conversation.version,
                 turns=turn_records,
-                transcript=runtime_result.full_transcript if runtime_result is not None else None,
+                transcript=(
+                    runtime_result.full_transcript if runtime_result is not None else None
+                ),
             )
             judge_outcome = await _evaluate_judge(conversation.judge, replay_result)
 
         # 8. PATCH the Replay with the final outcome.
-        patch_body: dict[str, Any] = {"status": status}
-        if failure_reason is not None:
-            patch_body["failureReason"] = failure_reason
-        if judge_outcome is not None:
-            patch_body["judge"] = {
-                "status": judge_outcome.status,
-                **({"score": judge_outcome.score} if judge_outcome.score is not None else {}),
-                **({"reason": judge_outcome.reason} if judge_outcome.reason is not None else {}),
-                **({"error": judge_outcome.error} if judge_outcome.error is not None else {}),
-            }
+        patch_body = _build_patch_body(
+            status=status, failure_reason=failure_reason, judge=judge_outcome
+        )
         r = await client.patch(f"/v1/replays/{replay_id}", json=patch_body)
         r.raise_for_status()
 
@@ -205,6 +227,46 @@ async def run_async(
             assertions=assertions,
             judge=judge_outcome,
         )
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────
+
+
+def _read_replay_id(raw: object) -> str:
+    """Validate the ``POST /v1/replays`` response shape at the trust
+    boundary — ``httpx`` hands us an untyped ``object``, and we don't
+    propagate the field without checking it."""
+    if not isinstance(raw, dict):
+        raise XrayError(f"POST /v1/replays returned non-object body: {type(raw).__name__}")
+    replay_id = raw.get("id")
+    if not isinstance(replay_id, str):
+        raise XrayError("POST /v1/replays response missing string 'id'")
+    return replay_id
+
+
+def _build_patch_body(
+    *,
+    status: ReplayStatus,
+    failure_reason: FailureReason | None,
+    judge: JudgeOutcome | None,
+) -> ReplayPatchBody:
+    body: ReplayPatchBody = {"status": status}
+    if failure_reason is not None:
+        body["failureReason"] = failure_reason
+    if judge is not None:
+        body["judge"] = _judge_to_wire(judge)
+    return body
+
+
+def _judge_to_wire(judge: JudgeOutcome) -> JudgePatchBody:
+    body: JudgePatchBody = {"status": judge.status}
+    if judge.score is not None:
+        body["score"] = judge.score
+    if judge.reason is not None:
+        body["reason"] = judge.reason
+    if judge.error is not None:
+        body["error"] = judge.error
+    return body
 
 
 async def _upload_replay_audio(
@@ -225,17 +287,39 @@ async def _upload_replay_audio(
     response.raise_for_status()
 
 
-def _classify_failure(e: BaseException) -> str:
+def _record_failure(
+    e: BaseException, replay_id: str, *, step: Literal["runtime", "audio_upload"]
+) -> tuple[ReplayStatus, FailureReason]:
+    """Log + classify a failure from the runtime or audio-upload step.
+
+    Typed :class:`XrayError`\\ s surface their ``failure_reason`` directly;
+    everything else goes through the picklist classifier."""
+    logger.exception("%s failed during replay %s", step, replay_id)
+    if isinstance(e, XrayError):
+        return "failed", e.failure_reason
+    return "failed", _classify_failure(e)
+
+
+def _is_failure_reason(s: str) -> TypeGuard[FailureReason]:
+    """Narrow a ``str`` into the closed ``FailureReason`` picklist —
+    pyright doesn't propagate narrowing through a frozenset `in` check,
+    so we make it explicit."""
+    return s in FAILURE_REASONS
+
+
+def _classify_failure(e: BaseException) -> FailureReason:
     """Map a raw exception's message onto one of the server's
     ``failureReason`` picklist values; anything else falls back to
     ``runtime_error``. Typed :class:`XrayError` instances are handled
     earlier and don't reach this function."""
     message = str(e).strip()
-    return message if message in _FAILURE_REASONS else "runtime_error"
+    if _is_failure_reason(message):
+        return message
+    return "runtime_error"
 
 
 async def _evaluate_assertion(
-    predicate: Any,
+    predicate: AssertionPredicate,
     name: str,
     response: AgentResponse,
 ) -> AssertionOutcome:
@@ -250,7 +334,7 @@ async def _evaluate_assertion(
         return AssertionOutcome(name=name, status="errored", message=str(e))
 
 
-async def _evaluate_judge(predicate: Any, replay: ReplayResult) -> JudgeOutcome:
+async def _evaluate_judge(predicate: JudgePredicate, replay: ReplayResult) -> JudgeOutcome:
     # See `_evaluate_assertion` — same rationale for the broad except.
     try:
         result = predicate(replay)
@@ -261,3 +345,16 @@ async def _evaluate_judge(predicate: Any, replay: ReplayResult) -> JudgeOutcome:
         return JudgeOutcome(status="errored", error="judge did not return a JudgeOutcome")
     except Exception as e:
         return JudgeOutcome(status="errored", error=str(e))
+
+
+__all__ = [
+    "JudgePatchBody",
+    "MAX_AUDIO_BYTES",
+    "ReplayCreateBody",
+    "ReplayCreateResponse",
+    "ReplayPatchBody",
+    "ReplayStatus",
+    "RunResult",
+    "run",
+    "run_async",
+]

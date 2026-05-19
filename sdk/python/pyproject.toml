@@ -34,6 +34,7 @@ livekit = [
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
+  "pyright>=1.1.380",
   "ruff>=0.6",
   "respx>=0.21",
 ]
@@ -46,6 +47,11 @@ Issues = "https://github.com/xray-eval/xray/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/xray"]
 
+# `py.typed` ships in the wheel so consumers' pyright/mypy inherits our
+# inline annotations (PEP 561).
+[tool.hatch.build.targets.wheel.force-include]
+"src/xray/py.typed" = "xray/py.typed"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -56,3 +62,16 @@ target-version = "py310"
 
 [tool.ruff.lint]
 extend-select = ["I", "B", "UP", "SIM"]
+
+# Strict-mode gate. Zero diagnostics; `# type: ignore` and `cast(...)`
+# are banned in src/ + tests/. See sdk/python/.claude/rules/no-any.md.
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportImplicitOverride = "error"
+# LiveKit + httpx + opentelemetry currently ship partial / loose stubs;
+# we still demand strict on our own code via the per-file overrides above.
+useLibraryCodeForTypes = true

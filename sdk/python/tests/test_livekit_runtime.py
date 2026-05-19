@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from xray import Conversation, Turn, expect_agent_turn
-from xray.conversation import AudioRef
+from xray.conversation import RecordedAudio, TtsAudio
 from xray.errors import AgentNotJoinedError, RuntimeBindError
 from xray.runtime.livekit import (
     NUM_CHANNELS,
@@ -246,7 +246,7 @@ def test_runtime_publishes_recorded_user_turn_and_produces_mixdown(tmp_path: Pat
 
     conv = Conversation(
         id="c",
-        turns=[Turn.user("hi", key="u0", audio=AudioRef(kind="recorded", path=str(wav_path)))],
+        turns=[Turn.user("hi", key="u0", audio=RecordedAudio(path=str(wav_path)))],
     )
 
     result = asyncio.run(rt.run(conv))
@@ -280,7 +280,7 @@ def test_runtime_captures_agent_turn_via_transcription(tmp_path: Path):
     conv = Conversation(
         id="c",
         turns=[
-            Turn.user("hello", key="u0", audio=AudioRef(kind="recorded", path=str(wav_path))),
+            Turn.user("hello", key="u0", audio=RecordedAudio(path=str(wav_path))),
             expect_agent_turn(key="a0"),
         ],
     )
@@ -323,7 +323,7 @@ def test_tts_path_uses_openai_injection_and_caches(tmp_path: Path):
 
     conv = Conversation(
         id="conv-x",
-        turns=[Turn.user("hello world", key="u0", audio=AudioRef(kind="tts"))],
+        turns=[Turn.user("hello world", key="u0", audio=TtsAudio())],
     )
 
     asyncio.run(rt1.run(conv))
