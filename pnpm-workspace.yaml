@@ -65,3 +65,23 @@ overrides:
   # 0.25.12 elsewhere in the tree, so this adds zero new versions. Remove this
   # entry once drizzle-kit drops `@esbuild-kit/*` for `tsx`. Added 2026-05-16.
   "@esbuild-kit/core-utils>esbuild": "^0.25.0"
+  # GHSA-58qx-3vcg-4xpx — ws <8.20.1 has an uninitialized-memory disclosure
+  # via a malformed Sec-WebSocket-Extensions header. happy-dom@20.9.0 (latest
+  # at 2026-05-19) still depends on ws@8.20.0. ws is dev-only here (happy-dom
+  # provides the DOM for client-side tests; we don't ship it in the Docker
+  # image), but `pnpm audit --audit-level=moderate` blocks the merge until
+  # the transitive is bumped. Pinning `happy-dom>ws` so the override stays
+  # surgical — if any other transitive ever depends on ws, it keeps its own
+  # resolution and we re-evaluate then. Remove once happy-dom ships a release
+  # that bumps ws. Added 2026-05-19.
+  "happy-dom>ws": "^8.20.1"
+
+# CVE-driven exception to the 7-day cooldown. ws@8.20.1 was published
+# 2026-05-12T15:54Z — ~10 hours short of the 168-hour cooldown at the time
+# of the audit failure (2026-05-19). The rule in .claude/rules/supply-chain.md
+# §3 explicitly allows bypassing for "a CVE-driven urgent patch documented
+# in the commit message" — see the corresponding override above and the
+# accompanying commit. Remove this once happy-dom bumps and the override
+# above is removed.
+minimumReleaseAgeExclude:
+  - ws
