@@ -9,6 +9,7 @@ import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import { compareReplays } from "../api/api.ts";
 import type { ReplayDetailResponse, ReplayTurnResponse } from "../api/api.types.ts";
 import { formatTimestamp } from "../format.ts";
+import { diffRunConfigs, type RunConfigDiffCell } from "./run-config-diff.ts";
 
 const MIN_COMPARE = 2;
 const MAX_COMPARE = 8;
@@ -67,6 +68,7 @@ function CompareHeader() {
 
 function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 	const allKeys = collectKeys(replays);
+	const runConfigRows = diffRunConfigs(replays.map((r) => r.runConfig));
 	return (
 		<div className="overflow-x-auto">
 			<table className="w-full border-separate border-spacing-3" aria-label="Replay comparison">
@@ -83,11 +85,6 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 									<CardContent className="text-xs text-muted-foreground">
 										<div>v{r.conversationVersion}</div>
 										<div>{formatTimestamp(r.startedAt)}</div>
-										{r.runConfig !== null && r.runConfig !== undefined && (
-											<pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 text-[10px]">
-												{JSON.stringify(r.runConfig, null, 2)}
-											</pre>
-										)}
 									</CardContent>
 								</Card>
 							</th>
@@ -95,6 +92,51 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 					</tr>
 				</thead>
 				<tbody>
+					{runConfigRows.length > 0 && (
+						<tr>
+							<td
+								colSpan={replays.length}
+								className="pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+							>
+								Run config
+							</td>
+						</tr>
+					)}
+					{runConfigRows.map((row) => (
+						<tr key={`run-config-${row.key}`} aria-label={`run_config.${row.key}`}>
+							{row.cells.map((cell, idx) => {
+								const replay = replays[idx];
+								if (replay === undefined) return null;
+								return (
+									<td
+										key={`${replay.id}-run-config-${row.key}`}
+										className={runConfigCellClass(cell)}
+									>
+										<div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+											{row.key}
+										</div>
+										{cell.present ? (
+											<pre className="whitespace-pre-wrap break-all text-[11px]">
+												{JSON.stringify(cell.value)}
+											</pre>
+										) : (
+											<p className="text-muted-foreground italic">absent</p>
+										)}
+									</td>
+								);
+							})}
+						</tr>
+					))}
+					{allKeys.length > 0 && (
+						<tr>
+							<td
+								colSpan={replays.length}
+								className="pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+							>
+								Turns
+							</td>
+						</tr>
+					)}
 					{allKeys.map((key) => (
 						<KeyRow key={key} keyName={key} replays={replays} />
 					))}
@@ -102,6 +144,12 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 			</table>
 		</div>
 	);
+}
+
+function runConfigCellClass(cell: RunConfigDiffCell): string {
+	const base = "min-w-[240px] rounded border p-2 align-top text-xs";
+	if (cell.differsFromBaseline) return `${base} bg-yellow-50 dark:bg-yellow-950/30`;
+	return base;
 }
 
 function KeyRow({ keyName, replays }: { keyName: string; replays: ReplayDetailResponse[] }) {

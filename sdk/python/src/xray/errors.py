@@ -107,6 +107,33 @@ class LiveKitDependencyError(XrayError):
     failure_reason: ClassVar[FailureReason] = "runtime_error"
 
 
+class VersionFingerprintMismatchError(XrayError):
+    """``POST /v1/conversations`` returned 409 — the dev edited the spec but
+    forgot to bump ``Conversation.id`` (or pinned an explicit ``version``
+    that collided)."""
+
+    failure_reason: ClassVar[FailureReason] = "sdk_aborted"
+
+    def __init__(self, conversation_id: str, version: str) -> None:
+        super().__init__(
+            f'Conversation "{conversation_id}" version "{version}" already exists '
+            "with a different turn structure"
+        )
+        self.conversation_id = conversation_id
+        self.version = version
+
+
+class MissingReplayContextError(XrayError):
+    """``bind_from_livekit_room`` was called against a room whose metadata is
+    empty, isn't JSON, or doesn't carry the xray replay-context keys."""
+
+    failure_reason: ClassVar[FailureReason] = "sdk_aborted"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"missing replay context on LiveKit room metadata: {reason}")
+        self.reason = reason
+
+
 __all__ = [
     "FAILURE_REASONS",
     "AgentNotJoinedError",
@@ -114,7 +141,9 @@ __all__ = [
     "AudioTooLargeError",
     "FailureReason",
     "LiveKitDependencyError",
+    "MissingReplayContextError",
     "MixdownError",
     "RuntimeBindError",
+    "VersionFingerprintMismatchError",
     "XrayError",
 ]

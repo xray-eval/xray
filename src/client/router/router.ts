@@ -2,6 +2,7 @@ import type { RouterHistory } from "@tanstack/react-router";
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import * as v from "valibot";
 
+import { CompareConversations } from "../conversations/compare-conversations.tsx";
 import { ConversationDetail } from "../conversations/conversation-detail.tsx";
 import { ConversationsList } from "../conversations/conversations.tsx";
 import { Inspector } from "../inspector/inspector.tsx";
@@ -47,11 +48,19 @@ export const compareReplaysRoute = createRoute({
 	},
 });
 
+export const compareConversationsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/compare/conversations",
+	component: CompareConversations,
+	validateSearch: (search): CompareSearch => v.parse(CompareSearchSchema, search),
+});
+
 const routeTree = rootRoute.addChildren([
 	conversationsRoute,
 	conversationDetailRoute,
 	replayRoute,
 	compareReplaysRoute,
+	compareConversationsRoute,
 ]);
 
 export interface CreateAppRouterOptions {

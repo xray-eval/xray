@@ -70,8 +70,15 @@ export function listConversations(signal?: AbortSignal): Promise<ListConversatio
 	return getJson("/v1/conversations", ListConversationsResponseSchema, signal);
 }
 
-export function getConversation(id: string, signal?: AbortSignal): Promise<ConversationResponse> {
-	return getJson(`/v1/conversations/${id}`, ConversationResponseSchema, signal);
+export function getConversation(
+	id: string,
+	options: { version?: string; signal?: AbortSignal } = {},
+): Promise<ConversationResponse> {
+	const path =
+		options.version === undefined
+			? `/v1/conversations/${id}`
+			: `/v1/conversations/${id}?version=${encodeURIComponent(options.version)}`;
+	return getJson(path, ConversationResponseSchema, options.signal);
 }
 
 export function listReplaysForConversation(

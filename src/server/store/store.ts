@@ -7,11 +7,14 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
 import type { Env } from "@/server/env/env.ts";
 
-import { StoreParentDirNotFoundError } from "./errors.ts";
+import { LegacySchemaDetectedError, StoreParentDirNotFoundError } from "./errors.ts";
 import * as schema from "./schema.ts";
 import { Database } from "bun:sqlite";
 
 const MIGRATIONS_FOLDER = new URL("./migrations", import.meta.url).pathname;
+
+const LEGACY_TABLES = ["sessions", "replay_runs", "tool_calls_v1", "turns"] as const;
+const NEW_TABLES = ["conversations", "replays", "replay_turns"] as const;
 
 export type StoreSchema = typeof schema;
 export type StoreDb = BunSQLiteDatabase<StoreSchema>;
@@ -48,14 +51,36 @@ export function openStore(opts: OpenStoreOptions): Store {
 		}
 	}
 	const sqlite = new Database(opts.path, { create: true, strict: true });
-	// WAL: readers and the single writer don't block each other. Safe choice
-	// since one Bun process owns the DB (see `.claude/rules/single-image-distribution.md`).
-	sqlite.exec("PRAGMA journal_mode = WAL");
-	// FK enforcement is off by default in SQLite. Required for ON DELETE CASCADE.
-	sqlite.exec("PRAGMA foreign_keys = ON");
-	const db = drizzle(sqlite, { schema });
-	migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
-	return { db, close: () => sqlite.close() };
+	try {
+		// WAL: readers and the single writer don't block each other. Safe choice
+		// since one Bun process owns the DB (see `.claude/rules/single-image-distribution.md`).
+		sqlite.exec("PRAGMA journal_mode = WAL");
+		// FK enforcement is off by default in SQLite. Required for ON DELETE CASCADE.
+		sqlite.exec("PRAGMA foreign_keys = ON");
+		// Probe BEFORE the migrator so an in-place upgrade from the pre-rewrite
+		// alpha gets a typed error instead of an opaque SQLITE_ERROR mid-migration.
+		assertNoLegacySchema(sqlite, opts.path);
+		const db = drizzle(sqlite, { schema });
+		migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+		return { db, close: () => sqlite.close() };
+	} catch (e) {
+		sqlite.close();
+		throw e;
+	}
+}
+
+function assertNoLegacySchema(sqlite: Database, path: string): void {
+	const existing = new Set(
+		sqlite
+			.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
+			.all()
+			.map((r) => r.name),
+	);
+	const legacyPresent = LEGACY_TABLES.filter((t) => existing.has(t));
+	if (legacyPresent.length === 0) return;
+	const newPresent = NEW_TABLES.some((t) => existing.has(t));
+	if (newPresent) return;
+	throw new LegacySchemaDetectedError(path, legacyPresent);
 }
 
 /**

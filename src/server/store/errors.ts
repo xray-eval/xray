@@ -17,3 +17,25 @@ export class StoreParentDirNotFoundError extends StoreError {
 		this.parent = parent;
 	}
 }
+
+/**
+ * A legacy pre-rewrite xray schema (sessions / replay_runs / tool_calls_v1 /
+ * turns) was detected at the opened DB path and the new schema's tables are
+ * absent. Drizzle's migrator would otherwise raise a raw `SQLITE_ERROR` on
+ * the first `CREATE TABLE` collision; we surface it as a typed startup
+ * failure with an actionable message so the operator knows the alpha break
+ * happened and what to do.
+ */
+export class LegacySchemaDetectedError extends StoreError {
+	readonly path: string;
+	readonly legacyTables: readonly string[];
+
+	constructor(path: string, legacyTables: readonly string[]) {
+		super(
+			`Detected legacy xray schema at ${path} (tables: ${legacyTables.join(", ")}). This is an alpha break — back up and wipe /data/xray.db, then restart.`,
+		);
+		this.name = "LegacySchemaDetectedError";
+		this.path = path;
+		this.legacyTables = legacyTables;
+	}
+}

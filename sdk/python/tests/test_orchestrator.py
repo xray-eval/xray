@@ -12,7 +12,8 @@ import respx
 from typing_extensions import override
 
 from xray import Conversation, Turn, expect_agent_turn, run
-from xray.conversation import AgentResponse, JudgeOutcome
+from xray.conversation import AgentResponse, JudgeOutcome, RecordedAudio, TtsAudio
+from xray.errors import AudioMissingError, VersionFingerprintMismatchError
 from xray.runtime.base import Runtime, RuntimeResult
 
 
@@ -365,3 +366,100 @@ def test_audio_upload_caps_at_50mib_locally(tmp_path: Path):
     # Sanity: the typed error class is still importable for SDK users
     # who catch it explicitly.
     assert AudioTooLargeError.__name__ == "AudioTooLargeError"
+
+
+@respx.mock
+def test_run_raises_typed_error_on_409_conversation_conflict():
+    """Server's 409 on POST /v1/conversations must surface as a typed
+    Python error, not as a generic httpx.HTTPStatusError."""
+    conv = Conversation(id="conv-A", turns=[Turn.user("hi", key="u0")])
+
+    respx.post("http://xray.local/v1/conversations").mock(
+        return_value=httpx.Response(
+            409,
+            json={
+                "error": "version_fingerprint_mismatch",
+                "conversationId": conv.id,
+                "conversationVersion": conv.version,
+            },
+        )
+    )
+    post_replay = respx.post("http://xray.local/v1/replays").mock(
+        return_value=httpx.Response(201, json={"id": "should-never-be-called"})
+    )
+
+    class _UnusedRuntime(Runtime):
+        @override
+        async def run(self, conversation: Conversation) -> RuntimeResult:  # pragma: no cover
+            raise AssertionError("runtime must not run when 409 fires")
+
+        @override
+        async def aclose(self) -> None:  # pragma: no cover
+            return None
+
+    with pytest.raises(VersionFingerprintMismatchError) as exc_info:
+        run(conversation=conv, runtime=_UnusedRuntime(), xray_url="http://xray.local")
+
+    assert exc_info.value.conversation_id == conv.id
+    assert exc_info.value.version == conv.version
+    assert not post_replay.called
+
+
+@respx.mock
+def test_run_raises_audio_missing_before_creating_replay(tmp_path: Path):
+    """Pre-flight catches missing recorded audio before the Replay row is created."""
+    missing = tmp_path / "nope.wav"
+    conv = Conversation(
+        id="x",
+        turns=[
+            Turn.user("hi", key="u0", audio=RecordedAudio(path=str(missing))),
+        ],
+    )
+
+    post_conv = respx.post("http://xray.local/v1/conversations").mock(
+        return_value=httpx.Response(200, json=conv.to_spec_payload())
+    )
+    post_replay = respx.post("http://xray.local/v1/replays").mock(
+        return_value=httpx.Response(201, json={"id": "should-never-be-called"})
+    )
+
+    class _UnusedRuntime(Runtime):
+        @override
+        async def run(self, conversation: Conversation) -> RuntimeResult:  # pragma: no cover
+            raise AssertionError("runtime must not run when pre-flight fails")
+
+        @override
+        async def aclose(self) -> None:  # pragma: no cover
+            return None
+
+    with pytest.raises(AudioMissingError) as exc_info:
+        run(conversation=conv, runtime=_UnusedRuntime(), xray_url="http://xray.local")
+
+    assert exc_info.value.turn_idx == 0
+    assert str(missing) in str(exc_info.value)
+    assert post_conv.called
+    assert not post_replay.called
+
+
+@respx.mock
+def test_run_skips_pre_flight_for_tts_audio_refs():
+    """TtsAudio refs don't carry a path — the runtime synths and caches.
+    Pre-flight must not falsely complain."""
+    conv = Conversation(
+        id="x",
+        turns=[Turn.user("hi", key="u0", audio=TtsAudio())],
+    )
+
+    respx.post("http://xray.local/v1/conversations").mock(
+        return_value=httpx.Response(200, json=conv.to_spec_payload())
+    )
+    respx.post("http://xray.local/v1/replays").mock(
+        return_value=httpx.Response(201, json={"id": "00000000-0000-0000-0000-000000000456"})
+    )
+    respx.patch("http://xray.local/v1/replays/00000000-0000-0000-0000-000000000456").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    runtime = StubRuntime(responses=[AgentResponse(transcript="")])
+    result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+    assert result.status == "completed"

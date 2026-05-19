@@ -6,7 +6,7 @@ import { eq, sql } from "drizzle-orm";
 
 import { makeEnv } from "@/server/env/test-utils.ts";
 
-import { StoreParentDirNotFoundError } from "./errors.ts";
+import { LegacySchemaDetectedError, StoreParentDirNotFoundError } from "./errors.ts";
 import {
 	assertions,
 	conversations,
@@ -18,6 +18,7 @@ import {
 	toolCalls,
 } from "./schema.ts";
 import { openStore, openStoreFromEnv } from "./store.ts";
+import { Database } from "bun:sqlite";
 import {
 	makeConversationInput,
 	makeReplayInput,
@@ -103,6 +104,22 @@ describe("openStore", () => {
 	it("throws StoreParentDirNotFoundError when the parent dir is missing", () => {
 		const missing = join(tmpDir, "does-not-exist", "xray.db");
 		expect(() => openStore({ path: missing })).toThrow(StoreParentDirNotFoundError);
+	});
+
+	it("throws LegacySchemaDetectedError when a pre-rewrite schema is detected", () => {
+		const path = tmpDbPath();
+		const seed = new Database(path, { create: true, strict: true });
+		seed.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY)");
+		seed.close();
+		expect(() => openStore({ path })).toThrow(LegacySchemaDetectedError);
+	});
+
+	it("does not flag a fresh DB or a DB already on the new schema", () => {
+		const path = tmpDbPath();
+		const fresh = openStore({ path });
+		fresh.close();
+		const reopen = openStore({ path });
+		reopen.close();
 	});
 
 	it("cascades replay deletes to all replay-scoped tables", () => {
