@@ -309,13 +309,17 @@ class LiveKitRuntime(Runtime):
         agent_track_event: asyncio.Event,
         transcription_queue: asyncio.Queue[Any],
     ) -> tuple[_TurnSegment, AgentResponse]:
-        # Wait for the agent's track if it hasn't arrived yet.
-        try:
-            await asyncio.wait_for(
-                agent_track_event.wait(), timeout=self.agent_turn_timeout_s
-            )
-        except asyncio.TimeoutError as e:
-            raise AgentNotJoinedError(self.room, self.agent_turn_timeout_s) from e
+        # `agent_track_event` is one-time (track subscription is room-scoped,
+        # not turn-scoped). Only wait on it if we don't yet have a track —
+        # otherwise the wait would return immediately on turn 2+ and the
+        # configured `agent_turn_timeout_s` would silently no-op.
+        if not agent_audio_track_holder:
+            try:
+                await asyncio.wait_for(
+                    agent_track_event.wait(), timeout=self.agent_turn_timeout_s
+                )
+            except asyncio.TimeoutError as e:
+                raise AgentNotJoinedError(self.room, self.agent_turn_timeout_s) from e
         track = agent_audio_track_holder[-1]
         stream = lk_rtc.AudioStream(
             track, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS
@@ -337,11 +341,21 @@ class LiveKitRuntime(Runtime):
         transcript_task = asyncio.create_task(_drain_transcripts())
         deadline = time.time() + self.agent_turn_timeout_s
 
-        try:
+        async def _consume_frames() -> None:
             async for event in stream:
                 segment.pcm.extend(bytes(event.frame.data))
                 if final_seen.is_set() or time.time() > deadline:
                     break
+
+        try:
+            # Per-turn deadline wraps the consume loop so a silent agent
+            # doesn't hang the iterator forever — the `time.time() > deadline`
+            # check inside only fires once a frame arrives.
+            remaining = max(0.0, deadline - time.time())
+            try:
+                await asyncio.wait_for(_consume_frames(), timeout=remaining)
+            except asyncio.TimeoutError:
+                pass
         finally:
             await stream.aclose()
             # Drain anything in the queue before tearing down the task —

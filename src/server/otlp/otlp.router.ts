@@ -18,7 +18,6 @@ import {
 	InvalidOtlpBodyError,
 	MalformedOtlpBodyError,
 	OtlpBodyTooLargeError,
-	TooManySpansForReplayError,
 	TooManySpansPerRequestError,
 	UnsupportedOtlpContentTypeError,
 } from "./otlp.errors.ts";
@@ -140,25 +139,18 @@ export function createOtlpRouter(store: Store): Hono {
 					400,
 				),
 			)
-			.with(P.instanceOf(TooManySpansForReplayError), (e) =>
-				c.json(
-					{
-						error: "too_many_spans_for_replay",
-						replayId: e.replayId,
-						maxSpansPerReplay: e.maxSpansPerReplay,
-					},
-					400,
-				),
-			)
 			.with(P.instanceOf(OtlpBodyTooLargeError), (e) =>
 				c.json({ error: "body_too_large", maxBytes: e.maxBytes }, 413),
 			)
 			.with(P.instanceOf(UnsupportedOtlpContentTypeError), (e) =>
 				c.json({ error: "unsupported_content_type", contentType: e.contentType }, 415),
 			)
-			.otherwise((e) => {
+			.with(P.instanceOf(Error), (e) => {
 				console.error("unhandled error during otlp ingest", e);
 				return c.json({ error: "internal_error" }, 500);
+			})
+			.otherwise((e) => {
+				throw e;
 			}),
 	);
 

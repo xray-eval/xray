@@ -338,9 +338,12 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 				console.error("audio path resolved outside root", e);
 				return c.json({ error: "store_failure" }, 500);
 			})
-			.otherwise((e) => {
+			.with(P.instanceOf(Error), (e) => {
 				console.error("unhandled error during audio request", e);
 				return c.json({ error: "store_failure" }, 500);
+			})
+			.otherwise((e) => {
+				throw e;
 			}),
 	);
 

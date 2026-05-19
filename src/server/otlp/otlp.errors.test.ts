@@ -3,7 +3,6 @@ import {
 	MalformedOtlpBodyError,
 	OtlpBodyTooLargeError,
 	OtlpError,
-	TooManySpansForReplayError,
 	TooManySpansPerRequestError,
 	UnsupportedOtlpContentTypeError,
 } from "./otlp.errors.ts";
@@ -37,11 +36,6 @@ describe("OtlpError subclasses", () => {
 		const e = new TooManySpansPerRequestError(512, 999);
 		expect(e.maxSpans).toBe(512);
 		expect(e.received).toBe(999);
-	});
-	it("TooManySpansForReplayError carries replayId + cap", () => {
-		const e = new TooManySpansForReplayError("r", 5000);
-		expect(e.replayId).toBe("r");
-		expect(e.maxSpansPerReplay).toBe(5000);
 	});
 	it("UnsupportedOtlpContentTypeError carries contentType", () => {
 		const e = new UnsupportedOtlpContentTypeError("application/x-protobuf");

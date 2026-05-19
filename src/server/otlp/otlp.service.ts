@@ -11,7 +11,7 @@ import {
 } from "@/server/store/schema.ts";
 import type { Store, StoreDb } from "@/server/store/store.ts";
 
-import { TooManySpansForReplayError, TooManySpansPerRequestError } from "./otlp.errors.ts";
+import { TooManySpansPerRequestError } from "./otlp.errors.ts";
 import type {
 	AnyValue,
 	ExportTraceServiceRequest,
@@ -38,9 +38,13 @@ export interface IngestOtlpResult {
  * the design point: a dev drops xray in front of an already-instrumented
  * agent and it lights up.
  *
- * Per-request limits are enforced *before* persistence. The per-replay
- * cap is checked mid-stream: once it's hit, the request fails with
- * `TooManySpansForReplayError` so a runaway agent can't fill the disk.
+ * Per-request limits are enforced *before* persistence. Spans that would
+ * push a replay past `MAX_SPANS_PER_REPLAY` are counted into the OTLP
+ * response's `partialSuccess.rejectedSpans` instead of throwing — that way
+ * one runaway turn doesn't roll back the under-cap spans that arrived
+ * alongside it in the same batch. The persist + cap-counter increment run
+ * in a single transaction so concurrent batches for the same replay can't
+ * both read a stale count and silently overshoot the cap.
  */
 export function ingestOtlpTraces(
 	store: Store,
@@ -53,10 +57,13 @@ export function ingestOtlpTraces(
 
 	let rejected = 0;
 	let persisted = 0;
-	// Cache per-replay counts so we don't re-query SQLite for every span.
-	const replayCounts = new Map<string, number>();
 
 	store.db.transaction((tx) => {
+		// Per-replay counts are read fresh under the transaction's lock so
+		// two concurrent OTLP requests for the same replayId serialize on
+		// the SQLite writer rather than racing on a per-request in-memory
+		// counter.
+		const replayCounts = new Map<string, number>();
 		for (const { span, resource } of projected) {
 			const replayId = resourceReplayId(resource, span.attributes);
 			if (replayId === null) {
@@ -74,7 +81,7 @@ export function ingestOtlpTraces(
 			}
 
 			if (!replayCounts.has(replayId)) {
-				const existing = store.db
+				const existing = tx
 					.select({ n: count() })
 					.from(spans)
 					.where(eq(spans.replayId, replayId))
@@ -83,11 +90,15 @@ export function ingestOtlpTraces(
 			}
 			const current = replayCounts.get(replayId) ?? 0;
 			if (current >= MAX_SPANS_PER_REPLAY) {
-				throw new TooManySpansForReplayError(replayId, MAX_SPANS_PER_REPLAY);
+				// Cap reached for this replay — drop the excess into the
+				// OTLP partialSuccess response, persist the in-cap spans
+				// the batch already wrote. No rollback.
+				rejected += 1;
+				continue;
 			}
-			replayCounts.set(replayId, current + 1);
 
-			tx.insert(spans)
+			const insertedRows = tx
+				.insert(spans)
 				.values({
 					replayId,
 					traceId: span.traceId,
@@ -100,8 +111,17 @@ export function ingestOtlpTraces(
 					attributesJson: JSON.stringify(extraction.attributes),
 				})
 				.onConflictDoNothing()
-				.run();
+				.returning({ id: spans.id })
+				.all();
 
+			if (insertedRows.length === 0) {
+				// Span already existed (`(traceId, spanId)` conflict). Don't
+				// count it against the cap and don't double-process the
+				// vocabulary's extracted rows.
+				continue;
+			}
+
+			replayCounts.set(replayId, current + 1);
 			persistExtracted(tx, replayId, span, extraction);
 			persisted += 1;
 		}

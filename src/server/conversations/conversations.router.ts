@@ -278,9 +278,12 @@ export function createConversationsRouter(store: Store): Hono {
 					404,
 				),
 			)
-			.otherwise((e) => {
+			.with(P.instanceOf(Error), (e) => {
 				console.error("unhandled error during conversation request", e);
 				return c.json({ error: "internal_error" }, 500);
+			})
+			.otherwise((e) => {
+				throw e;
 			}),
 	);
 

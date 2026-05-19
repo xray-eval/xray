@@ -7,6 +7,7 @@ import {
 	ReplayBodyTooLargeError,
 	ReplayError,
 	ReplayNotFoundError,
+	ReplayStatusTransitionError,
 } from "./replays.errors.ts";
 import { describe, expect, it } from "bun:test";
 
@@ -63,5 +64,13 @@ describe("ReplayError subclasses", () => {
 		expect(e.count).toBe(9);
 		expect(e.min).toBe(2);
 		expect(e.max).toBe(8);
+	});
+	it("ReplayStatusTransitionError carries replayId/from/to", () => {
+		const e = new ReplayStatusTransitionError("r", "failed", "completed");
+		expect(e).toBeInstanceOf(ReplayError);
+		expect(e.name).toBe("ReplayStatusTransitionError");
+		expect(e.replayId).toBe("r");
+		expect(e.from).toBe("failed");
+		expect(e.to).toBe("completed");
 	});
 });

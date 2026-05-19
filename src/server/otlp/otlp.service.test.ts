@@ -14,7 +14,7 @@ import {
 } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
-import { TooManySpansForReplayError, TooManySpansPerRequestError } from "./otlp.errors.ts";
+import { TooManySpansPerRequestError } from "./otlp.errors.ts";
 import { ingestOtlpTraces } from "./otlp.service.ts";
 import { makeOtlpRequest } from "./otlp.test-utils.ts";
 import { MAX_SPANS_PER_REPLAY, MAX_SPANS_PER_REQUEST } from "./otlp.types.ts";
@@ -238,7 +238,7 @@ describe("ingestOtlpTraces — limits", () => {
 		store.close();
 	});
 
-	it("throws TooManySpansForReplayError mid-stream once persisted spans exceed the per-replay cap", () => {
+	it("counts over-cap spans into partialSuccess.rejectedSpans without rolling back under-cap inserts in the same batch", () => {
 		const { store, replayId } = setupReplay();
 		// Pre-fill close to the cap directly through SQL — much faster than
 		// driving MAX_SPANS_PER_REPLAY ingest cycles.
@@ -284,7 +284,10 @@ describe("ingestOtlpTraces — limits", () => {
 				},
 			],
 		});
-		expect(() => ingestOtlpTraces(store, req)).toThrow(TooManySpansForReplayError);
+		const { response, result } = ingestOtlpTraces(store, req);
+		expect(result.persistedSpans).toBe(0);
+		expect(result.rejectedSpans).toBe(1);
+		expect(response.partialSuccess?.rejectedSpans).toBe(1);
 		store.close();
 	});
 });

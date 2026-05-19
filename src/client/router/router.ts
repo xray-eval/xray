@@ -41,7 +41,10 @@ export const compareReplaysRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/compare/replays",
 	component: CompareReplays,
-	validateSearch: (search): CompareSearch => v.parse(CompareSearchSchema, search),
+	validateSearch: (search): CompareSearch => {
+		const parsed = v.safeParse(CompareSearchSchema, search);
+		return parsed.success ? parsed.output : {};
+	},
 });
 
 const routeTree = rootRoute.addChildren([

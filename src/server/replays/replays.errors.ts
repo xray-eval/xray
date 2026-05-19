@@ -68,6 +68,24 @@ export class ConversationVersionNotFoundError extends ReplayError {
 	}
 }
 
+/**
+ * A PATCH attempted to move the replay out of `failed`. The SDK is the sole
+ * writer and a failed run is terminal — a follow-up PATCH that "rescues" a
+ * failed row would mask whatever flagged it.
+ */
+export class ReplayStatusTransitionError extends ReplayError {
+	readonly replayId: string;
+	readonly from: string;
+	readonly to: string;
+	constructor(replayId: string, from: string, to: string) {
+		super(`Replay "${replayId}" cannot transition from "${from}" to "${to}"`);
+		this.name = "ReplayStatusTransitionError";
+		this.replayId = replayId;
+		this.from = from;
+		this.to = to;
+	}
+}
+
 export class ReplayBodyTooLargeError extends ReplayError {
 	readonly maxBytes: number;
 	constructor(maxBytes: number) {

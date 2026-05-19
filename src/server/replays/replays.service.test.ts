@@ -2,7 +2,11 @@ import { upsertConversation } from "@/server/conversations/conversations.service
 import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
-import { ConversationVersionNotFoundError, ReplayNotFoundError } from "./replays.errors.ts";
+import {
+	ConversationVersionNotFoundError,
+	ReplayNotFoundError,
+	ReplayStatusTransitionError,
+} from "./replays.errors.ts";
 import {
 	compareReplays,
 	createReplay,
@@ -90,6 +94,18 @@ describe("updateReplay", () => {
 		const before = getReplay(store, id);
 		const after = updateReplay(store, id, {});
 		expect(after).toEqual(before);
+		store.close();
+	});
+
+	it("rejects status transitions out of 'failed' (terminal)", () => {
+		const store = makeTempStore();
+		const id = seedReplay(store);
+		updateReplay(store, id, { status: "failed", failureReason: "agent_not_joined" });
+		expect(() => updateReplay(store, id, { status: "completed" })).toThrow(
+			ReplayStatusTransitionError,
+		);
+		// Same status (idempotent re-PATCH of the same terminal state) is allowed.
+		expect(() => updateReplay(store, id, { status: "failed" })).not.toThrow();
 		store.close();
 	});
 });

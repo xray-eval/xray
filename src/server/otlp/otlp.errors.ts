@@ -57,22 +57,6 @@ export class TooManySpansPerRequestError extends OtlpError {
 	}
 }
 
-/**
- * Persisting the next batch of spans for this replay would push it past the
- * per-replay cap. Rejected mid-stream rather than after full ingest so a
- * pathological agent can't fill the volume.
- */
-export class TooManySpansForReplayError extends OtlpError {
-	readonly maxSpansPerReplay: number;
-	readonly replayId: string;
-	constructor(replayId: string, maxSpansPerReplay: number) {
-		super(`Replay "${replayId}" exceeded ${maxSpansPerReplay} persisted spans`);
-		this.name = "TooManySpansForReplayError";
-		this.maxSpansPerReplay = maxSpansPerReplay;
-		this.replayId = replayId;
-	}
-}
-
 export class UnsupportedOtlpContentTypeError extends OtlpError {
 	readonly contentType: string | null;
 	constructor(contentType: string | null) {

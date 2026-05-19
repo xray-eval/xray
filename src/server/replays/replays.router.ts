@@ -22,6 +22,7 @@ import {
 	MalformedReplayBodyError,
 	ReplayBodyTooLargeError,
 	ReplayNotFoundError,
+	ReplayStatusTransitionError,
 } from "./replays.errors.ts";
 import { compareReplays, createReplay, getReplay, updateReplay } from "./replays.service.ts";
 import {
@@ -319,9 +320,23 @@ export function createReplaysRouter(store: Store): Hono {
 			.with(P.instanceOf(ReplayNotFoundError), (e) =>
 				c.json({ error: "replay_not_found", replayId: e.replayId }, 404),
 			)
-			.otherwise((e) => {
+			.with(P.instanceOf(ReplayStatusTransitionError), (e) =>
+				c.json(
+					{
+						error: "invalid_status_transition",
+						replayId: e.replayId,
+						from: e.from,
+						to: e.to,
+					},
+					409,
+				),
+			)
+			.with(P.instanceOf(Error), (e) => {
 				console.error("unhandled error during replay request", e);
 				return c.json({ error: "internal_error" }, 500);
+			})
+			.otherwise((e) => {
+				throw e;
 			}),
 	);
 

@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import { getConversationVersion } from "@/server/conversations/conversations.service.ts";
 import {
@@ -21,7 +21,11 @@ import type {
 	ToolCallRow,
 } from "@/server/store/types.ts";
 
-import { ConversationVersionNotFoundError, ReplayNotFoundError } from "./replays.errors.ts";
+import {
+	ConversationVersionNotFoundError,
+	ReplayNotFoundError,
+	ReplayStatusTransitionError,
+} from "./replays.errors.ts";
 import type {
 	AssertionResponse,
 	CompareReplaysResponse,
@@ -100,6 +104,9 @@ export function updateReplay(
 ): ReplayDetailResponse {
 	const existing = store.db.select().from(replays).where(eq(replays.id, id)).get();
 	if (existing === undefined) throw new ReplayNotFoundError(id);
+	if (existing.status === "failed" && patch.status !== undefined && patch.status !== "failed") {
+		throw new ReplayStatusTransitionError(id, existing.status, patch.status);
+	}
 
 	store.db.transaction((tx) => {
 		const replayUpdates: Partial<ReplayRow> = {};
@@ -309,19 +316,4 @@ export function findReplay(store: Store, id: string): ReplayRow | undefined {
 /** Used by the OTLP receiver to assert a replay_id is real before persisting. */
 export function replayExists(store: Store, id: string): boolean {
 	return findReplay(store, id) !== undefined;
-}
-
-export type { ReplayMetaRow as _ReplayMetaRow };
-// Re-export for slices that build other detail compositions.
-export { buildReplayDetail };
-
-// Tiny helper for tests that want to compare two replays by `(replayId, idx)`
-// equality, given replays.* IDs only.
-export function getReplaysByConversation(store: Store, conversationId: string): ReplayRow[] {
-	return store.db
-		.select()
-		.from(replays)
-		.where(and(eq(replays.conversationId, conversationId)))
-		.orderBy(desc(replays.startedAt))
-		.all();
 }
