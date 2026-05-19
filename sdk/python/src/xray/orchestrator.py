@@ -21,6 +21,7 @@ Matches the server's Valibot schemas in `src/server/**/*.types.ts`.
 
 from __future__ import annotations
 
+import contextvars
 import datetime as _dt
 import inspect
 import logging
@@ -29,6 +30,9 @@ from pathlib import Path
 from typing import Literal, TypeAlias, TypedDict
 
 import httpx
+from opentelemetry import context as otel_context
+from opentelemetry.context.context import Context
+from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel, Field, ValidationError
 from typing_extensions import NotRequired
 
@@ -55,6 +59,8 @@ from xray.errors import (
     VersionFingerprintMismatchError,
     XrayError,
 )
+from xray.otel import attach_replay_baggage
+from xray.otel import install as install_otel
 from xray.runtime.base import Runtime, RuntimeBindable, RuntimeResult
 
 logger = logging.getLogger(__name__)
@@ -160,6 +166,19 @@ async def run(
                 conversation_version=conversation.version,
             )
 
+        # 3b. Wire the driver-side OTEL pipeline. Mirrors what
+        # ``xray.attach`` does on the agent side — install the OTLP/JSON
+        # exporter + baggage processor, set the replay-scope baggage so
+        # spans emitted by the runtime (e.g. ``xray.turn`` for user
+        # turns) carry ``xray.replay.id`` and route to this replay.
+        tracer_provider: TracerProvider = install_otel(endpoint=xray_url)
+        baggage_token: contextvars.Token[Context] = attach_replay_baggage(
+            replay_id=replay_id,
+            conversation_id=conversation.id,
+            conversation_version=conversation.version,
+            modality="voice",
+        )
+
         # 4. Run the runtime. Typed errors surface their own
         # `failure_reason`; everything else falls through to a generic
         # `runtime_error` PATCH — no substring matching, per the
@@ -177,6 +196,11 @@ async def run(
             status, failure_reason = "failed", "runtime_error"
         finally:
             await runtime.aclose()
+            # Flush driver-side spans + detach baggage before we proceed
+            # to fetch the enrichment so any in-flight ``xray.turn``
+            # exports land in xray first.
+            tracer_provider.force_flush(timeout_millis=10_000)
+            otel_context.detach(baggage_token)
 
         # 5. Upload mixdown if produced.
         if (

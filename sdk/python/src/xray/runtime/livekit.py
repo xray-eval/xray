@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import ClassVar, Final
 
 import httpx
-from opentelemetry import baggage, context
+from opentelemetry import baggage, context, trace
 from typing_extensions import assert_never, override
 
 from xray.conversation import (
@@ -81,6 +81,13 @@ SAMPLES_PER_FRAME: Final[int] = SAMPLE_RATE * FRAME_MS // 1000
 # OpenAI TTS returns raw int16 PCM at 24 kHz when response_format='pcm'.
 # We linearly upsample to 48 kHz so it matches the LiveKit AudioSource.
 _OPENAI_TTS_INPUT_RATE: Final[int] = 24000
+
+
+# Tracer used by the driver to emit per-user-turn ``xray.turn`` spans.
+# The XrayBaggageSpanProcessor (installed by the orchestrator before
+# ``runtime.run``) lifts the replay-scope baggage onto these spans so
+# the OTLP receiver can route them to ``replay_turns``.
+_TRACER = trace.get_tracer("xray-py-driver", "0.0.1")
 
 
 @asynccontextmanager
@@ -296,10 +303,24 @@ class LiveKitDriver(Runtime):
         lk_rtc: LkRtcModule,
     ) -> _TurnSegment:
         pcm = await self._load_or_synth_user_pcm(conv_id=conv_id, idx=idx, turn=turn)
-        segment = _TurnSegment(role="user", idx=idx, key=turn.key, transcript=turn.text or "")
-        segment.started_at = time.time()
-        await self._publish_pcm(audio_source=audio_source, lk_rtc=lk_rtc, pcm=pcm, segment=segment)
-        segment.ended_at = time.time()
+        transcript = turn.text or ""
+        segment = _TurnSegment(role="user", idx=idx, key=turn.key, transcript=transcript)
+        # Emit an ``xray.turn`` span scoped to the audio publish so the
+        # server vocabulary records this user turn in ``replay_turns``
+        # with real start/end timestamps — the only place those exist
+        # is here, where we actually push the bytes onto the wire.
+        with _TRACER.start_as_current_span("xray.turn") as span:
+            span.set_attribute("xray.turn.idx", idx)
+            span.set_attribute("xray.turn.role", "user")
+            if transcript:
+                span.set_attribute("xray.turn.transcript", transcript)
+            if turn.key is not None:
+                span.set_attribute("xray.turn.key", turn.key)
+            segment.started_at = time.time()
+            await self._publish_pcm(
+                audio_source=audio_source, lk_rtc=lk_rtc, pcm=pcm, segment=segment
+            )
+            segment.ended_at = time.time()
         return segment
 
     async def _publish_pcm(

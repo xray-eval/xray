@@ -314,6 +314,53 @@ def test_runtime_raises_agent_not_joined_on_timeout(tmp_path: Path):
     assert exc.value.room == "room-1"
 
 
+def test_user_turn_emits_xray_turn_span(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The driver must emit one ``xray.turn`` span per user turn with
+    role=user, the authored transcript, and the turn idx/key. This is
+    what makes user turns show up in the replay UI alongside agent
+    turns — without it the user side stays invisible."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    import xray.runtime.livekit as livekit_mod
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    # Module-level `_TRACER` was bound to the default no-op provider at
+    # import time; rebind to the test provider so emitted spans land in
+    # the in-memory exporter.
+    monkeypatch.setattr(livekit_mod, "_TRACER", provider.get_tracer("xray-py-driver", "0.0.1"))
+
+    wav_path = tmp_path / "u0.wav"
+    _write_recorded_wav(wav_path, ms=40)
+
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join()])
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api)
+
+    conv = Conversation(
+        id="c",
+        turns=[Turn.user("hello there", key="u0", audio=RecordedAudio(path=str(wav_path)))],
+    )
+    asyncio.run(rt.run(conv))
+
+    finished = exporter.get_finished_spans()
+    turn_spans = [s for s in finished if s.name == "xray.turn"]
+    assert len(turn_spans) == 1, f"expected one xray.turn span, got {len(turn_spans)}"
+    span = turn_spans[0]
+    attrs = span.attributes or {}
+    assert attrs.get("xray.turn.role") == "user"
+    assert attrs.get("xray.turn.idx") == 0
+    assert attrs.get("xray.turn.transcript") == "hello there"
+    assert attrs.get("xray.turn.key") == "u0"
+    # Span timing brackets the audio publish — both endpoints set.
+    assert span.start_time is not None
+    assert span.end_time is not None
+    assert span.end_time >= span.start_time
+
+
 def test_tts_path_uses_openai_injection_and_caches(tmp_path: Path):
     calls: list[dict[str, Any]] = []
 

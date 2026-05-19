@@ -42,6 +42,7 @@ in front of the workload).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -49,7 +50,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
+from typing import Final, Protocol, runtime_checkable
 
 from opentelemetry import baggage, context, trace
 from opentelemetry.context.context import Context
@@ -57,10 +58,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel, Field, ValidationError
 
 from xray._json import JsonValue
+from xray.otel import (
+    XRAY_TURN_IDX,
+    XRAY_TURN_KEY,
+    attach_replay_baggage,
+)
 from xray.otel import install as install_otel
-
-if TYPE_CHECKING:
-    import contextvars
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +72,6 @@ logger = logging.getLogger(__name__)
 # (see _parse_xray_attribute). The driver side puts it on the JWT
 # attributes when minting the token.
 XRAY_ATTRIBUTE_KEY: Final[str] = "xray"
-
-XRAY_REPLAY_ID: Final[str] = "xray.replay.id"
-XRAY_CONVERSATION_ID: Final[str] = "xray.conversation.id"
-XRAY_CONVERSATION_VERSION: Final[str] = "xray.conversation.version"
-XRAY_MODALITY: Final[str] = "xray.modality"
-XRAY_TURN_IDX: Final[str] = "xray.turn.idx"
-XRAY_TURN_KEY: Final[str] = "xray.turn.key"
 
 
 # How long to wait for a remote participant carrying the xray attribute
@@ -264,7 +260,12 @@ async def attach(
     session: XraySession | None = None
 
     if replay_context is not None:
-        attach_token = _attach_baggage(replay_context)
+        attach_token = attach_replay_baggage(
+            replay_id=replay_context.replay_id,
+            conversation_id=replay_context.conversation_id,
+            conversation_version=replay_context.conversation_version,
+            modality=replay_context.modality,
+        )
         if tracer_provider is not None:
             session = XraySession(replay_context, tracer_provider)
             logger.info(
@@ -361,17 +362,6 @@ def _parse_xray_attribute(attributes: dict[str, str]) -> ReplayContext | None:
         conversation_version=parsed.conversation_version,
         modality=parsed.modality,
     )
-
-
-def _attach_baggage(replay_context: ReplayContext) -> contextvars.Token[Context]:
-    ctx = context.get_current()
-    ctx = baggage.set_baggage(XRAY_REPLAY_ID, replay_context.replay_id, context=ctx)
-    ctx = baggage.set_baggage(XRAY_CONVERSATION_ID, replay_context.conversation_id, context=ctx)
-    ctx = baggage.set_baggage(
-        XRAY_CONVERSATION_VERSION, replay_context.conversation_version, context=ctx
-    )
-    ctx = baggage.set_baggage(XRAY_MODALITY, replay_context.modality, context=ctx)
-    return context.attach(ctx)
 
 
 # Re-exported for the driver side (LiveKitDriver builds the same JSON).
