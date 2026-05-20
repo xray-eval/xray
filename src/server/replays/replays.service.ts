@@ -58,16 +58,16 @@ export function createReplay(
 	opts: CreateReplayOptions = {},
 ): ReplayDetailResponse {
 	const now = opts.now ?? (() => new Date().toISOString());
-	const conv = getConversationVersion(store, req.conversationId, req.conversationVersion);
+	const conv = getConversationVersion(store, req.conversation_id, req.conversation_version);
 	if (conv === undefined) {
-		throw new ConversationVersionNotFoundError(req.conversationId, req.conversationVersion);
+		throw new ConversationVersionNotFoundError(req.conversation_id, req.conversation_version);
 	}
 	const id = opts.id ?? crypto.randomUUID();
 	const startedAt = now();
 	const replayRow: ReplayRow = {
 		id,
-		conversationId: req.conversationId,
-		conversationVersion: req.conversationVersion,
+		conversationId: req.conversation_id,
+		conversationVersion: req.conversation_version,
 		status: "running",
 		failureReason: null,
 		startedAt,
@@ -78,7 +78,7 @@ export function createReplay(
 	const metaRow: ReplayMetaRow = {
 		replayId: id,
 		modality: req.modality ?? "voice",
-		runConfigJson: req.runConfig === undefined ? null : JSON.stringify(req.runConfig),
+		runConfigJson: req.run_config === undefined ? null : JSON.stringify(req.run_config),
 		judgeStatus: null,
 		judgeScore: null,
 		judgeReason: null,
@@ -111,17 +111,18 @@ export function updateReplay(
 	store.db.transaction((tx) => {
 		const replayUpdates: Partial<ReplayRow> = {};
 		if (patch.status !== undefined) replayUpdates.status = patch.status;
-		if (patch.failureReason !== undefined) replayUpdates.failureReason = patch.failureReason;
-		if (patch.finishedAt !== undefined) replayUpdates.finishedAt = patch.finishedAt;
-		if (patch.audioPath !== undefined) replayUpdates.audioPath = patch.audioPath;
+		if (patch.failure_reason !== undefined) replayUpdates.failureReason = patch.failure_reason;
+		if (patch.finished_at !== undefined) replayUpdates.finishedAt = patch.finished_at;
+		if (patch.audio_path !== undefined) replayUpdates.audioPath = patch.audio_path;
 		if (patch.transcript !== undefined) replayUpdates.transcript = patch.transcript;
 		if (Object.keys(replayUpdates).length > 0) {
 			tx.update(replays).set(replayUpdates).where(eq(replays.id, id)).run();
 		}
 
 		const metaUpdates: Partial<ReplayMetaRow> = {};
-		if (patch.runConfig !== undefined) {
-			metaUpdates.runConfigJson = patch.runConfig === null ? null : JSON.stringify(patch.runConfig);
+		if (patch.run_config !== undefined) {
+			metaUpdates.runConfigJson =
+				patch.run_config === null ? null : JSON.stringify(patch.run_config);
 		}
 		if (patch.judge !== undefined) {
 			metaUpdates.judgeStatus = patch.judge.status;
@@ -175,16 +176,16 @@ export function listReplaysForConversation(
 function toSummary(r: ReplayRow, m: ReplayMetaRow | null): ReplaySummaryResponse {
 	return {
 		id: r.id,
-		conversationId: r.conversationId,
-		conversationVersion: r.conversationVersion,
+		conversation_id: r.conversationId,
+		conversation_version: r.conversationVersion,
 		status: r.status,
-		failureReason: r.failureReason,
+		failure_reason: r.failureReason,
 		modality: m?.modality ?? "voice",
-		startedAt: r.startedAt,
-		finishedAt: r.finishedAt,
-		judgeStatus: m?.judgeStatus ?? null,
-		judgeScore: m?.judgeScore ?? null,
-		runConfig: parseJsonOrNull(m?.runConfigJson ?? null),
+		started_at: r.startedAt,
+		finished_at: r.finishedAt,
+		judge_status: m?.judgeStatus ?? null,
+		judge_score: m?.judgeScore ?? null,
+		run_config: parseJsonOrNull(m?.runConfigJson ?? null),
 	};
 }
 
@@ -206,16 +207,16 @@ function buildReplayDetail(store: Store, id: string): ReplayDetailResponse {
 	spanRows.sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0));
 	return {
 		id: r.id,
-		conversationId: r.conversationId,
-		conversationVersion: r.conversationVersion,
+		conversation_id: r.conversationId,
+		conversation_version: r.conversationVersion,
 		status: r.status,
-		failureReason: r.failureReason,
+		failure_reason: r.failureReason,
 		modality: m?.modality ?? "voice",
-		startedAt: r.startedAt,
-		finishedAt: r.finishedAt,
-		audioPath: r.audioPath,
+		started_at: r.startedAt,
+		finished_at: r.finishedAt,
+		audio_path: r.audioPath,
 		transcript: r.transcript,
-		runConfig: parseJsonOrNull(m?.runConfigJson ?? null),
+		run_config: parseJsonOrNull(m?.runConfigJson ?? null),
 		judge: {
 			status: m?.judgeStatus ?? null,
 			score: m?.judgeScore ?? null,
@@ -224,8 +225,8 @@ function buildReplayDetail(store: Store, id: string): ReplayDetailResponse {
 		},
 		turns: turns.map(toTurnResponse),
 		assertions: assertionRows.map(toAssertionResponse),
-		toolCalls: toolCallRows.map(toToolCallResponse),
-		modelUsage: modelUsageRows.map(toModelUsageResponse),
+		tool_calls: toolCallRows.map(toToolCallResponse),
+		model_usage: modelUsageRows.map(toModelUsageResponse),
 		spans: spanRows.map(toSpanResponse),
 	};
 }
@@ -235,65 +236,65 @@ function toTurnResponse(row: ReplayTurnRow): ReplayTurnResponse {
 		idx: row.idx,
 		role: row.role,
 		key: row.key,
-		startedAt: row.startedAt,
-		endedAt: row.endedAt,
+		started_at: row.startedAt,
+		ended_at: row.endedAt,
 		transcript: row.transcript,
-		audioPath: row.audioPath,
+		audio_path: row.audioPath,
 	};
 }
 
 function toAssertionResponse(row: AssertionRow): AssertionResponse {
 	return {
 		id: row.id,
-		turnIdx: row.turnIdx,
+		turn_idx: row.turnIdx,
 		name: row.name,
 		status: row.status,
 		message: row.message,
-		recordedAt: row.recordedAt,
+		recorded_at: row.recordedAt,
 	};
 }
 
 function toToolCallResponse(row: ToolCallRow): ToolCallResponse {
 	return {
 		id: row.id,
-		turnIdx: row.turnIdx,
-		spanId: row.spanId,
+		turn_idx: row.turnIdx,
+		span_id: row.spanId,
 		name: row.name,
-		argsJson: row.argsJson,
-		resultJson: row.resultJson,
-		startedAt: row.startedAt,
-		endedAt: row.endedAt,
-		latencyMs: row.latencyMs,
+		args_json: row.argsJson,
+		result_json: row.resultJson,
+		started_at: row.startedAt,
+		ended_at: row.endedAt,
+		latency_ms: row.latencyMs,
 	};
 }
 
 function toModelUsageResponse(row: ModelUsageRow): ModelUsageResponse {
 	return {
 		id: row.id,
-		turnIdx: row.turnIdx,
-		spanId: row.spanId,
+		turn_idx: row.turnIdx,
+		span_id: row.spanId,
 		provider: row.provider,
 		model: row.model,
-		inputTokens: row.inputTokens,
-		outputTokens: row.outputTokens,
-		totalTokens: row.totalTokens,
-		startedAt: row.startedAt,
-		endedAt: row.endedAt,
-		latencyMs: row.latencyMs,
+		input_tokens: row.inputTokens,
+		output_tokens: row.outputTokens,
+		total_tokens: row.totalTokens,
+		started_at: row.startedAt,
+		ended_at: row.endedAt,
+		latency_ms: row.latencyMs,
 	};
 }
 
 function toSpanResponse(row: SpanRow): SpanResponse {
 	return {
 		id: row.id,
-		traceId: row.traceId,
-		spanId: row.spanId,
-		parentSpanId: row.parentSpanId,
+		trace_id: row.traceId,
+		span_id: row.spanId,
+		parent_span_id: row.parentSpanId,
 		name: row.name,
 		vocabulary: row.vocabulary,
-		startedAt: row.startedAt,
-		endedAt: row.endedAt,
-		attributesJson: row.attributesJson,
+		started_at: row.startedAt,
+		ended_at: row.endedAt,
+		attributes_json: row.attributesJson,
 	};
 }
 

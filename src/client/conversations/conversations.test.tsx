@@ -6,9 +6,7 @@ import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
-const { act, cleanup, fireEvent, render, screen, waitFor } = await import(
-	"@testing-library/react"
-);
+const { act, cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
 const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
@@ -17,25 +15,25 @@ const SAMPLE_CONVERSATIONS = {
 	items: [
 		{
 			id: "conv-a",
-			latestVersion: "v1",
+			latest_version: "v1",
 			title: "Conversation A",
-			createdAt: "2026-05-15T00:00:00.000Z",
+			created_at: "2026-05-15T00:00:00.000Z",
 			versions: 1,
 			replays: 2,
 		},
 		{
 			id: "conv-b",
-			latestVersion: "v2",
+			latest_version: "v2",
 			title: "Conversation B",
-			createdAt: "2026-05-15T00:00:00.000Z",
+			created_at: "2026-05-15T00:00:00.000Z",
 			versions: 2,
 			replays: 0,
 		},
 		{
 			id: "conv-c",
-			latestVersion: "v1",
+			latest_version: "v1",
 			title: "Conversation C",
-			createdAt: "2026-05-15T00:00:00.000Z",
+			created_at: "2026-05-15T00:00:00.000Z",
 			versions: 1,
 			replays: 1,
 		},
@@ -123,9 +121,7 @@ describe("ConversationsList", () => {
 			fireEvent.click(button);
 		});
 
-		await waitFor(() =>
-			expect(router.state.location.pathname).toBe("/compare/conversations"),
-		);
+		await waitFor(() => expect(router.state.location.pathname).toBe("/compare/conversations"));
 		expect(router.state.location.search).toMatchObject({ ids: "conv-a:v1,conv-b:v2" });
 	});
 });

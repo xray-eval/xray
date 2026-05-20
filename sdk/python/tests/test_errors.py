@@ -10,7 +10,6 @@ from xray.errors import (
     AudioTooLargeError,
     FailureReason,
     LiveKitDependencyError,
-    MissingReplayContextError,
     MixdownError,
     RuntimeBindError,
     VersionFingerprintMismatchError,
@@ -28,7 +27,6 @@ from xray.errors import (
         (lambda: MixdownError("oops"), "runtime_error"),
         (lambda: LiveKitDependencyError("install [livekit]"), "runtime_error"),
         (lambda: VersionFingerprintMismatchError("conv-A", "v1"), "sdk_aborted"),
-        (lambda: MissingReplayContextError("metadata empty"), "sdk_aborted"),
     ],
 )
 def test_each_error_carries_its_failure_reason(
@@ -61,8 +59,3 @@ def test_version_fingerprint_mismatch_keeps_typed_attrs():
     assert err.conversation_id == "conv-A"
     assert err.version == "v1"
     assert type(err).__name__ == "VersionFingerprintMismatchError"
-
-
-def test_missing_replay_context_keeps_reason():
-    err = MissingReplayContextError("metadata is empty")
-    assert err.reason == "metadata is empty"

@@ -60,7 +60,7 @@ export const TurnIdxParamDocSchema = v.pipe(v.string(), v.regex(/^[0-9]+$/));
 
 export const UploadAudioResponseSchema = v.object({
 	ok: v.literal(true),
-	audioPath: v.string(),
+	audio_path: v.string(),
 });
 export type UploadAudioResponse = v.InferOutput<typeof UploadAudioResponseSchema>;
 

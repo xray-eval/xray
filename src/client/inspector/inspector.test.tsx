@@ -15,16 +15,22 @@ const REPLAY_ID = "44444444-4444-4444-4444-444444444444";
 
 interface ReplayDetailFixture {
 	id: string;
-	conversationId: string;
-	conversationVersion: string;
+	conversation_id: string;
+	conversation_version: string;
 	status: "running" | "completed" | "failed";
-	failureReason: "agent_not_joined" | "runtime_error" | "audio_missing" | "sdk_aborted" | "other" | null;
+	failure_reason:
+		| "agent_not_joined"
+		| "runtime_error"
+		| "audio_missing"
+		| "sdk_aborted"
+		| "other"
+		| null;
 	modality: "voice" | "text";
-	startedAt: string;
-	finishedAt: string | null;
-	audioPath: string | null;
+	started_at: string;
+	finished_at: string | null;
+	audio_path: string | null;
 	transcript: string | null;
-	runConfig: unknown;
+	run_config: unknown;
 	judge: {
 		status: "passed" | "failed" | "errored" | null;
 		score: number | null;
@@ -35,70 +41,68 @@ interface ReplayDetailFixture {
 		idx: number;
 		role: "user" | "agent";
 		key: string | null;
-		startedAt: string | null;
-		endedAt: string | null;
+		started_at: string | null;
+		ended_at: string | null;
 		transcript: string | null;
-		audioPath: string | null;
+		audio_path: string | null;
 	}>;
 	assertions: Array<{
 		id: number;
-		turnIdx: number;
+		turn_idx: number;
 		name: string;
 		status: "passed" | "failed" | "errored";
 		message: string | null;
-		recordedAt: string;
+		recorded_at: string;
 	}>;
-	toolCalls: never[];
-	modelUsage: never[];
+	tool_calls: never[];
+	model_usage: never[];
 	spans: never[];
 }
 
 function buildReplay(overrides: Partial<ReplayDetailFixture> = {}): ReplayDetailFixture {
 	return {
 		id: REPLAY_ID,
-		conversationId: "conv-x",
-		conversationVersion: "v1",
+		conversation_id: "conv-x",
+		conversation_version: "v1",
 		status: "completed",
-		failureReason: null,
+		failure_reason: null,
 		modality: "voice",
-		startedAt: "2026-05-15T10:00:00.000Z",
-		finishedAt: "2026-05-15T10:00:30.000Z",
-		audioPath: null,
+		started_at: "2026-05-15T10:00:00.000Z",
+		finished_at: "2026-05-15T10:00:30.000Z",
+		audio_path: null,
 		transcript: null,
-		runConfig: null,
+		run_config: null,
 		judge: { status: null, score: null, reason: null, error: null },
 		turns: [
 			{
 				idx: 0,
 				role: "user",
 				key: "greet",
-				startedAt: "2026-05-15T10:00:01.000Z",
-				endedAt: "2026-05-15T10:00:02.000Z",
+				started_at: "2026-05-15T10:00:01.000Z",
+				ended_at: "2026-05-15T10:00:02.000Z",
 				transcript: "hello",
-				audioPath: null,
+				audio_path: null,
 			},
 			{
 				idx: 1,
 				role: "agent",
 				key: "respond",
-				startedAt: "2026-05-15T10:00:03.000Z",
-				endedAt: "2026-05-15T10:00:04.000Z",
+				started_at: "2026-05-15T10:00:03.000Z",
+				ended_at: "2026-05-15T10:00:04.000Z",
 				transcript: "hi there",
-				audioPath: null,
+				audio_path: null,
 			},
 		],
 		assertions: [],
-		toolCalls: [],
-		modelUsage: [],
+		tool_calls: [],
+		model_usage: [],
 		spans: [],
 		...overrides,
 	};
 }
 
 function mockReplay(replay: ReplayDetailFixture) {
-	server.use(
-		http.get(`http://localhost/v1/replays/${replay.id}`, () => HttpResponse.json(replay)),
-	);
+	server.use(http.get(`http://localhost/v1/replays/${replay.id}`, () => HttpResponse.json(replay)));
 }
 
 describe("Inspector empty states", () => {
@@ -120,35 +124,35 @@ describe("Inspector AssertionsCard summary", () => {
 				assertions: [
 					{
 						id: 1,
-						turnIdx: 0,
+						turn_idx: 0,
 						name: "a",
 						status: "passed",
 						message: null,
-						recordedAt: "2026-05-15T10:00:05.000Z",
+						recorded_at: "2026-05-15T10:00:05.000Z",
 					},
 					{
 						id: 2,
-						turnIdx: 0,
+						turn_idx: 0,
 						name: "b",
 						status: "passed",
 						message: null,
-						recordedAt: "2026-05-15T10:00:05.000Z",
+						recorded_at: "2026-05-15T10:00:05.000Z",
 					},
 					{
 						id: 3,
-						turnIdx: 1,
+						turn_idx: 1,
 						name: "c",
 						status: "failed",
 						message: "boom",
-						recordedAt: "2026-05-15T10:00:05.000Z",
+						recorded_at: "2026-05-15T10:00:05.000Z",
 					},
 					{
 						id: 4,
-						turnIdx: 1,
+						turn_idx: 1,
 						name: "d",
 						status: "errored",
 						message: null,
-						recordedAt: "2026-05-15T10:00:05.000Z",
+						recorded_at: "2026-05-15T10:00:05.000Z",
 					},
 				],
 			}),
@@ -169,19 +173,19 @@ describe("Inspector TurnBlock inline assertions", () => {
 				assertions: [
 					{
 						id: 1,
-						turnIdx: 0,
+						turn_idx: 0,
 						name: "user.said_hello",
 						status: "passed",
 						message: null,
-						recordedAt: "2026-05-15T10:00:05.000Z",
+						recorded_at: "2026-05-15T10:00:05.000Z",
 					},
 					{
 						id: 2,
-						turnIdx: 1,
+						turn_idx: 1,
 						name: "agent.was_polite",
 						status: "failed",
 						message: "did not greet",
-						recordedAt: "2026-05-15T10:00:05.000Z",
+						recorded_at: "2026-05-15T10:00:05.000Z",
 					},
 				],
 			}),

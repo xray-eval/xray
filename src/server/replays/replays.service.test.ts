@@ -27,54 +27,54 @@ describe("createReplay", () => {
 		);
 		const detail = createReplay(
 			store,
-			makeCreateReplayRequest({ conversationId: "c", conversationVersion: "v1" }),
+			makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
 			{ now: () => "2026-05-18T12:00:00.000Z" },
 		);
 		expect(detail.status).toBe("running");
 		expect(detail.modality).toBe("voice");
-		expect(detail.startedAt).toBe("2026-05-18T12:00:00.000Z");
+		expect(detail.started_at).toBe("2026-05-18T12:00:00.000Z");
 		expect(detail.judge.status).toBeNull();
 		store.close();
 	});
 
-	it("rejects unknown (conversationId, conversationVersion)", () => {
+	it("rejects unknown (conversation_id, conversation_version)", () => {
 		const store = makeTempStore();
 		expect(() =>
 			createReplay(
 				store,
-				makeCreateReplayRequest({ conversationId: "missing", conversationVersion: "v1" }),
+				makeCreateReplayRequest({ conversation_id: "missing", conversation_version: "v1" }),
 			),
 		).toThrow(ConversationVersionNotFoundError);
 		store.close();
 	});
 
-	it("persists runConfig as JSON for later diff", () => {
+	it("persists run_config as JSON for later diff", () => {
 		const store = makeTempStore();
 		upsertConversation(store, makeConversationSpec({ id: "c", version: "v1" }));
 		const detail = createReplay(
 			store,
 			makeCreateReplayRequest({
-				conversationId: "c",
-				conversationVersion: "v1",
-				runConfig: { model: "gpt-4o", temperature: 0.5 },
+				conversation_id: "c",
+				conversation_version: "v1",
+				run_config: { model: "gpt-4o", temperature: 0.5 },
 			}),
 		);
-		expect(detail.runConfig).toEqual({ model: "gpt-4o", temperature: 0.5 });
+		expect(detail.run_config).toEqual({ model: "gpt-4o", temperature: 0.5 });
 		store.close();
 	});
 });
 
 describe("updateReplay", () => {
-	it("applies status + finishedAt + judge fields", () => {
+	it("applies status + finished_at + judge fields", () => {
 		const store = makeTempStore();
 		const id = seedReplay(store);
 		const after = updateReplay(store, id, {
 			status: "completed",
-			finishedAt: "2026-05-18T12:05:00.000Z",
+			finished_at: "2026-05-18T12:05:00.000Z",
 			judge: { status: "passed", score: 92, reason: "responded correctly" },
 		});
 		expect(after.status).toBe("completed");
-		expect(after.finishedAt).toBe("2026-05-18T12:05:00.000Z");
+		expect(after.finished_at).toBe("2026-05-18T12:05:00.000Z");
 		expect(after.judge.status).toBe("passed");
 		expect(after.judge.score).toBe(92);
 		store.close();
@@ -100,7 +100,7 @@ describe("updateReplay", () => {
 	it("rejects status transitions out of 'failed' (terminal)", () => {
 		const store = makeTempStore();
 		const id = seedReplay(store);
-		updateReplay(store, id, { status: "failed", failureReason: "agent_not_joined" });
+		updateReplay(store, id, { status: "failed", failure_reason: "agent_not_joined" });
 		expect(() => updateReplay(store, id, { status: "completed" })).toThrow(
 			ReplayStatusTransitionError,
 		);
@@ -133,11 +133,11 @@ describe("getReplay / compareReplays / listReplaysForConversation", () => {
 		const store = makeTempStore();
 		seedReplay(store, { conversationId: "c-list" });
 		const id = seedReplay(store, { conversationId: "c-list" });
-		updateReplay(store, id, { status: "completed", finishedAt: "2026-05-18T12:10:00.000Z" });
+		updateReplay(store, id, { status: "completed", finished_at: "2026-05-18T12:10:00.000Z" });
 		const items = listReplaysForConversation(store, "c-list");
 		expect(items).toHaveLength(2);
-		const first = items[0]?.startedAt ?? "";
-		const second = items[1]?.startedAt ?? "";
+		const first = items[0]?.started_at ?? "";
+		const second = items[1]?.started_at ?? "";
 		expect(first >= second).toBe(true);
 		store.close();
 	});

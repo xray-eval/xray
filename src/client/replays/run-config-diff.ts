@@ -41,9 +41,7 @@ function toPlainObject(config: unknown): Record<string, unknown> | null {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-	return (
-		typeof value === "object" && value !== null && !Array.isArray(value)
-	);
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function collectKeys(objects: readonly (Record<string, unknown> | null)[]): string[] {

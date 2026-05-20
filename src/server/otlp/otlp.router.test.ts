@@ -18,7 +18,7 @@ function makeApp() {
 	upsertConversation(store, makeConversationSpec({ id: "c", version: "v1" }));
 	const replay = createReplay(
 		store,
-		makeCreateReplayRequest({ conversationId: "c", conversationVersion: "v1" }),
+		makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
 	);
 	const app = new Hono().route("/v1", createOtlpRouter(store));
 	return { app, store, replayId: replay.id };
@@ -55,12 +55,12 @@ describe("POST /v1/otlp/v1/traces", () => {
 		expect(json.partialSuccess?.rejectedSpans).toBe(0);
 	});
 
-	it("returns 415 for non-JSON content-type", async () => {
+	it("returns 415 for an unsupported content-type", async () => {
 		const { app, replayId } = makeApp();
 		const body = makeOtlpRequest({ replayId, spans: [{ name: "xray.assertion" }] });
 		const res = await app.request("/v1/otlp/v1/traces", {
 			method: "POST",
-			headers: { "content-type": "application/x-protobuf" },
+			headers: { "content-type": "text/plain" },
 			body: JSON.stringify(body),
 		});
 		expect(res.status).toBe(415);
@@ -87,9 +87,9 @@ describe("POST /v1/otlp/v1/traces", () => {
 		expect(res.status).toBe(413);
 		const json = await readJson(
 			res,
-			v.object({ error: v.literal("body_too_large"), maxBytes: v.number() }),
+			v.object({ error: v.literal("body_too_large"), max_bytes: v.number() }),
 		);
-		expect(json.maxBytes).toBe(MAX_OTLP_BODY_BYTES);
+		expect(json.max_bytes).toBe(MAX_OTLP_BODY_BYTES);
 	});
 
 	it("returns 400 with too_many_spans_per_request shape when > MAX_SPANS_PER_REQUEST spans are sent", async () => {
@@ -113,11 +113,11 @@ describe("POST /v1/otlp/v1/traces", () => {
 			res,
 			v.object({
 				error: v.literal("too_many_spans_per_request"),
-				maxSpans: v.number(),
+				max_spans: v.number(),
 				received: v.number(),
 			}),
 		);
-		expect(json.maxSpans).toBe(MAX_SPANS_PER_REQUEST);
+		expect(json.max_spans).toBe(MAX_SPANS_PER_REQUEST);
 		expect(json.received).toBe(MAX_SPANS_PER_REQUEST + 1);
 	});
 });

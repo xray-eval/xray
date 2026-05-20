@@ -134,7 +134,7 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 				contentType,
 				bytes,
 			});
-			return c.json({ ok: true, audioPath });
+			return c.json({ ok: true, audio_path: audioPath });
 		},
 	);
 
@@ -259,7 +259,7 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 				contentType,
 				bytes,
 			});
-			return c.json({ ok: true, audioPath });
+			return c.json({ ok: true, audio_path: audioPath });
 		},
 	);
 
@@ -316,21 +316,21 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 				c.json({ error: "invalid_audio_path", issues: sanitizeIssues(e.issues) }, 400),
 			)
 			.with(P.instanceOf(UnsupportedAudioContentTypeError), (e) =>
-				c.json({ error: "unsupported_content_type", contentType: e.contentType }, 415),
+				c.json({ error: "unsupported_content_type", content_type: e.contentType }, 415),
 			)
 			.with(P.instanceOf(AudioBodyTooLargeError), (e) =>
-				c.json({ error: "body_too_large", maxBytes: e.maxBytes }, 413),
+				c.json({ error: "body_too_large", max_bytes: e.maxBytes }, 413),
 			)
 			.with(P.instanceOf(AudioReplayNotFoundError), (e) =>
-				c.json({ error: "replay_not_found", replayId: e.replayId }, 404),
+				c.json({ error: "replay_not_found", replay_id: e.replayId }, 404),
 			)
 			.with(
 				P.union(P.instanceOf(AudioTurnNotFoundError), P.instanceOf(AudioNotUploadedError)),
 				(e) =>
 					c.json(
 						e.turnIdx === null
-							? { error: "audio_not_found", replayId: e.replayId }
-							: { error: "audio_not_found", replayId: e.replayId, turnIdx: e.turnIdx },
+							? { error: "audio_not_found", replay_id: e.replayId }
+							: { error: "audio_not_found", replay_id: e.replayId, turn_idx: e.turnIdx },
 						404,
 					),
 			)

@@ -30,12 +30,15 @@ import logging
 import os
 import time
 import wave
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, Final, assert_never
+from typing import ClassVar, Final
 
 import httpx
-from typing_extensions import override
+from opentelemetry import baggage, context, trace
+from typing_extensions import assert_never, override
 
 from xray.conversation import (
     AgentResponse,
@@ -52,11 +55,11 @@ from xray.errors import (
     MixdownError,
     RuntimeBindError,
 )
+from xray.instrument import encode_attribute
 from xray.runtime._livekit_types import (
     LkApiModule,
     LkAudioFrame,
     LkAudioSource,
-    LkLocalParticipant,
     LkParticipant,
     LkRtcModule,
     LkTrack,
@@ -64,7 +67,6 @@ from xray.runtime._livekit_types import (
     OpenAiTtsFn,
 )
 from xray.runtime.base import Runtime, RuntimeResult
-from xray.trace import aturn, set_replay_context
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,29 @@ SAMPLES_PER_FRAME: Final[int] = SAMPLE_RATE * FRAME_MS // 1000
 _OPENAI_TTS_INPUT_RATE: Final[int] = 24000
 
 
+# Tracer used by the driver to emit per-user-turn ``xray.turn`` spans.
+# The XrayBaggageSpanProcessor (installed by the orchestrator before
+# ``runtime.run``) lifts the replay-scope baggage onto these spans so
+# the OTLP receiver can route them to ``replay_turns``.
+_TRACER = trace.get_tracer("xray-py-driver", "0.0.1")
+
+
+@asynccontextmanager
+async def _scoped_turn(idx: int, key: str | None = None) -> AsyncGenerator[None, None]:
+    """Scope ``xray.turn.idx`` / ``xray.turn.key`` baggage to a block.
+    Used internally by the driver so user turns also carry per-turn
+    attribution on the user-side spans (mostly span-tree breadcrumbs)."""
+    ctx = context.get_current()
+    ctx = baggage.set_baggage("xray.turn.idx", str(idx), context=ctx)
+    if key is not None:
+        ctx = baggage.set_baggage("xray.turn.key", key, context=ctx)
+    token = context.attach(ctx)
+    try:
+        yield
+    finally:
+        context.detach(token)
+
+
 @dataclass
 class _TurnSegment:
     """PCM captured for one turn, used to assemble the mixdown."""
@@ -95,10 +120,15 @@ class _TurnSegment:
 
 
 @dataclass
-class LiveKitRuntime(Runtime):
-    """Joins a LiveKit room and plays through the user side of a
-    Conversation. v1 plays per-turn audio (recorded or OpenAI-TTS) and
-    captures one mixdown WAV per replay."""
+class LiveKitDriver(Runtime):
+    """Joins a LiveKit room as the user-side test driver. Plays per-turn
+    audio (recorded or OpenAI-TTS), captures the agent's transcripts +
+    audio, and writes one stereo WAV mixdown per replay.
+
+    Despite living under ``xray.runtime``, this is the *user* side, not
+    the agent side. The name ``Driver`` distinguishes it from
+    LiveKit Agents' agent worker — which is the *other* side of the
+    same room."""
 
     url: str
     api_key: str = field(repr=False)
@@ -144,18 +174,12 @@ class LiveKitRuntime(Runtime):
             or self.conversation_version is None
         ):
             raise RuntimeBindError(
-                "LiveKitRuntime: bind(replay_id=..., conversation_id=..., "
+                "LiveKitDriver: bind(replay_id=..., conversation_id=..., "
                 "conversation_version=...) must be called before run()."
             )
 
         lk_rtc, lk_api = self._load_livekit()
         token = self._mint_token(lk_api)
-
-        set_replay_context(
-            replay_id=self.replay_id,
-            conversation_id=self.conversation_id,
-            conversation_version=self.conversation_version,
-        )
 
         room = lk_rtc.Room()
         agent_joined = asyncio.Event()
@@ -199,7 +223,6 @@ class LiveKitRuntime(Runtime):
 
         await room.connect(self.url, token, options=lk_rtc.RoomOptions())
         try:
-            await self._set_room_metadata(room.local_participant)
             try:
                 await asyncio.wait_for(agent_joined.wait(), timeout=self.agent_join_timeout_s)
             except TimeoutError as e:
@@ -230,27 +253,6 @@ class LiveKitRuntime(Runtime):
             or None,
         )
 
-    async def _set_room_metadata(self, local_participant: LkLocalParticipant) -> None:
-        metadata = json.dumps(
-            {
-                "xray.replay.id": self.replay_id,
-                "xray.conversation.id": self.conversation_id,
-                "xray.conversation.version": self.conversation_version,
-                "xray.modality": "voice",
-            }
-        )
-        # LiveKit grants may forbid participant-set metadata. We surface
-        # the warning but don't fail the run — the agent can fall back to
-        # reading the token's identity claims to find the replay id.
-        try:
-            await local_participant.set_metadata(metadata)
-        except Exception as e:
-            logger.warning(
-                "LiveKitRuntime: could not set participant metadata (%s); "
-                "agent must read replay id from token claims instead",
-                e,
-            )
-
     async def _play_turns(
         self,
         *,
@@ -264,7 +266,7 @@ class LiveKitRuntime(Runtime):
         segments: list[_TurnSegment] = []
         responses: list[AgentResponse] = []
         for idx, turn in enumerate(conversation.turns):
-            async with aturn(idx, key=turn.key):
+            async with _scoped_turn(idx, key=turn.key):
                 match turn.role:
                     case "user":
                         user_seg = await self._play_user_turn(
@@ -301,10 +303,24 @@ class LiveKitRuntime(Runtime):
         lk_rtc: LkRtcModule,
     ) -> _TurnSegment:
         pcm = await self._load_or_synth_user_pcm(conv_id=conv_id, idx=idx, turn=turn)
-        segment = _TurnSegment(role="user", idx=idx, key=turn.key, transcript=turn.text or "")
-        segment.started_at = time.time()
-        await self._publish_pcm(audio_source=audio_source, lk_rtc=lk_rtc, pcm=pcm, segment=segment)
-        segment.ended_at = time.time()
+        transcript = turn.text or ""
+        segment = _TurnSegment(role="user", idx=idx, key=turn.key, transcript=transcript)
+        # Emit an ``xray.turn`` span scoped to the audio publish so the
+        # server vocabulary records this user turn in ``replay_turns``
+        # with real start/end timestamps — the only place those exist
+        # is here, where we actually push the bytes onto the wire.
+        with _TRACER.start_as_current_span("xray.turn") as span:
+            span.set_attribute("xray.turn.idx", idx)
+            span.set_attribute("xray.turn.role", "user")
+            if transcript:
+                span.set_attribute("xray.turn.transcript", transcript)
+            if turn.key is not None:
+                span.set_attribute("xray.turn.key", turn.key)
+            segment.started_at = time.time()
+            await self._publish_pcm(
+                audio_source=audio_source, lk_rtc=lk_rtc, pcm=pcm, segment=segment
+            )
+            segment.ended_at = time.time()
         return segment
 
     async def _publish_pcm(
@@ -354,7 +370,6 @@ class LiveKitRuntime(Runtime):
         stream = lk_rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS)
 
         segment = _TurnSegment(role="agent", idx=idx, key=turn.key)
-        segment.started_at = time.time()
         transcript_buf: list[str] = []
         final_seen = asyncio.Event()
 
@@ -366,40 +381,56 @@ class LiveKitRuntime(Runtime):
                     final_seen.set()
                     return
 
-        transcript_task = asyncio.create_task(_drain_transcripts())
-        deadline = time.time() + self.agent_turn_timeout_s
+        # Emit the agent-role ``xray.turn`` span from the driver too.
+        # The driver owns turn-idx allocation end-to-end (enumerated
+        # from ``conversation.turns``), so it is the only side that can
+        # emit replay_turns rows without colliding on the
+        # ``(replay_id, idx)`` primary key — an agent worker emitting
+        # its own ``xray.turn`` for the same idx would have its row
+        # last-write-win over the driver's.
+        with _TRACER.start_as_current_span("xray.turn") as span:
+            span.set_attribute("xray.turn.idx", idx)
+            span.set_attribute("xray.turn.role", "agent")
+            if turn.key is not None:
+                span.set_attribute("xray.turn.key", turn.key)
+            segment.started_at = time.time()
+            transcript_task = asyncio.create_task(_drain_transcripts())
+            deadline = time.time() + self.agent_turn_timeout_s
 
-        async def _consume_frames() -> None:
-            async for event in stream:
-                segment.pcm.extend(bytes(event.frame.data))
-                if final_seen.is_set():
-                    break
+            async def _consume_frames() -> None:
+                async for event in stream:
+                    segment.pcm.extend(bytes(event.frame.data))
+                    if final_seen.is_set():
+                        break
 
-        try:
-            # asyncio.wait_for caps the consume loop so a silent agent
-            # can't hang the iterator forever; the inner `final_seen`
-            # short-circuits as soon as the transcript flips final.
-            remaining = max(0.0, deadline - time.time())
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(_consume_frames(), timeout=remaining)
-        finally:
-            await stream.aclose()
-            # Drain anything in the queue before tearing down the task —
-            # segments may have arrived before the task got a turn on the
-            # loop (common when the stream finishes synchronously, as in
-            # the test mocks).
-            while not transcription_queue.empty():
-                seg = transcription_queue.get_nowait()
-                transcript_buf.append(seg.text)
-                if seg.final:
-                    final_seen.set()
-            if not transcript_task.done():
-                transcript_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await transcript_task
+            try:
+                # asyncio.wait_for caps the consume loop so a silent agent
+                # can't hang the iterator forever; the inner `final_seen`
+                # short-circuits as soon as the transcript flips final.
+                remaining = max(0.0, deadline - time.time())
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(_consume_frames(), timeout=remaining)
+            finally:
+                await stream.aclose()
+                # Drain anything in the queue before tearing down the task —
+                # segments may have arrived before the task got a turn on the
+                # loop (common when the stream finishes synchronously, as in
+                # the test mocks).
+                while not transcription_queue.empty():
+                    seg = transcription_queue.get_nowait()
+                    transcript_buf.append(seg.text)
+                    if seg.final:
+                        final_seen.set()
+                if not transcript_task.done():
+                    transcript_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await transcript_task
 
-        segment.ended_at = time.time()
-        segment.transcript = " ".join(transcript_buf).strip()
+            segment.ended_at = time.time()
+            segment.transcript = " ".join(transcript_buf).strip()
+            if segment.transcript:
+                span.set_attribute("xray.turn.transcript", segment.transcript)
+
         return segment, AgentResponse(
             transcript=segment.transcript,
             duration_ms=int((segment.ended_at - segment.started_at) * 1000),
@@ -480,12 +511,31 @@ class LiveKitRuntime(Runtime):
         return pcm_48k
 
     def _mint_token(self, lk_api: LkApiModule) -> str:
-        return (
-            lk_api.AccessToken(self.api_key, self.api_secret)
-            .with_identity(self.identity)
-            .with_grants(lk_api.VideoGrants(room_join=True, room=self.room))
-            .to_jwt()
+        """JWT for the user-side driver. The replay context rides on the
+        token as a single ``xray`` attribute (JSON blob) — the agent's
+        :func:`xray.instrument` decorator parses it from
+        ``participant.attributes`` on join. No participant-metadata
+        set, no ``can_update_own_metadata`` grant needed."""
+        if (
+            self.replay_id is None
+            or self.conversation_id is None
+            or self.conversation_version is None
+        ):
+            raise RuntimeBindError(
+                "LiveKitDriver: bind(replay_id=..., conversation_id=..., "
+                "conversation_version=...) must be called before token minting."
+            )
+        attributes = encode_attribute(
+            replay_id=self.replay_id,
+            conversation_id=self.conversation_id,
+            conversation_version=self.conversation_version,
         )
+        builder = lk_api.AccessToken(self.api_key, self.api_secret)
+        builder = builder.with_identity(self.identity)
+        builder = builder.with_grants(lk_api.VideoGrants(room_join=True, room=self.room))
+        if hasattr(builder, "with_attributes"):
+            builder = builder.with_attributes(attributes)
+        return builder.to_jwt()
 
     def _load_livekit(self) -> tuple[LkRtcModule, LkApiModule]:
         # Loaded via importlib so pyright doesn't try to resolve `livekit`
@@ -499,7 +549,7 @@ class LiveKitRuntime(Runtime):
             lk_api_mod: object = importlib.import_module("livekit.api")
         except ImportError as e:
             raise LiveKitDependencyError(
-                "LiveKitRuntime requires `pip install xray-py[livekit]`."
+                "LiveKitDriver requires `pip install xray-py[livekit]`."
             ) from e
         if not isinstance(lk_rtc_mod, LkRtcModule):
             raise LiveKitDependencyError(
@@ -581,7 +631,7 @@ async def _openai_tts_pcm(
     raw int16 PCM at 24 kHz."""
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
-            LiveKitRuntime.OPENAI_API_URL,
+            LiveKitDriver.OPENAI_API_URL,
             json={
                 "model": model,
                 "voice": voice,

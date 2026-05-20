@@ -137,17 +137,17 @@ function ReplayRow({
 				</CardTitle>
 			</CardHeader>
 			<CardContent className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-				<span>v{replay.conversationVersion}</span>
-				<span>started {formatTimestamp(replay.startedAt)}</span>
-				{replay.judgeStatus !== null && (
+				<span>v{replay.conversation_version}</span>
+				<span>started {formatTimestamp(replay.started_at)}</span>
+				{replay.judge_status !== null && (
 					<span>
-						judge: <Badge variant="outline">{replay.judgeStatus}</Badge>
-						{replay.judgeScore !== null ? ` (${replay.judgeScore})` : ""}
+						judge: <Badge variant="outline">{replay.judge_status}</Badge>
+						{replay.judge_score !== null ? ` (${replay.judge_score})` : ""}
 					</span>
 				)}
-				{replay.runConfig !== null && typeof replay.runConfig === "object" && (
+				{replay.run_config !== null && typeof replay.run_config === "object" && (
 					<span className="truncate max-w-[40ch] font-mono">
-						run_config: {JSON.stringify(replay.runConfig)}
+						run_config: {JSON.stringify(replay.run_config)}
 					</span>
 				)}
 			</CardContent>
@@ -160,7 +160,7 @@ function StatusChip({ replay }: { replay: ReplaySummaryResponse }) {
 		.with("running", () => <Badge variant="secondary">running</Badge>)
 		.with("completed", () => <Badge>completed</Badge>)
 		.with("failed", () => {
-			const reason = replay.failureReason;
+			const reason = replay.failure_reason;
 			return (
 				<Badge
 					variant="destructive"

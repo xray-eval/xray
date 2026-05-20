@@ -69,3 +69,23 @@ export class UnsupportedOtlpContentTypeError extends OtlpError {
 		this.contentType = contentType;
 	}
 }
+
+/** Protobuf body referenced a wire-type byte we don't know how to skip. */
+export class UnsupportedWireTypeError extends OtlpError {
+	readonly wireType: number;
+	constructor(wireType: number) {
+		super(`Unsupported protobuf wire type: ${wireType}`);
+		this.name = "UnsupportedWireTypeError";
+		this.wireType = wireType;
+	}
+}
+
+/** Protobuf AnyValue / KeyValue nesting exceeded the depth cap. */
+export class OtlpProtobufNestingTooDeepError extends OtlpError {
+	readonly maxDepth: number;
+	constructor(maxDepth: number) {
+		super(`Protobuf AnyValue nesting exceeds maximum depth ${maxDepth}`);
+		this.name = "OtlpProtobufNestingTooDeepError";
+		this.maxDepth = maxDepth;
+	}
+}

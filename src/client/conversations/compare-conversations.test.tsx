@@ -23,7 +23,7 @@ function mockConversation(id: string, version: string, turns: object[], title: s
 				id,
 				version,
 				title,
-				createdAt: "2026-05-15T00:00:00.000Z",
+				created_at: "2026-05-15T00:00:00.000Z",
 				turns,
 			});
 		}),
@@ -58,7 +58,7 @@ describe("alignTurnsByKey", () => {
 				id: "a",
 				version: "v1",
 				title: null,
-				createdAt: "2026-05-15T00:00:00.000Z",
+				created_at: "2026-05-15T00:00:00.000Z",
 				turns: [
 					{ role: "user", key: "greet", text: "hi" },
 					{ role: "agent", key: "respond", text: "hello" },
@@ -68,7 +68,7 @@ describe("alignTurnsByKey", () => {
 				id: "b",
 				version: "v1",
 				title: null,
-				createdAt: "2026-05-15T00:00:00.000Z",
+				created_at: "2026-05-15T00:00:00.000Z",
 				turns: [
 					{ role: "user", key: "greet", text: "yo" },
 					{ role: "agent", key: "respond", text: "hi back" },
@@ -86,7 +86,7 @@ describe("alignTurnsByKey", () => {
 				id: "a",
 				version: "v1",
 				title: null,
-				createdAt: "2026-05-15T00:00:00.000Z",
+				created_at: "2026-05-15T00:00:00.000Z",
 				turns: [
 					{ role: "user", key: "greet", text: "hi" },
 					{ role: "agent", key: "only-a", text: "alone" },
@@ -96,7 +96,7 @@ describe("alignTurnsByKey", () => {
 				id: "b",
 				version: "v1",
 				title: null,
-				createdAt: "2026-05-15T00:00:00.000Z",
+				created_at: "2026-05-15T00:00:00.000Z",
 				turns: [
 					{ role: "user", key: "greet", text: "yo" },
 					{ role: "agent", key: "only-b", text: "alone" },
@@ -158,12 +158,7 @@ describe("CompareConversations route", () => {
 			],
 			null,
 		);
-		mockConversation(
-			"b",
-			"v1",
-			[{ role: "user", key: "greet", text: "yo" }],
-			null,
-		);
+		mockConversation("b", "v1", [{ role: "user", key: "greet", text: "yo" }], null);
 
 		const { ui } = renderWithRouter({
 			initialEntries: ["/compare/conversations?ids=a:v1,b:v1"],

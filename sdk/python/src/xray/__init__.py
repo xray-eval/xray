@@ -2,28 +2,43 @@
 
 Public surface:
 
-- ``xray.conversation`` — test-definition primitives (``Conversation``, ``Turn``,
-  ``expect_agent_turn``).
-- ``xray.trace`` — OpenTelemetry decorators that propagate ``xray.replay.id`` via
-  baggage.
-- ``xray.runtime`` — pluggable runtime ABC.
-- ``xray.runtime.livekit`` — v1 LiveKit implementation.
-- ``xray.run`` — convenience orchestrator: create the Conversation + Replay, run
-  the runtime, evaluate assertions/judge, PATCH the Replay row.
+- ``xray.Conversation`` / ``xray.Turn`` — test-definition primitives.
+- ``xray.RunConfig`` — typed per-replay configuration.
+- ``xray.run(...)`` — orchestrator: POST the spec, POST the replay, drive
+  the runtime, fetch the rich per-turn view, evaluate assertions/judge.
+- ``xray.attach(ctx, ...)`` — async-CM for LiveKit Agents worker
+  entrypoints. Auto-binds the replay context from the JWT's ``xray``
+  attribute, installs the OTLP/JSON exporter, force-flushes spans on
+  exit. Async-CM (not decorator) because LK Agents pickles the
+  entrypoint across multiprocessing forkserver boundaries — wrapper
+  decorators trip the pickle path.
+- ``xray.otel`` — low-level OTEL pipeline helpers if you need to wire
+  things manually (``install``, ``XraySpanExporter``,
+  ``XrayBaggageSpanProcessor``).
+- ``xray.runtime.livekit.LiveKitDriver`` — user-side driver.
 """
 
+from xray.config import RunConfig
 from xray.conversation import (
+    AgentResponse,
     Conversation,
+    ModelUsage,
+    ToolCall,
     Turn,
-    expect_agent_turn,
 )
+from xray.instrument import XraySession, attach
 from xray.orchestrator import RunResult, run
 
 __all__ = [
+    "AgentResponse",
     "Conversation",
+    "ModelUsage",
+    "RunConfig",
     "RunResult",
+    "ToolCall",
     "Turn",
-    "expect_agent_turn",
+    "XraySession",
+    "attach",
     "run",
 ]
 

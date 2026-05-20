@@ -14,13 +14,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 const UploadResponseBodySchema = v.object({
 	ok: v.literal(true),
-	audioPath: v.string(),
+	audio_path: v.string(),
 });
 
 const NotFoundBodySchema = v.object({
 	error: v.string(),
-	replayId: v.optional(v.string()),
-	turnIdx: v.optional(v.number()),
+	replay_id: v.optional(v.string()),
+	turn_idx: v.optional(v.number()),
 });
 
 let store: Store;
@@ -60,7 +60,7 @@ describe("POST /v1/replays/:id/turns/:idx/audio — happy path", () => {
 		expect(res.status).toBe(200);
 
 		const body = v.parse(UploadResponseBodySchema, await res.json());
-		expect(body.audioPath).toBe(`${replayId}/turns/${turnIdx}.opus`);
+		expect(body.audio_path).toBe(`${replayId}/turns/${turnIdx}.opus`);
 	});
 
 	it("upload→retrieve roundtrip preserves bytes exactly", async () => {
@@ -106,7 +106,7 @@ describe("POST /v1/replays/:id/turns/:idx/audio — rejections", () => {
 		const res = await uploadTurn(replayId, 99, fakeAudioBytes());
 		expect(res.status).toBe(404);
 		const body = v.parse(NotFoundBodySchema, await res.json());
-		expect(body.turnIdx).toBe(99);
+		expect(body.turn_idx).toBe(99);
 	});
 
 	it("rejects a non-uuid replay id with 400", async () => {

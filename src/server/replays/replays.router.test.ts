@@ -35,7 +35,7 @@ describe("POST /v1/replays", () => {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(
-				makeCreateReplayRequest({ conversationId: "c", conversationVersion: "v1" }),
+				makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
 			),
 		});
 		expect(res.status).toBe(201);
@@ -50,7 +50,7 @@ describe("POST /v1/replays", () => {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(
-				makeCreateReplayRequest({ conversationId: "missing", conversationVersion: "v1" }),
+				makeCreateReplayRequest({ conversation_id: "missing", conversation_version: "v1" }),
 			),
 		});
 		expect(res.status).toBe(404);
@@ -61,14 +61,14 @@ describe("POST /v1/replays", () => {
 		const res = await app.request("/v1/replays", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ conversationId: "" }),
+			body: JSON.stringify({ conversation_id: "" }),
 		});
 		expect(res.status).toBe(400);
 	});
 });
 
 describe("PATCH /v1/replays/:id", () => {
-	it("updates status + judge + finishedAt", async () => {
+	it("updates status + judge + finished_at", async () => {
 		const { app, store } = makeApp();
 		const id = seedReplay(store);
 		const res = await app.request(`/v1/replays/${id}`, {
@@ -76,7 +76,7 @@ describe("PATCH /v1/replays/:id", () => {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
 				status: "completed",
-				finishedAt: "2026-05-18T12:05:00.000Z",
+				finished_at: "2026-05-18T12:05:00.000Z",
 				judge: { status: "passed", score: 92 },
 			}),
 		});
@@ -133,7 +133,7 @@ describe("POST /v1/replays/compare", () => {
 		const res = await app.request("/v1/replays/compare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ replayIds: [b, a] }),
+			body: JSON.stringify({ replay_ids: [b, a] }),
 		});
 		expect(res.status).toBe(200);
 		const body = await readJson(res, v.object({ replays: v.array(v.object({ id: v.string() })) }));
@@ -146,7 +146,7 @@ describe("POST /v1/replays/compare", () => {
 		const res = await app.request("/v1/replays/compare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ replayIds: [id] }),
+			body: JSON.stringify({ replay_ids: [id] }),
 		});
 		expect(res.status).toBe(400);
 	});
@@ -161,7 +161,7 @@ describe("POST /v1/replays/compare", () => {
 		const res = await app.request("/v1/replays/compare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ replayIds: ids }),
+			body: JSON.stringify({ replay_ids: ids }),
 		});
 		expect(res.status).toBe(400);
 	});
@@ -172,7 +172,7 @@ describe("POST /v1/replays/compare", () => {
 		const res = await app.request("/v1/replays/compare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ replayIds: [a, "00000000-0000-0000-0000-00000000000b"] }),
+			body: JSON.stringify({ replay_ids: [a, "00000000-0000-0000-0000-00000000000b"] }),
 		});
 		expect(res.status).toBe(404);
 	});

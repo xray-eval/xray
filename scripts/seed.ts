@@ -164,10 +164,10 @@ async function postConversation() {
 
 async function postReplay(idx: number): Promise<string> {
 	const body = {
-		conversationId: CONVERSATION_ID,
-		conversationVersion: CONVERSATION_VERSION,
+		conversation_id: CONVERSATION_ID,
+		conversation_version: CONVERSATION_VERSION,
 		modality: "voice",
-		runConfig: {
+		run_config: {
 			model: idx % 2 === 0 ? "gpt-4o" : "gpt-4o-mini",
 			temperature: 0.3 + idx * 0.2,
 		},
@@ -335,8 +335,8 @@ async function uploadReplayAudio(replayId: string, replayIdx: number) {
 async function patchReplay(replayId: string, idx: number) {
 	const body = {
 		status: idx === 2 ? "failed" : "completed",
-		failureReason: idx === 2 ? "runtime_error" : null,
-		finishedAt: new Date(Date.UTC(2026, 4, 18 + idx, 12, 0, 15)).toISOString(),
+		failure_reason: idx === 2 ? "runtime_error" : null,
+		finished_at: new Date(Date.UTC(2026, 4, 18 + idx, 12, 0, 15)).toISOString(),
 		transcript: PLAYED.map((p) => `${p.role === "user" ? "User" : "Agent"}: ${p.transcript}`).join(
 			"\n",
 		),

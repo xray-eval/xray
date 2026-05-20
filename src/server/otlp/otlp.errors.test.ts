@@ -3,8 +3,10 @@ import {
 	MalformedOtlpBodyError,
 	OtlpBodyTooLargeError,
 	OtlpError,
+	OtlpProtobufNestingTooDeepError,
 	TooManySpansPerRequestError,
 	UnsupportedOtlpContentTypeError,
+	UnsupportedWireTypeError,
 } from "./otlp.errors.ts";
 import { describe, expect, it } from "bun:test";
 
@@ -40,5 +42,17 @@ describe("OtlpError subclasses", () => {
 	it("UnsupportedOtlpContentTypeError carries contentType", () => {
 		const e = new UnsupportedOtlpContentTypeError("application/x-protobuf");
 		expect(e.contentType).toBe("application/x-protobuf");
+	});
+	it("UnsupportedWireTypeError carries wireType + parentage", () => {
+		const e = new UnsupportedWireTypeError(6);
+		expect(e).toBeInstanceOf(OtlpError);
+		expect(e.name).toBe("UnsupportedWireTypeError");
+		expect(e.wireType).toBe(6);
+	});
+	it("OtlpProtobufNestingTooDeepError carries maxDepth + parentage", () => {
+		const e = new OtlpProtobufNestingTooDeepError(32);
+		expect(e).toBeInstanceOf(OtlpError);
+		expect(e.name).toBe("OtlpProtobufNestingTooDeepError");
+		expect(e.maxDepth).toBe(32);
 	});
 });

@@ -96,7 +96,12 @@ export function compareReplays(
 	replayIds: readonly string[],
 	signal?: AbortSignal,
 ): Promise<CompareReplaysResponse> {
-	return postJson("/v1/replays/compare", { replayIds }, CompareReplaysResponseSchema, signal);
+	return postJson(
+		"/v1/replays/compare",
+		{ replay_ids: replayIds },
+		CompareReplaysResponseSchema,
+		signal,
+	);
 }
 
 export function replayAudioUrl(replayId: string): string {

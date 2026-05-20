@@ -1,6 +1,5 @@
-import { describe, expect, it } from "bun:test";
-
 import { diffRunConfigs } from "./run-config-diff.ts";
+import { describe, expect, it } from "bun:test";
 
 describe("diffRunConfigs", () => {
 	it("flags no cells when both configs are identical", () => {
@@ -58,7 +57,10 @@ describe("diffRunConfigs", () => {
 	});
 
 	it("compares nested values structurally", () => {
-		const rows = diffRunConfigs([{ env: { region: "us-east-1" } }, { env: { region: "us-east-1" } }]);
+		const rows = diffRunConfigs([
+			{ env: { region: "us-east-1" } },
+			{ env: { region: "us-east-1" } },
+		]);
 		const envRow = rows.find((r) => r.key === "env");
 		expect(envRow?.cells[1]?.differsFromBaseline).toBe(false);
 	});

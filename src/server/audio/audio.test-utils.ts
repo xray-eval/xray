@@ -31,7 +31,10 @@ export function seedReplayWithTurn(
 	);
 	const detail = createReplay(
 		store,
-		makeCreateReplayRequest({ conversationId, conversationVersion }),
+		makeCreateReplayRequest({
+			conversation_id: conversationId,
+			conversation_version: conversationVersion,
+		}),
 	);
 	store.db
 		.insert(replayTurns)

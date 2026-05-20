@@ -74,7 +74,7 @@ describe("listConversations / getters", () => {
 		expect(summaries.map((s) => s.id)).toEqual(["b", "a"]);
 		const a = summaries.find((s) => s.id === "a");
 		expect(a?.versions).toBe(2);
-		expect(a?.latestVersion).toBe("v2");
+		expect(a?.latest_version).toBe("v2");
 		store.close();
 	});
 

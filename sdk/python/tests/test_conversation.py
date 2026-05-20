@@ -2,26 +2,26 @@ from __future__ import annotations
 
 import pytest
 
-from xray import Conversation, Turn, expect_agent_turn
+from xray import Conversation, Turn
 
 
 def test_conversation_auto_versions_from_turn_structure():
-    a = Conversation(id="x", turns=[Turn.user("hi", key="u0"), expect_agent_turn(key="a0")])
-    b = Conversation(id="x", turns=[Turn.user("hi", key="u0"), expect_agent_turn(key="a0")])
+    a = Conversation(id="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+    b = Conversation(id="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
     assert a.version == b.version
 
 
 def test_conversation_version_changes_with_turn_text():
-    a = Conversation(id="x", turns=[Turn.user("hi", key="u0"), expect_agent_turn(key="a0")])
-    b = Conversation(id="x", turns=[Turn.user("hello", key="u0"), expect_agent_turn(key="a0")])
+    a = Conversation(id="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+    b = Conversation(id="x", turns=[Turn.user("hello", key="u0"), Turn.agent(key="a0")])
     assert a.version != b.version
 
 
 def test_assertion_presence_changes_version():
-    a = Conversation(id="x", turns=[Turn.user("hi"), expect_agent_turn(key="a0")])
+    a = Conversation(id="x", turns=[Turn.user("hi"), Turn.agent(key="a0")])
     b = Conversation(
         id="x",
-        turns=[Turn.user("hi"), expect_agent_turn(key="a0", assertion=lambda _: True)],
+        turns=[Turn.user("hi"), Turn.agent(key="a0", assertion=lambda _: True)],
     )
     assert a.version != b.version
 
@@ -40,7 +40,7 @@ def test_spec_payload_matches_wire_shape():
     c = Conversation(
         id="conv-A",
         title="hello",
-        turns=[Turn.user("hi there", key="u0"), expect_agent_turn(key="a0")],
+        turns=[Turn.user("hi there", key="u0"), Turn.agent(key="a0")],
     )
     payload = c.to_spec_payload()
     assert payload["id"] == "conv-A"

@@ -9,8 +9,8 @@ export function makeCreateReplayRequest(
 	overrides: Partial<CreateReplayRequest> = {},
 ): CreateReplayRequest {
 	return {
-		conversationId: "conv-1",
-		conversationVersion: "v0001",
+		conversation_id: "conv-1",
+		conversation_version: "v0001",
 		modality: "voice",
 		...overrides,
 	};
@@ -21,7 +21,7 @@ export function makeUpdateReplayRequest(
 ): UpdateReplayRequest {
 	return {
 		status: "completed",
-		finishedAt: "2026-05-18T12:00:01.000Z",
+		finished_at: "2026-05-18T12:00:01.000Z",
 		...overrides,
 	};
 }

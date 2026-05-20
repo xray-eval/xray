@@ -11,9 +11,9 @@ import pytest
 import respx
 from typing_extensions import override
 
-from xray import Conversation, Turn, expect_agent_turn, run
+from xray import Conversation, Turn, run
 from xray.conversation import AgentResponse, JudgeOutcome, RecordedAudio, TtsAudio
-from xray.errors import AudioMissingError, VersionFingerprintMismatchError
+from xray.errors import AgentNotJoinedError, AudioMissingError, VersionFingerprintMismatchError
 from xray.runtime.base import Runtime, RuntimeResult
 
 
@@ -75,12 +75,12 @@ class StubRuntime(Runtime):
 
 
 @respx.mock
-def test_run_creates_conversation_then_replay_then_patches_with_judge():
+async def test_run_creates_conversation_then_replay_then_patches_with_judge():
     conv = Conversation(
         id="alpha",
         turns=[
             Turn.user("hi", key="u0"),
-            expect_agent_turn(
+            Turn.agent(
                 key="a0",
                 assertion=lambda agent: "confirmed" in agent.transcript,
                 assertion_name="confirms",
@@ -103,21 +103,21 @@ def test_run_creates_conversation_then_replay_then_patches_with_judge():
             201,
             json={
                 "id": "00000000-0000-0000-0000-000000000001",
-                "conversationId": conv.id,
-                "conversationVersion": conv.version,
+                "conversation_id": conv.id,
+                "conversation_version": conv.version,
                 "status": "running",
-                "failureReason": None,
+                "failure_reason": None,
                 "modality": "voice",
-                "startedAt": "2026-05-18T12:00:00.000Z",
-                "finishedAt": None,
-                "audioPath": None,
+                "started_at": "2026-05-18T12:00:00.000Z",
+                "finished_at": None,
+                "audio_path": None,
                 "transcript": None,
-                "runConfig": None,
+                "run_config": None,
                 "judge": {"status": None, "score": None, "reason": None, "error": None},
                 "turns": [],
                 "assertions": [],
-                "toolCalls": [],
-                "modelUsage": [],
+                "tool_calls": [],
+                "model_usage": [],
                 "spans": [],
             },
         )
@@ -126,7 +126,7 @@ def test_run_creates_conversation_then_replay_then_patches_with_judge():
         "http://xray.local/v1/replays/00000000-0000-0000-0000-000000000001"
     ).mock(return_value=httpx.Response(200, json={}))
 
-    result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+    result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
 
     assert post_conv.called
     assert post_replay.called
@@ -149,13 +149,13 @@ def test_run_creates_conversation_then_replay_then_patches_with_judge():
 
 
 @respx.mock
-def test_run_marks_failed_when_runtime_raises():
+async def test_run_marks_failed_when_runtime_raises():
     conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
 
     class BoomRuntime(Runtime):
         @override
         async def run(self, conversation: Conversation) -> RuntimeResult:
-            raise RuntimeError("agent_not_joined")
+            raise AgentNotJoinedError("room-x", 5.0)
 
         @override
         async def aclose(self) -> None: ...
@@ -170,21 +170,21 @@ def test_run_marks_failed_when_runtime_raises():
         "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000ff"
     ).mock(return_value=httpx.Response(200, json={}))
 
-    result = run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
+    result = await run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
     assert result.status == "failed"
     assert patch_replay.called
     body = _decoded_body(patch_replay)
     assert '"status":"failed"' in body
-    # The raised message matches the server's failureReason picklist
-    # ("agent_not_joined"), so it survives the classifier verbatim.
-    assert '"failureReason":"agent_not_joined"' in body
+    # Typed XrayError surfaces its `failure_reason` directly — no
+    # substring matching, no message parsing.
+    assert '"failure_reason":"agent_not_joined"' in body
 
 
 @respx.mock
-def test_run_falls_back_to_runtime_error_for_unmapped_exception():
-    """A free-form exception message that isn't in the failureReason picklist
+async def test_run_falls_back_to_runtime_error_for_unmapped_exception():
+    """A free-form exception message that isn't in the failure_reason picklist
     is classified as `runtime_error`, not echoed verbatim — otherwise the
-    server would reject the PATCH for an invalid failureReason."""
+    server would reject the PATCH for an invalid failure_reason."""
     conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
 
     class BoomRuntime(Runtime):
@@ -205,9 +205,9 @@ def test_run_falls_back_to_runtime_error_for_unmapped_exception():
         "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000ee"
     ).mock(return_value=httpx.Response(200, json={}))
 
-    run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
+    await run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
     body = _decoded_body(patch_replay)
-    assert '"failureReason":"runtime_error"' in body
+    assert '"failure_reason":"runtime_error"' in body
 
 
 @pytest.mark.parametrize(
@@ -215,12 +215,12 @@ def test_run_falls_back_to_runtime_error_for_unmapped_exception():
     [(True, "passed"), (False, "failed")],
 )
 @respx.mock
-def test_assertion_outcomes(passes: bool, expected: str) -> None:
+async def test_assertion_outcomes(passes: bool, expected: str) -> None:
     conv = Conversation(
         id="x",
         turns=[
             Turn.user("hi", key="u0"),
-            expect_agent_turn(key="a0", assertion=lambda agent: passes, assertion_name="n"),
+            Turn.agent(key="a0", assertion=lambda agent: passes, assertion_name="n"),
         ],
     )
     runtime = StubRuntime(responses=[AgentResponse(transcript=""), AgentResponse(transcript="ok")])
@@ -234,12 +234,12 @@ def test_assertion_outcomes(passes: bool, expected: str) -> None:
         return_value=httpx.Response(200, json={})
     )
 
-    result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+    result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert result.assertions[0].status == expected
 
 
 @respx.mock
-def test_audio_uploaded_when_runtime_returns_full_audio_path(tmp_path: Path):
+async def test_audio_uploaded_when_runtime_returns_full_audio_path(tmp_path: Path):
     """When the runtime hands back a mixdown WAV, the orchestrator POSTs
     its bytes to /v1/replays/:id/audio with the audio/wav content type."""
     wav = tmp_path / "rep.wav"
@@ -265,7 +265,7 @@ def test_audio_uploaded_when_runtime_returns_full_audio_path(tmp_path: Path):
         return_value=httpx.Response(200, json={})
     )
 
-    result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+    result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert audio_upload.called
     headers = _request_headers(audio_upload)
     assert headers["content-type"] == "audio/wav"
@@ -274,7 +274,7 @@ def test_audio_uploaded_when_runtime_returns_full_audio_path(tmp_path: Path):
 
 
 @respx.mock
-def test_audio_upload_skipped_when_runtime_returns_no_path():
+async def test_audio_upload_skipped_when_runtime_returns_no_path():
     """No full_audio_path on RuntimeResult ⇒ no POST to .../audio."""
     conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
     runtime = StubRuntime(responses=[AgentResponse(transcript="")])
@@ -292,12 +292,12 @@ def test_audio_upload_skipped_when_runtime_returns_no_path():
         return_value=httpx.Response(200, json={})
     )
 
-    run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+    await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert not audio_upload.called
 
 
 @respx.mock
-def test_audio_upload_failure_demotes_replay_to_failed(tmp_path: Path):
+async def test_audio_upload_failure_demotes_replay_to_failed(tmp_path: Path):
     """A 500 from the audio endpoint should mark the replay failed rather
     than silently losing the row."""
     wav = tmp_path / "rep.wav"
@@ -322,14 +322,14 @@ def test_audio_upload_failure_demotes_replay_to_failed(tmp_path: Path):
         "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000dd"
     ).mock(return_value=httpx.Response(200, json={}))
 
-    result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+    result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert result.status == "failed"
     body = _decoded_body(patch_replay)
     assert '"status":"failed"' in body
 
 
 @respx.mock
-def test_audio_upload_caps_at_50mib_locally(tmp_path: Path):
+async def test_audio_upload_caps_at_50mib_locally(tmp_path: Path):
     """Bytes over MAX_AUDIO_BYTES are rejected before they hit the wire,
     so devs see a typed error instead of waiting on a 413 from the server.
     """
@@ -358,18 +358,18 @@ def test_audio_upload_caps_at_50mib_locally(tmp_path: Path):
         "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000ee"
     ).mock(return_value=httpx.Response(200, json={}))
 
-    result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+    result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert not audio_upload.called
     assert result.status == "failed"
     body = _decoded_body(patch_replay)
-    assert '"failureReason":"runtime_error"' in body
+    assert '"failure_reason":"runtime_error"' in body
     # Sanity: the typed error class is still importable for SDK users
     # who catch it explicitly.
     assert AudioTooLargeError.__name__ == "AudioTooLargeError"
 
 
 @respx.mock
-def test_run_raises_typed_error_on_409_conversation_conflict():
+async def test_run_raises_typed_error_on_409_conversation_conflict():
     """Server's 409 on POST /v1/conversations must surface as a typed
     Python error, not as a generic httpx.HTTPStatusError."""
     conv = Conversation(id="conv-A", turns=[Turn.user("hi", key="u0")])
@@ -379,8 +379,8 @@ def test_run_raises_typed_error_on_409_conversation_conflict():
             409,
             json={
                 "error": "version_fingerprint_mismatch",
-                "conversationId": conv.id,
-                "conversationVersion": conv.version,
+                "conversation_id": conv.id,
+                "conversation_version": conv.version,
             },
         )
     )
@@ -398,7 +398,7 @@ def test_run_raises_typed_error_on_409_conversation_conflict():
             return None
 
     with pytest.raises(VersionFingerprintMismatchError) as exc_info:
-        run(conversation=conv, runtime=_UnusedRuntime(), xray_url="http://xray.local")
+        await run(conversation=conv, runtime=_UnusedRuntime(), xray_url="http://xray.local")
 
     assert exc_info.value.conversation_id == conv.id
     assert exc_info.value.version == conv.version
@@ -406,7 +406,7 @@ def test_run_raises_typed_error_on_409_conversation_conflict():
 
 
 @respx.mock
-def test_run_raises_audio_missing_before_creating_replay(tmp_path: Path):
+async def test_run_raises_audio_missing_before_creating_replay(tmp_path: Path):
     """Pre-flight catches missing recorded audio before the Replay row is created."""
     missing = tmp_path / "nope.wav"
     conv = Conversation(
@@ -433,7 +433,7 @@ def test_run_raises_audio_missing_before_creating_replay(tmp_path: Path):
             return None
 
     with pytest.raises(AudioMissingError) as exc_info:
-        run(conversation=conv, runtime=_UnusedRuntime(), xray_url="http://xray.local")
+        await run(conversation=conv, runtime=_UnusedRuntime(), xray_url="http://xray.local")
 
     assert exc_info.value.turn_idx == 0
     assert str(missing) in str(exc_info.value)
@@ -442,7 +442,7 @@ def test_run_raises_audio_missing_before_creating_replay(tmp_path: Path):
 
 
 @respx.mock
-def test_run_skips_pre_flight_for_tts_audio_refs():
+async def test_run_skips_pre_flight_for_tts_audio_refs():
     """TtsAudio refs don't carry a path — the runtime synths and caches.
     Pre-flight must not falsely complain."""
     conv = Conversation(
@@ -461,5 +461,5 @@ def test_run_skips_pre_flight_for_tts_audio_refs():
     )
 
     runtime = StubRuntime(responses=[AgentResponse(transcript="")])
-    result = run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+    result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert result.status == "completed"

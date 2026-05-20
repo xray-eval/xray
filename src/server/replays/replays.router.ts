@@ -71,7 +71,7 @@ export function createReplaysRouter(store: Store): Hono {
 					},
 				},
 				"404": {
-					description: "(conversationId, conversationVersion) not found — POST it first.",
+					description: "(conversation_id, conversation_version) not found — POST it first.",
 					content: {
 						"application/json": {
 							schema: openApiSchemaFromValibot(ConversationNotFoundResponseSchema),
@@ -112,7 +112,7 @@ export function createReplaysRouter(store: Store): Hono {
 			tags: ["Replays"],
 			summary: "Update a Replay",
 			description:
-				"Applies a partial update. Used by the SDK during a run to set `status`, `finishedAt`, the judge result, the run's audio/transcript, and any updated `runConfig`.",
+				"Applies a partial update. Used by the SDK during a run to set `status`, `finished_at`, the judge result, the run's audio/transcript, and any updated `run_config`.",
 			parameters: [
 				{
 					in: "path",
@@ -277,18 +277,18 @@ export function createReplaysRouter(store: Store): Hono {
 			if (!parsed.success) {
 				// Distinguish min/max range failures so the client can render a
 				// targeted "pick 2–8" message instead of a generic 400. We use
-				// a discriminating Valibot schema (object with a replayIds
+				// a discriminating Valibot schema (object with a replay_ids
 				// array) rather than a cast — the safeParse narrows for free.
-				const rawIdsCheck = v.safeParse(v.object({ replayIds: v.array(v.unknown()) }), raw);
+				const rawIdsCheck = v.safeParse(v.object({ replay_ids: v.array(v.unknown()) }), raw);
 				if (rawIdsCheck.success) {
-					const len = rawIdsCheck.output.replayIds.length;
+					const len = rawIdsCheck.output.replay_ids.length;
 					if (len < COMPARE_MIN || len > COMPARE_MAX) {
 						throw new InvalidCompareSelectionError(len, COMPARE_MIN, COMPARE_MAX);
 					}
 				}
 				throw new InvalidReplayRequestError(parsed.issues);
 			}
-			return c.json(compareReplays(store, parsed.output.replayIds));
+			return c.json(compareReplays(store, parsed.output.replay_ids));
 		},
 	);
 
@@ -305,26 +305,26 @@ export function createReplaysRouter(store: Store): Hono {
 				c.json({ error: "invalid_compare_selection", count: e.count, min: e.min, max: e.max }, 400),
 			)
 			.with(P.instanceOf(ReplayBodyTooLargeError), (e) =>
-				c.json({ error: "body_too_large", maxBytes: e.maxBytes }, 413),
+				c.json({ error: "body_too_large", max_bytes: e.maxBytes }, 413),
 			)
 			.with(P.instanceOf(ConversationVersionNotFoundError), (e) =>
 				c.json(
 					{
 						error: "conversation_not_found",
-						conversationId: e.conversationId,
-						conversationVersion: e.conversationVersion,
+						conversation_id: e.conversationId,
+						conversation_version: e.conversationVersion,
 					},
 					404,
 				),
 			)
 			.with(P.instanceOf(ReplayNotFoundError), (e) =>
-				c.json({ error: "replay_not_found", replayId: e.replayId }, 404),
+				c.json({ error: "replay_not_found", replay_id: e.replayId }, 404),
 			)
 			.with(P.instanceOf(ReplayStatusTransitionError), (e) =>
 				c.json(
 					{
 						error: "invalid_status_transition",
-						replayId: e.replayId,
+						replay_id: e.replayId,
 						from: e.from,
 						to: e.to,
 					},

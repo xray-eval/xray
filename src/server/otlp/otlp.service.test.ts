@@ -25,7 +25,7 @@ function setupReplay(): { store: ReturnType<typeof makeTempStore>; replayId: str
 	upsertConversation(store, makeConversationSpec({ id: "c", version: "v1" }));
 	const detail = createReplay(
 		store,
-		makeCreateReplayRequest({ conversationId: "c", conversationVersion: "v1" }),
+		makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
 	);
 	return { store, replayId: detail.id };
 }

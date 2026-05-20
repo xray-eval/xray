@@ -30,7 +30,7 @@ export function openApiSchemaFromValibot(
 // Wire-error response shapes shared across every server slice. Each schema
 // describes a body shape that one or more `onError` handlers emit via
 // `c.json(...)`. Centralized here because the same envelope (e.g.
-// `{error: "body_too_large", maxBytes: number}`) is produced by several
+// `{error: "body_too_large", max_bytes: number}`) is produced by several
 // slices — duplicating per-slice would be N copies of the same shape.
 
 const IssuePathStepSchema = v.object({
@@ -57,34 +57,34 @@ export const ValidationErrorResponseSchema = v.object({
 /** 404 — referenced conversation does not exist. */
 export const ConversationNotFoundResponseSchema = v.object({
 	error: v.string(),
-	conversationId: v.string(),
-	conversationVersion: v.optional(v.string()),
+	conversation_id: v.string(),
+	conversation_version: v.optional(v.string()),
 });
 
 /** 404 — replay does not exist. */
 export const ReplayNotFoundResponseSchema = v.object({
 	error: v.string(),
-	replayId: v.string(),
+	replay_id: v.string(),
 });
 
 /** 404 — audio for the replay (or one of its turns) is not on disk. */
 export const AudioNotFoundResponseSchema = v.object({
 	error: v.string(),
-	replayId: v.string(),
-	turnIdx: v.optional(v.number()),
+	replay_id: v.string(),
+	turn_idx: v.optional(v.number()),
 });
 
-/** 409 — `(conversationId, version)` already exists with a different fingerprint. */
+/** 409 — `(conversation_id, version)` already exists with a different fingerprint. */
 export const ConversationConflictResponseSchema = v.object({
 	error: v.string(),
-	conversationId: v.string(),
-	conversationVersion: v.string(),
+	conversation_id: v.string(),
+	conversation_version: v.string(),
 });
 
 /** 413 — request body exceeded the per-route byte cap. */
 export const BodyTooLargeResponseSchema = v.object({
 	error: v.string(),
-	maxBytes: v.number(),
+	max_bytes: v.number(),
 });
 
 /** 500 — store-side data corruption or unexpected internal failure. */
@@ -95,7 +95,7 @@ export const StoreFailureResponseSchema = v.object({
 /** 415 — uploaded payload used a content-type the receiver doesn't accept. */
 export const UnsupportedContentTypeResponseSchema = v.object({
 	error: v.string(),
-	contentType: v.nullable(v.string()),
+	content_type: v.nullable(v.string()),
 });
 
 /** Body of every "ok, nothing else to say" response. */

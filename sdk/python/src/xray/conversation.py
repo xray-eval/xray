@@ -17,7 +17,9 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Literal, NotRequired, TypeAlias, TypedDict, assert_never
+from typing import Literal, TypeAlias, TypedDict
+
+from typing_extensions import NotRequired, assert_never
 
 Role: TypeAlias = Literal["user", "agent"]
 AssertionStatus: TypeAlias = Literal["passed", "failed", "errored"]
@@ -78,23 +80,24 @@ class Turn:
     ) -> Turn:
         return cls(role="user", text=text, key=key, audio=audio)
 
-
-def expect_agent_turn(
-    *,
-    key: str | None = None,
-    assertion: AssertionPredicate | None = None,
-    assertion_name: str | None = None,
-) -> Turn:
-    """Placeholder for an agent-side turn — agent text/audio is observed at
-    runtime, not pre-written. ``assertion`` is evaluated against the captured
-    agent response after the turn completes.
-    """
-    return Turn(
-        role="agent",
-        key=key,
-        assertion=assertion,
-        assertion_name=assertion_name,
-    )
+    @classmethod
+    def agent(
+        cls,
+        *,
+        key: str | None = None,
+        assertion: AssertionPredicate | None = None,
+        assertion_name: str | None = None,
+    ) -> Turn:
+        """Placeholder for an agent-side turn — agent text/audio is observed
+        at runtime, not pre-written. ``assertion`` is evaluated against the
+        captured agent response after the turn completes.
+        """
+        return cls(
+            role="agent",
+            key=key,
+            assertion=assertion,
+            assertion_name=assertion_name,
+        )
 
 
 @dataclass
@@ -145,7 +148,7 @@ class Conversation:
 class AudioWirePayload(TypedDict):
     kind: Literal["recorded", "tts"]
     path: NotRequired[str]
-    voiceId: NotRequired[str]
+    voice_id: NotRequired[str]
 
 
 class TurnWirePayload(TypedDict):
@@ -188,7 +191,7 @@ def _audio_to_wire(audio: AudioRef) -> AudioWirePayload:
             # destructure-then-guard is what keeps NotRequired[str] honest.
             if voice_id is None:
                 return {"kind": "tts"}
-            return {"kind": "tts", "voiceId": voice_id}
+            return {"kind": "tts", "voice_id": voice_id}
         case _:
             assert_never(audio)
 
@@ -221,16 +224,53 @@ def _turn_to_fingerprint(turn: Turn) -> TurnFingerprintPayload:
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """One tool/function invocation by the agent during a turn.
+
+    Mirrors the server-persisted row hydrated from ``gen_ai.tool`` spans
+    (or whatever the recognized vocabulary captured). Hydrated by the
+    orchestrator from ``GET /v1/replays/:id`` before assertions run."""
+
+    name: str
+    args_json: str | None
+    result_json: str | None
+    latency_ms: int | None
+
+
+@dataclass(frozen=True)
+class ModelUsage:
+    """Per-call LLM usage captured from gen_ai.* / langfuse.* spans."""
+
+    provider: str | None
+    model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+
+
+StageTimings: TypeAlias = dict[str, float]
+
+
+@dataclass(frozen=True)
 class AgentResponse:
-    """What the runtime observed for one agent-side turn.
+    """What the runtime + server observed for one agent-side turn.
+
+    ``transcript`` comes from the runtime (LiveKit transcription
+    publication). ``tool_calls`` / ``model_usage`` / ``stage_timings``
+    come from xray's persisted view of the spans the agent emitted
+    during this turn — the orchestrator fetches ``GET /v1/replays/:id``
+    after the runtime returns and projects per-turn slices into each
+    response.
 
     No per-turn ``audio_path``: xray ships one WAV per replay (the
-    mixdown) and slices it in the inspector by the per-turn timestamps
-    on ``replay_turns``.
+    mixdown) and slices it in the inspector by per-turn timestamps.
     """
 
     transcript: str
     duration_ms: int | None = None
+    tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
+    model_usage: tuple[ModelUsage, ...] = field(default_factory=tuple)
+    stage_timings: StageTimings = field(default_factory=dict[str, float])
 
 
 @dataclass
@@ -269,7 +309,6 @@ class ReplayResult:
     transcript: str | None = None
 
 
-# Convenience for tests / callers constructing IDs.
 __all__ = [
     "AgentResponse",
     "AssertionOutcome",
@@ -281,12 +320,14 @@ __all__ = [
     "ConversationSpecBody",
     "JudgeOutcome",
     "JudgePredicate",
+    "ModelUsage",
     "RecordedAudio",
     "ReplayResult",
     "Role",
+    "StageTimings",
+    "ToolCall",
     "Turn",
     "TurnRecord",
     "TurnWirePayload",
     "TtsAudio",
-    "expect_agent_turn",
 ]

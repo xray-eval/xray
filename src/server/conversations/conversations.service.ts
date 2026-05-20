@@ -80,7 +80,7 @@ export function toConversationResponse(row: ConversationRow): ConversationRespon
 		id: row.id,
 		version: row.version,
 		title: row.title,
-		createdAt: row.createdAt,
+		created_at: row.createdAt,
 		turns: parseStoredTurns(row.turnsJson),
 	};
 }
@@ -122,14 +122,16 @@ export function listConversations(store: Store): ConversationSummary[] {
 		if (latest === undefined) continue;
 		summaries.push({
 			id: row.id,
-			latestVersion: latest.version,
+			latest_version: latest.version,
 			title: latest.title,
-			createdAt: latest.createdAt,
+			created_at: latest.createdAt,
 			versions: row.versions,
 			replays: replayCounts.get(row.id) ?? 0,
 		});
 	}
-	summaries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+	summaries.sort((a, b) =>
+		a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
+	);
 	return summaries;
 }
 

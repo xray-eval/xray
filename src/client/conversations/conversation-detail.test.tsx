@@ -6,9 +6,7 @@ import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
-const { act, cleanup, fireEvent, render, screen, waitFor } = await import(
-	"@testing-library/react"
-);
+const { act, cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
 const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
@@ -17,10 +15,10 @@ const CONVERSATION_ID = "conv-x";
 
 interface ReplaySummary {
 	id: string;
-	conversationId: string;
-	conversationVersion: string;
+	conversation_id: string;
+	conversation_version: string;
 	status: "running" | "completed" | "failed";
-	failureReason:
+	failure_reason:
 		| "agent_not_joined"
 		| "runtime_error"
 		| "audio_missing"
@@ -28,52 +26,52 @@ interface ReplaySummary {
 		| "other"
 		| null;
 	modality: "voice" | "text";
-	startedAt: string;
-	finishedAt: string | null;
-	judgeStatus: "passed" | "failed" | "errored" | null;
-	judgeScore: number | null;
-	runConfig: unknown;
+	started_at: string;
+	finished_at: string | null;
+	judge_status: "passed" | "failed" | "errored" | null;
+	judge_score: number | null;
+	run_config: unknown;
 }
 
 const REPLAY_FIXTURES: ReplaySummary[] = [
 	{
 		id: "11111111-1111-1111-1111-111111111111",
-		conversationId: CONVERSATION_ID,
-		conversationVersion: "v1",
+		conversation_id: CONVERSATION_ID,
+		conversation_version: "v1",
 		status: "completed",
-		failureReason: null,
+		failure_reason: null,
 		modality: "voice",
-		startedAt: "2026-05-15T10:00:00.000Z",
-		finishedAt: "2026-05-15T10:00:30.000Z",
-		judgeStatus: "passed",
-		judgeScore: 5,
-		runConfig: null,
+		started_at: "2026-05-15T10:00:00.000Z",
+		finished_at: "2026-05-15T10:00:30.000Z",
+		judge_status: "passed",
+		judge_score: 5,
+		run_config: null,
 	},
 	{
 		id: "22222222-2222-2222-2222-222222222222",
-		conversationId: CONVERSATION_ID,
-		conversationVersion: "v1",
+		conversation_id: CONVERSATION_ID,
+		conversation_version: "v1",
 		status: "failed",
-		failureReason: "runtime_error",
+		failure_reason: "runtime_error",
 		modality: "voice",
-		startedAt: "2026-05-15T10:01:00.000Z",
-		finishedAt: "2026-05-15T10:01:30.000Z",
-		judgeStatus: null,
-		judgeScore: null,
-		runConfig: null,
+		started_at: "2026-05-15T10:01:00.000Z",
+		finished_at: "2026-05-15T10:01:30.000Z",
+		judge_status: null,
+		judge_score: null,
+		run_config: null,
 	},
 	{
 		id: "33333333-3333-3333-3333-333333333333",
-		conversationId: CONVERSATION_ID,
-		conversationVersion: "v1",
+		conversation_id: CONVERSATION_ID,
+		conversation_version: "v1",
 		status: "running",
-		failureReason: null,
+		failure_reason: null,
 		modality: "voice",
-		startedAt: "2026-05-15T10:02:00.000Z",
-		finishedAt: null,
-		judgeStatus: null,
-		judgeScore: null,
-		runConfig: null,
+		started_at: "2026-05-15T10:02:00.000Z",
+		finished_at: null,
+		judge_status: null,
+		judge_score: null,
+		run_config: null,
 	},
 ];
 
@@ -84,7 +82,7 @@ function mockConversationAndReplays() {
 				id: CONVERSATION_ID,
 				version: "v1",
 				title: "Title X",
-				createdAt: "2026-05-15T00:00:00.000Z",
+				created_at: "2026-05-15T00:00:00.000Z",
 				turns: [{ role: "user", text: "hello" }],
 			}),
 		),

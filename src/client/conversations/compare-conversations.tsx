@@ -146,9 +146,7 @@ function ConversationsGrid({ conversations }: { conversations: readonly Conversa
 										>
 											<div className="mb-1 flex items-center justify-between text-muted-foreground">
 												<span>key: {row.key}</span>
-												{turn !== undefined && (
-													<Badge variant="outline">{turn.role}</Badge>
-												)}
+												{turn !== undefined && <Badge variant="outline">{turn.role}</Badge>}
 											</div>
 											{turn === undefined ? (
 												<p className="text-muted-foreground italic">no matching turn</p>

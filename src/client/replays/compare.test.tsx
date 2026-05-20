@@ -15,10 +15,10 @@ interface ReplayTurn {
 	idx: number;
 	role: "user" | "agent";
 	key: string | null;
-	startedAt: string | null;
-	endedAt: string | null;
+	started_at: string | null;
+	ended_at: string | null;
 	transcript: string | null;
-	audioPath: string | null;
+	audio_path: string | null;
 }
 
 function buildReplay(
@@ -27,40 +27,40 @@ function buildReplay(
 	runConfig: unknown = null,
 ): {
 	id: string;
-	conversationId: string;
-	conversationVersion: string;
+	conversation_id: string;
+	conversation_version: string;
 	status: "completed";
-	failureReason: null;
+	failure_reason: null;
 	modality: "voice";
-	startedAt: string;
-	finishedAt: string;
-	audioPath: null;
+	started_at: string;
+	finished_at: string;
+	audio_path: null;
 	transcript: null;
-	runConfig: unknown;
+	run_config: unknown;
 	judge: { status: null; score: null; reason: null; error: null };
 	turns: ReplayTurn[];
 	assertions: never[];
-	toolCalls: never[];
-	modelUsage: never[];
+	tool_calls: never[];
+	model_usage: never[];
 	spans: never[];
 } {
 	return {
 		id,
-		conversationId: "conv-x",
-		conversationVersion: "v1",
+		conversation_id: "conv-x",
+		conversation_version: "v1",
 		status: "completed",
-		failureReason: null,
+		failure_reason: null,
 		modality: "voice",
-		startedAt: "2026-05-15T10:00:00.000Z",
-		finishedAt: "2026-05-15T10:00:30.000Z",
-		audioPath: null,
+		started_at: "2026-05-15T10:00:00.000Z",
+		finished_at: "2026-05-15T10:00:30.000Z",
+		audio_path: null,
 		transcript: null,
-		runConfig,
+		run_config: runConfig,
 		judge: { status: null, score: null, reason: null, error: null },
 		turns,
 		assertions: [],
-		toolCalls: [],
-		modelUsage: [],
+		tool_calls: [],
+		model_usage: [],
 		spans: [],
 	};
 }
@@ -72,19 +72,19 @@ describe("CompareReplays route", () => {
 				idx: 0,
 				role: "user",
 				key: "greet",
-				startedAt: null,
-				endedAt: null,
+				started_at: null,
+				ended_at: null,
 				transcript: "hi",
-				audioPath: null,
+				audio_path: null,
 			},
 			{
 				idx: 1,
 				role: "agent",
 				key: "only-a",
-				startedAt: null,
-				endedAt: null,
+				started_at: null,
+				ended_at: null,
 				transcript: "alone",
-				audioPath: null,
+				audio_path: null,
 			},
 		]);
 		const replayB = buildReplay("22222222-2222-2222-2222-222222222222", [
@@ -92,10 +92,10 @@ describe("CompareReplays route", () => {
 				idx: 0,
 				role: "user",
 				key: "greet",
-				startedAt: null,
-				endedAt: null,
+				started_at: null,
+				ended_at: null,
 				transcript: "yo",
-				audioPath: null,
+				audio_path: null,
 			},
 		]);
 		server.use(
@@ -144,10 +144,10 @@ describe("CompareReplays route", () => {
 					idx: 0,
 					role: "user",
 					key: "greet",
-					startedAt: null,
-					endedAt: null,
+					started_at: null,
+					ended_at: null,
 					transcript: "hi",
-					audioPath: null,
+					audio_path: null,
 				},
 			],
 			{ model: "gpt-4", temperature: 0.2 },
@@ -159,10 +159,10 @@ describe("CompareReplays route", () => {
 					idx: 0,
 					role: "user",
 					key: "greet",
-					startedAt: null,
-					endedAt: null,
+					started_at: null,
+					ended_at: null,
 					transcript: "yo",
-					audioPath: null,
+					audio_path: null,
 				},
 			],
 			{ model: "gpt-4o", temperature: 0.2 },

@@ -251,7 +251,7 @@ export function createConversationsRouter(store: Store): Hono {
 					c.json({ error: "invalid_conversation_request", issues: sanitizeIssues(e.issues) }, 400),
 			)
 			.with(P.instanceOf(ConversationBodyTooLargeError), (e) =>
-				c.json({ error: "body_too_large", maxBytes: e.maxBytes }, 413),
+				c.json({ error: "body_too_large", max_bytes: e.maxBytes }, 413),
 			)
 			.with(P.instanceOf(InvalidConversationIdError), (e) =>
 				c.json({ error: "invalid_conversation_id", issues: sanitizeIssues(e.issues) }, 400),
@@ -260,8 +260,8 @@ export function createConversationsRouter(store: Store): Hono {
 				c.json(
 					{
 						error: "version_fingerprint_mismatch",
-						conversationId: e.conversationId,
-						conversationVersion: e.conversationVersion,
+						conversation_id: e.conversationId,
+						conversation_version: e.conversationVersion,
 					},
 					409,
 				),
@@ -270,10 +270,10 @@ export function createConversationsRouter(store: Store): Hono {
 				c.json(
 					{
 						error: "conversation_not_found",
-						conversationId: e.conversationId,
+						conversation_id: e.conversationId,
 						...(e.conversationVersion === null
 							? {}
-							: { conversationVersion: e.conversationVersion }),
+							: { conversation_version: e.conversationVersion }),
 					},
 					404,
 				),

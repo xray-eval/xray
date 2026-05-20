@@ -9,7 +9,8 @@ import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import { compareReplays } from "../api/api.ts";
 import type { ReplayDetailResponse, ReplayTurnResponse } from "../api/api.types.ts";
 import { formatTimestamp } from "../format.ts";
-import { diffRunConfigs, type RunConfigDiffCell } from "./run-config-diff.ts";
+import type { RunConfigDiffCell } from "./run-config-diff.ts";
+import { diffRunConfigs } from "./run-config-diff.ts";
 
 const MIN_COMPARE = 2;
 const MAX_COMPARE = 8;
@@ -68,7 +69,7 @@ function CompareHeader() {
 
 function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 	const allKeys = collectKeys(replays);
-	const runConfigRows = diffRunConfigs(replays.map((r) => r.runConfig));
+	const runConfigRows = diffRunConfigs(replays.map((r) => r.run_config));
 	return (
 		<div className="overflow-x-auto">
 			<table className="w-full border-separate border-spacing-3" aria-label="Replay comparison">
@@ -83,8 +84,8 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 										</CardTitle>
 									</CardHeader>
 									<CardContent className="text-xs text-muted-foreground">
-										<div>v{r.conversationVersion}</div>
-										<div>{formatTimestamp(r.startedAt)}</div>
+										<div>v{r.conversation_version}</div>
+										<div>{formatTimestamp(r.started_at)}</div>
 									</CardContent>
 								</Card>
 							</th>

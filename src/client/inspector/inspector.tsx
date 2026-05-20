@@ -25,7 +25,7 @@ export function Inspector() {
 		queryFn: ({ signal }) => getReplay(replayId, signal),
 	});
 
-	const conversationId = query.data?.conversationId;
+	const conversationId = query.data?.conversation_id;
 	return (
 		<section>
 			<header className="mb-6 flex items-center justify-between">
@@ -76,8 +76,8 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 			<aside className="grid gap-6">
 				<JudgeCard replay={replay} />
 				<RunConfigCard replay={replay} />
-				<ToolCallsCard toolCalls={replay.toolCalls} />
-				<ModelUsageCard usage={replay.modelUsage} />
+				<ToolCallsCard toolCalls={replay.tool_calls} />
+				<ModelUsageCard usage={replay.model_usage} />
 				<AssertionsCard assertions={replay.assertions} />
 			</aside>
 		</div>
@@ -100,7 +100,7 @@ function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
 								<TurnBlock
 									replay={replay}
 									turn={turn}
-									assertions={replay.assertions.filter((a) => a.turnIdx === turn.idx)}
+									assertions={replay.assertions.filter((a) => a.turn_idx === turn.idx)}
 								/>
 							</li>
 						))}
@@ -126,10 +126,10 @@ function TurnBlock({
 				<Badge variant={turn.role === "user" ? "secondary" : "default"}>{turn.role}</Badge>
 				<span>#{turn.idx}</span>
 				{turn.key !== null && <span>key: {turn.key}</span>}
-				{turn.startedAt !== null && <span>· {formatTimestamp(turn.startedAt)}</span>}
+				{turn.started_at !== null && <span>· {formatTimestamp(turn.started_at)}</span>}
 			</div>
 			{turn.transcript !== null && <p className="whitespace-pre-wrap text-sm">{turn.transcript}</p>}
-			{turn.audioPath !== null && (
+			{turn.audio_path !== null && (
 				<div className="mt-2">
 					<AudioWithCaptions
 						src={turnAudioUrl(replay.id, turn.idx)}
@@ -196,7 +196,7 @@ function SpansCard({ spans }: { spans: SpanResponse[] }) {
 									<Badge variant="outline">{s.vocabulary}</Badge>
 								</div>
 								<div className="text-muted-foreground">
-									{formatTimestamp(s.startedAt)} → {formatTimestamp(s.endedAt)}
+									{formatTimestamp(s.started_at)} → {formatTimestamp(s.ended_at)}
 								</div>
 							</li>
 						))}
@@ -231,7 +231,7 @@ function JudgeCard({ replay }: { replay: ReplayDetailResponse }) {
 }
 
 function RunConfigCard({ replay }: { replay: ReplayDetailResponse }) {
-	if (replay.runConfig === null || replay.runConfig === undefined) return null;
+	if (replay.run_config === null || replay.run_config === undefined) return null;
 	return (
 		<Card>
 			<CardHeader>
@@ -239,7 +239,7 @@ function RunConfigCard({ replay }: { replay: ReplayDetailResponse }) {
 			</CardHeader>
 			<CardContent>
 				<pre className="overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">
-					{JSON.stringify(replay.runConfig, null, 2)}
+					{JSON.stringify(replay.run_config, null, 2)}
 				</pre>
 			</CardContent>
 		</Card>
@@ -258,14 +258,14 @@ function ToolCallsCard({ toolCalls }: { toolCalls: ToolCallResponse[] }) {
 					{toolCalls.map((tc) => (
 						<li key={tc.id} className="rounded border p-2 font-mono">
 							<div className="font-medium">{tc.name}</div>
-							{tc.argsJson !== null && (
-								<div className="text-muted-foreground truncate">args: {tc.argsJson}</div>
+							{tc.args_json !== null && (
+								<div className="text-muted-foreground truncate">args: {tc.args_json}</div>
 							)}
-							{tc.resultJson !== null && (
-								<div className="text-muted-foreground truncate">result: {tc.resultJson}</div>
+							{tc.result_json !== null && (
+								<div className="text-muted-foreground truncate">result: {tc.result_json}</div>
 							)}
-							{tc.latencyMs !== null && (
-								<div className="text-muted-foreground">{tc.latencyMs}ms</div>
+							{tc.latency_ms !== null && (
+								<div className="text-muted-foreground">{tc.latency_ms}ms</div>
 							)}
 						</li>
 					))}
@@ -291,8 +291,8 @@ function ModelUsageCard({ usage }: { usage: ModelUsageResponse[] }) {
 								<Badge variant="outline">{u.provider ?? "?"}</Badge>
 							</div>
 							<div className="text-muted-foreground">
-								in: {u.inputTokens ?? "?"} · out: {u.outputTokens ?? "?"} · total:{" "}
-								{u.totalTokens ?? "?"}
+								in: {u.input_tokens ?? "?"} · out: {u.output_tokens ?? "?"} · total:{" "}
+								{u.total_tokens ?? "?"}
 							</div>
 						</li>
 					))}
@@ -341,17 +341,17 @@ function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
 						.with("running", () => <Badge variant="secondary">running</Badge>)
 						.with("completed", () => <Badge>completed</Badge>)
 						.with("failed", () => (
-							<Badge variant="destructive" title={replay.failureReason ?? ""}>
-								failed{replay.failureReason !== null ? `: ${replay.failureReason}` : ""}
+							<Badge variant="destructive" title={replay.failure_reason ?? ""}>
+								failed{replay.failure_reason !== null ? `: ${replay.failure_reason}` : ""}
 							</Badge>
 						))
 						.exhaustive()}
 				</CardTitle>
 			</CardHeader>
 			<CardContent className="text-sm text-muted-foreground">
-				<div>Started {formatTimestamp(replay.startedAt)}</div>
-				{replay.finishedAt !== null && <div>Finished {formatTimestamp(replay.finishedAt)}</div>}
-				{replay.audioPath !== null && (
+				<div>Started {formatTimestamp(replay.started_at)}</div>
+				{replay.finished_at !== null && <div>Finished {formatTimestamp(replay.finished_at)}</div>}
+				{replay.audio_path !== null && (
 					<div className="mt-3">
 						<AudioWithCaptions
 							src={replayAudioUrl(replay.id)}

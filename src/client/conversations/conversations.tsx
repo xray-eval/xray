@@ -23,9 +23,7 @@ export function ConversationsList() {
 
 	function toggle(item: ConversationSummary) {
 		setSelected((prev) =>
-			prev.some((p) => p.id === item.id)
-				? prev.filter((p) => p.id !== item.id)
-				: [...prev, item],
+			prev.some((p) => p.id === item.id) ? prev.filter((p) => p.id !== item.id) : [...prev, item],
 		);
 	}
 
@@ -53,7 +51,7 @@ export function ConversationsList() {
 						onClick={() =>
 							navigate({
 								to: "/compare/conversations",
-								search: { ids: selected.map((s) => `${s.id}:${s.latestVersion}`).join(",") },
+								search: { ids: selected.map((s) => `${s.id}:${s.latest_version}`).join(",") },
 							})
 						}
 					>
@@ -103,7 +101,11 @@ function ConversationRow({
 	onToggle: () => void;
 }) {
 	return (
-		<Card className={selected ? "border-primary transition-colors" : "transition-colors hover:bg-muted/40"}>
+		<Card
+			className={
+				selected ? "border-primary transition-colors" : "transition-colors hover:bg-muted/40"
+			}
+		>
 			<CardHeader>
 				<CardTitle className="flex items-center justify-between gap-3">
 					<div className="flex min-w-0 items-center gap-3">
@@ -130,7 +132,7 @@ function ConversationRow({
 			<CardContent className="text-xs text-muted-foreground">
 				<span className="font-mono">{conversation.id}</span>
 				<span className="mx-2">·</span>
-				<span>latest {conversation.latestVersion}</span>
+				<span>latest {conversation.latest_version}</span>
 			</CardContent>
 		</Card>
 	);

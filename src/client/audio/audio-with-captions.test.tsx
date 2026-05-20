@@ -31,7 +31,7 @@ describe("toCaptionsDataUrl", () => {
 });
 
 describe("AudioWithCaptions", () => {
-	it("emits a <track kind=\"captions\"> with a data:text/vtt URL built from the prop", () => {
+	it('emits a <track kind="captions"> with a data:text/vtt URL built from the prop', () => {
 		const { container } = render(
 			<AudioWithCaptions src="/v1/replays/x/audio" captionText="hello" label="test" />,
 		);

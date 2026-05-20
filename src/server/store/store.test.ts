@@ -18,7 +18,6 @@ import {
 	toolCalls,
 } from "./schema.ts";
 import { openStore, openStoreFromEnv } from "./store.ts";
-import { Database } from "bun:sqlite";
 import {
 	makeConversationInput,
 	makeReplayInput,
@@ -26,6 +25,7 @@ import {
 	makeReplayTurnInput,
 	makeSpanInput,
 } from "./test-utils.ts";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 interface PragmaRow {

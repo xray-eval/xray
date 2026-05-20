@@ -18,8 +18,11 @@ import {
 	InvalidOtlpBodyError,
 	MalformedOtlpBodyError,
 	OtlpBodyTooLargeError,
+	OtlpError,
+	OtlpProtobufNestingTooDeepError,
 	TooManySpansPerRequestError,
 	UnsupportedOtlpContentTypeError,
+	UnsupportedWireTypeError,
 } from "./otlp.errors.ts";
 import { ingestOtlpTraces } from "./otlp.service.ts";
 import {
@@ -27,19 +30,22 @@ import {
 	ExportTraceServiceResponseSchema,
 	MAX_OTLP_BODY_BYTES,
 } from "./otlp.types.ts";
+import { decodeExportTraceServiceRequest } from "./protobuf-decode.ts";
 
 /**
- * OTLP/HTTP receiver. Standard OTel spec path is `/v1/traces`; we expose
- * it under `/v1/otlp/v1/traces` so the existing `/v1/*` mount in main.ts
- * stays single. Exporters configured with
+ * OTLP/HTTP receiver. Standard OTel spec path is `/v1/traces`; we
+ * expose it under `/v1/otlp/v1/traces` so the existing `/v1/*` mount
+ * in main.ts stays single. Exporters configured with
  * `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://xray:8080/v1/otlp/v1/traces`
- * will POST batches here.
+ * POST batches here.
  *
- * Body is OTLP/JSON only. Protobuf is the on-the-wire default for OTel
- * exporters but the SDK we ship configures the JSON path so xray has no
- * protobuf decoder dependency.
+ * Both wire formats are accepted: OTLP/JSON (the xray-py SDK's
+ * default) and OTLP/Protobuf (the default of every stock OTEL
+ * exporter). Content-Type dispatch lives below; both code paths
+ * converge on the same Valibot-narrowed request shape downstream.
  */
 const OTLP_JSON_CONTENT_TYPE = "application/json";
+const OTLP_PROTOBUF_CONTENT_TYPE = "application/x-protobuf";
 
 export function createOtlpRouter(store: Store): Hono {
 	const router = new Hono();
@@ -49,7 +55,7 @@ export function createOtlpRouter(store: Store): Hono {
 		describeRoute({
 			tags: ["OTLP"],
 			summary: "OTLP/HTTP traces receiver",
-			description: `OpenTelemetry OTLP/HTTP traces endpoint. Accepts \`application/json\` (Protobuf is rejected with 415). Spans without an \`xray.replay.id\` resource attribute are dropped silently; spans whose replay id doesn't exist are dropped silently; spans of an unrecognized vocabulary are dropped silently. See \`docs/WIRE.md\` for recognized vocabularies and the fields extracted from each.`,
+			description: `OpenTelemetry OTLP/HTTP traces endpoint. Accepts \`application/json\` (xray-py's preferred wire) and \`application/x-protobuf\` (every stock OTEL exporter's default). Spans without an \`xray.replay.id\` attribute are dropped silently; spans whose replay id doesn't exist are dropped silently; spans of an unrecognized vocabulary are dropped silently.`,
 			requestBody: {
 				required: true,
 				content: {
@@ -103,14 +109,27 @@ export function createOtlpRouter(store: Store): Hono {
 		}),
 		async (c) => {
 			const contentType = (c.req.header("content-type") ?? null)?.split(";")[0]?.trim() ?? null;
-			if (contentType !== OTLP_JSON_CONTENT_TYPE) {
-				throw new UnsupportedOtlpContentTypeError(contentType);
-			}
 			let raw: unknown;
-			try {
-				raw = await c.req.json();
-			} catch (cause) {
-				throw new MalformedOtlpBodyError({ cause });
+			if (contentType === OTLP_JSON_CONTENT_TYPE) {
+				try {
+					raw = await c.req.json();
+				} catch (cause) {
+					throw new MalformedOtlpBodyError({ cause });
+				}
+			} else if (contentType === OTLP_PROTOBUF_CONTENT_TYPE) {
+				try {
+					const buf = new Uint8Array(await c.req.arrayBuffer());
+					raw = decodeExportTraceServiceRequest(buf);
+				} catch (cause) {
+					// Typed decoder errors (UnsupportedWireTypeError,
+					// OtlpProtobufNestingTooDeepError) carry structured fields
+					// the onError handler maps to specific 4xx responses; only
+					// wrap genuinely unknown failures as MalformedOtlpBodyError.
+					if (cause instanceof OtlpError) throw cause;
+					throw new MalformedOtlpBodyError({ cause });
+				}
+			} else {
+				throw new UnsupportedOtlpContentTypeError(contentType);
 			}
 			const parsed = v.safeParse(ExportTraceServiceRequestSchema, raw);
 			if (!parsed.success) {
@@ -133,17 +152,23 @@ export function createOtlpRouter(store: Store): Hono {
 				c.json(
 					{
 						error: "too_many_spans_per_request",
-						maxSpans: e.maxSpans,
+						max_spans: e.maxSpans,
 						received: e.received,
 					},
 					400,
 				),
 			)
 			.with(P.instanceOf(OtlpBodyTooLargeError), (e) =>
-				c.json({ error: "body_too_large", maxBytes: e.maxBytes }, 413),
+				c.json({ error: "body_too_large", max_bytes: e.maxBytes }, 413),
 			)
 			.with(P.instanceOf(UnsupportedOtlpContentTypeError), (e) =>
-				c.json({ error: "unsupported_content_type", contentType: e.contentType }, 415),
+				c.json({ error: "unsupported_content_type", content_type: e.contentType }, 415),
+			)
+			.with(P.instanceOf(UnsupportedWireTypeError), (e) =>
+				c.json({ error: "unsupported_wire_type", wire_type: e.wireType }, 400),
+			)
+			.with(P.instanceOf(OtlpProtobufNestingTooDeepError), (e) =>
+				c.json({ error: "protobuf_nesting_too_deep", max_depth: e.maxDepth }, 400),
 			)
 			.with(P.instanceOf(Error), (e) => {
 				console.error("unhandled error during otlp ingest", e);

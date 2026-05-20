@@ -44,7 +44,7 @@ const RecordedAudioRefSchema = v.object({
 
 const TtsAudioRefSchema = v.object({
 	kind: v.literal("tts"),
-	voiceId: v.optional(v.pipe(v.string(), v.maxLength(MAX_AUDIO_PATH))),
+	voice_id: v.optional(v.pipe(v.string(), v.maxLength(MAX_AUDIO_PATH))),
 });
 
 const TurnAudioRefSchema = v.variant("kind", [RecordedAudioRefSchema, TtsAudioRefSchema]);
@@ -80,16 +80,16 @@ export const ConversationResponseSchema = v.object({
 	id: v.string(),
 	version: v.string(),
 	title: v.nullable(v.string()),
-	createdAt: v.string(),
+	created_at: v.string(),
 	turns: v.array(ConversationTurnSchema),
 });
 export type ConversationResponse = v.InferOutput<typeof ConversationResponseSchema>;
 
 export const ConversationSummarySchema = v.object({
 	id: v.string(),
-	latestVersion: v.string(),
+	latest_version: v.string(),
 	title: v.nullable(v.string()),
-	createdAt: v.string(),
+	created_at: v.string(),
 	versions: v.number(),
 	replays: v.number(),
 });
