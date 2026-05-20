@@ -282,6 +282,3 @@ xray-py is at **v0.2.0** — server is now the analyzer:
 - `RunConfig` is a typed dataclass (`model`, `temperature`, `extra`).
 - Failure classification is typed-error-only. No more substring
   matching on `str(exception)`.
-
-The full spec for the audio-ground-truth refactor lives at
-[`specs/0001-audio-ground-truth.md`](./specs/0001-audio-ground-truth.md).

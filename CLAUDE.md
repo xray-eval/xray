@@ -45,7 +45,7 @@ The Python SDK lives at [`sdk/python/`](./sdk/python). Public surface:
 - `xray.attach(ctx)` — async context manager for LiveKit Agents worker entrypoints; reads the JWT's `xray` attribute, installs the OTLP exporter, force-flushes spans on exit.
 - `xray.run(...)` — orchestrator: POST conversation + replay, drive the driver, upload the stereo WAV mixdown, PATCH final state.
 
-Future SDK module restructure (per `docs/specs/0001-audio-ground-truth.md` §5): `xray.init()` + `xray.bind_replay()` + `@xray.observe()` will replace `xray.attach` + `xray.instrument` + `xray.otel`. Tracked in the spec; not landed in this PR.
+Future SDK module restructure: `xray.init()` + `xray.bind_replay()` + `@xray.observe()` will replace `xray.attach` + `xray.instrument` + `xray.otel`. Tracked separately; not landed in this PR.
 
 ## Distribution
 

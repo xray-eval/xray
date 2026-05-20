@@ -30,7 +30,6 @@ End-user integration instructions live in [`integrate.md`](./integrate.md).
   for why this is non-negotiable.
 - The **inspector SPA** is served by the same Bun process that owns
   the API — one image, one port, one volume.
-- Spec for the audio-ground-truth model: [`specs/0001-audio-ground-truth.md`](./specs/0001-audio-ground-truth.md).
 
 ---
 
