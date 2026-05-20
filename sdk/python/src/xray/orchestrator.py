@@ -36,6 +36,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel, Field, ValidationError
 from typing_extensions import NotRequired
 
+from xray._json import JsonValue
 from xray.config import RunConfig
 from xray.conversation import (
     AgentResponse,
@@ -80,7 +81,7 @@ class ReplayCreateBody(TypedDict):
     conversation_id: str
     conversation_version: str
     modality: Literal["voice"]
-    run_config: NotRequired[dict[str, object]]
+    run_config: NotRequired[dict[str, JsonValue]]
 
 
 class _ReplayCreateResponse(BaseModel):
@@ -153,7 +154,7 @@ async def run(
             "modality": "voice",
         }
         if run_config is not None:
-            create_body["run_config"] = dict(run_config.to_wire())
+            create_body["run_config"] = run_config.to_wire()
         r = await client.post("/v1/replays", json=create_body)
         r.raise_for_status()
         replay_id = _read_replay_id(r.json())

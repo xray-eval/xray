@@ -13,9 +13,6 @@ in ``extra``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TypedDict
-
-from typing_extensions import NotRequired
 
 from xray._json import JsonValue
 
@@ -36,11 +33,17 @@ class RunConfig:
     temperature: float | None = None
     extra: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
-    def to_wire(self) -> RunConfigWirePayload:
+    def to_wire(self) -> dict[str, JsonValue]:
         """Snake_case JSON body for ``POST /v1/replays``. ``extra`` keys
         are flattened into the top-level object so the compare UI can
-        diff them as first-class fields."""
-        body: RunConfigWirePayload = {}
+        diff them as first-class fields.
+
+        The return type is intentionally open (``dict[str, JsonValue]``):
+        ``extra`` carries arbitrary developer-defined keys, so a closed
+        ``TypedDict`` would lie about the shape whenever ``extra`` is
+        non-empty.
+        """
+        body: dict[str, JsonValue] = {}
         if self.model is not None:
             body["model"] = self.model
         if self.temperature is not None:
@@ -50,9 +53,4 @@ class RunConfig:
         return body
 
 
-class RunConfigWirePayload(TypedDict, total=False):
-    model: NotRequired[str]
-    temperature: NotRequired[float]
-
-
-__all__ = ["RunConfig", "RunConfigWirePayload"]
+__all__ = ["RunConfig"]

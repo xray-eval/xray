@@ -18,8 +18,11 @@ import {
 	InvalidOtlpBodyError,
 	MalformedOtlpBodyError,
 	OtlpBodyTooLargeError,
+	OtlpError,
+	OtlpProtobufNestingTooDeepError,
 	TooManySpansPerRequestError,
 	UnsupportedOtlpContentTypeError,
+	UnsupportedWireTypeError,
 } from "./otlp.errors.ts";
 import { ingestOtlpTraces } from "./otlp.service.ts";
 import {
@@ -118,6 +121,11 @@ export function createOtlpRouter(store: Store): Hono {
 					const buf = new Uint8Array(await c.req.arrayBuffer());
 					raw = decodeExportTraceServiceRequest(buf);
 				} catch (cause) {
+					// Typed decoder errors (UnsupportedWireTypeError,
+					// OtlpProtobufNestingTooDeepError) carry structured fields
+					// the onError handler maps to specific 4xx responses; only
+					// wrap genuinely unknown failures as MalformedOtlpBodyError.
+					if (cause instanceof OtlpError) throw cause;
 					throw new MalformedOtlpBodyError({ cause });
 				}
 			} else {
@@ -155,6 +163,12 @@ export function createOtlpRouter(store: Store): Hono {
 			)
 			.with(P.instanceOf(UnsupportedOtlpContentTypeError), (e) =>
 				c.json({ error: "unsupported_content_type", content_type: e.contentType }, 415),
+			)
+			.with(P.instanceOf(UnsupportedWireTypeError), (e) =>
+				c.json({ error: "unsupported_wire_type", wire_type: e.wireType }, 400),
+			)
+			.with(P.instanceOf(OtlpProtobufNestingTooDeepError), (e) =>
+				c.json({ error: "protobuf_nesting_too_deep", max_depth: e.maxDepth }, 400),
 			)
 			.with(P.instanceOf(Error), (e) => {
 				console.error("unhandled error during otlp ingest", e);

@@ -19,6 +19,16 @@
  *  https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/common/v1/common.proto
  */
 
+import { OtlpProtobufNestingTooDeepError, UnsupportedWireTypeError } from "./otlp.errors.ts";
+
+/**
+ * Cap nested AnyValue / KeyValue recursion. Real OTLP payloads in the
+ * wild barely break single digits; 32 is generous but small enough to
+ * stay well below Bun's default call-stack budget when a malicious or
+ * malformed body crafts a deeply-nested attribute.
+ */
+const MAX_ANY_VALUE_DEPTH = 32;
+
 interface OtlpJsonRequest {
 	resourceSpans?: OtlpJsonResourceSpans[];
 }
@@ -125,24 +135,69 @@ class Reader {
 	}
 
 	readTag(): { fieldNumber: number; wireType: number } {
-		const raw = this.readVarint();
+		// Tags fit comfortably in a 32-bit unsigned int (field numbers
+		// cap at 2^29 in proto3); 5-byte varint covers it.
+		const raw = this.readVarint32();
 		return { fieldNumber: raw >>> 3, wireType: raw & 0x7 };
 	}
 
-	readVarint(): number {
+	/**
+	 * Read a varint as a JS number. Capped at 5 bytes (32-bit safe
+	 * range) — anything that needs the full 64 bits (int64, sint64,
+	 * uint64 fields) must go through {@link readVarint64} so we don't
+	 * silently lose precision past 2^53.
+	 *
+	 * The 5-byte cap also doubles as a malformed-input guard: a
+	 * never-terminating continuation byte sequence stops at 5 instead
+	 * of running until the buffer ends.
+	 */
+	readVarint32(): number {
 		let result = 0;
 		let shift = 0;
-		while (this.pos < this.buf.length) {
+		for (let i = 0; i < 5; i++) {
+			if (this.pos >= this.buf.length) break;
 			const b = this.buf[this.pos++] ?? 0;
-			result += (b & 0x7f) * 2 ** shift;
+			result |= (b & 0x7f) << shift;
 			shift += 7;
 			if ((b & 0x80) === 0) break;
 		}
-		return result;
+		return result >>> 0;
+	}
+
+	/**
+	 * Read a varint as a BigInt, capped at 10 bytes (the max length
+	 * any varint can have under the proto wire spec). Required for
+	 * any int64 / uint64 / sint64 field — protobuf encodes negative
+	 * int64 as a full 10-byte two's-complement varint, and values past
+	 * 2^53 silently lose precision through JS `number` arithmetic.
+	 */
+	readVarint64(): bigint {
+		let result = 0n;
+		let shift = 0n;
+		for (let i = 0; i < 10; i++) {
+			if (this.pos >= this.buf.length) break;
+			const b = this.buf[this.pos++] ?? 0;
+			result |= BigInt(b & 0x7f) << shift;
+			shift += 7n;
+			if ((b & 0x80) === 0) break;
+		}
+		return result & ((1n << 64n) - 1n);
+	}
+
+	/**
+	 * Decode a signed int64 / sint64 / int32 (which is sign-extended
+	 * to 64 bits on the wire by proto3) as a decimal string. Matches
+	 * the OTLP/JSON spec which represents int64 fields as strings.
+	 */
+	readInt64AsString(): string {
+		const u = this.readVarint64();
+		const signed = u >= 1n << 63n ? u - (1n << 64n) : u;
+		return signed.toString();
 	}
 
 	readBytes(): Uint8Array {
-		const len = this.readVarint();
+		// Length is uint32 — readVarint32 is fine.
+		const len = this.readVarint32();
 		const slice = this.buf.subarray(this.pos, this.pos + len);
 		this.pos += len;
 		return slice;
@@ -179,7 +234,8 @@ class Reader {
 
 	skip(wireType: number): void {
 		if (wireType === 0) {
-			this.readVarint();
+			// Discard the varint payload — full 10-byte cap covers it.
+			this.readVarint64();
 		} else if (wireType === 1) {
 			this.pos += 8;
 		} else if (wireType === 2) {
@@ -187,7 +243,7 @@ class Reader {
 		} else if (wireType === 5) {
 			this.pos += 4;
 		} else {
-			throw new Error(`unsupported protobuf wire type: ${wireType}`);
+			throw new UnsupportedWireTypeError(wireType);
 		}
 	}
 }
@@ -242,7 +298,7 @@ function decodeResource(bytes: Uint8Array): OtlpJsonResource {
 		if (fieldNumber === 1 && wireType === 2) {
 			attributes.push(decodeKeyValue(reader.readBytes()));
 		} else if (fieldNumber === 2 && wireType === 0) {
-			out.droppedAttributesCount = reader.readVarint();
+			out.droppedAttributesCount = reader.readVarint32();
 		} else {
 			reader.skip(wireType);
 		}
@@ -288,7 +344,7 @@ function decodeScope(bytes: Uint8Array): OtlpJsonScope {
 		} else if (fieldNumber === 3 && wireType === 2) {
 			attributes.push(decodeKeyValue(reader.readBytes()));
 		} else if (fieldNumber === 4 && wireType === 0) {
-			out.droppedAttributesCount = reader.readVarint();
+			out.droppedAttributesCount = reader.readVarint32();
 		} else {
 			reader.skip(wireType);
 		}
@@ -324,7 +380,7 @@ function decodeSpan(bytes: Uint8Array): OtlpJsonSpan {
 		} else if (fieldNumber === 5 && wireType === 2) {
 			out.name = reader.readString();
 		} else if (fieldNumber === 6 && wireType === 0) {
-			out.kind = reader.readVarint();
+			out.kind = reader.readVarint32();
 		} else if (fieldNumber === 7 && wireType === 1) {
 			out.startTimeUnixNano = reader.readFixed64AsString();
 		} else if (fieldNumber === 8 && wireType === 1) {
@@ -332,15 +388,15 @@ function decodeSpan(bytes: Uint8Array): OtlpJsonSpan {
 		} else if (fieldNumber === 9 && wireType === 2) {
 			attributes.push(decodeKeyValue(reader.readBytes()));
 		} else if (fieldNumber === 10 && wireType === 0) {
-			out.droppedAttributesCount = reader.readVarint();
+			out.droppedAttributesCount = reader.readVarint32();
 		} else if (fieldNumber === 11 && wireType === 2) {
 			events.push(decodeSpanEvent(reader.readBytes()));
 		} else if (fieldNumber === 12 && wireType === 0) {
-			out.droppedEventsCount = reader.readVarint();
+			out.droppedEventsCount = reader.readVarint32();
 		} else if (fieldNumber === 13 && wireType === 2) {
 			links.push(decodeSpanLink(reader.readBytes()));
 		} else if (fieldNumber === 14 && wireType === 0) {
-			out.droppedLinksCount = reader.readVarint();
+			out.droppedLinksCount = reader.readVarint32();
 		} else if (fieldNumber === 15 && wireType === 2) {
 			out.status = decodeStatus(reader.readBytes());
 		} else if (fieldNumber === 16 && wireType === 5) {
@@ -374,7 +430,7 @@ function decodeSpanEvent(bytes: Uint8Array): OtlpJsonSpanEvent {
 		} else if (fieldNumber === 3 && wireType === 2) {
 			attributes.push(decodeKeyValue(reader.readBytes()));
 		} else if (fieldNumber === 4 && wireType === 0) {
-			out.droppedAttributesCount = reader.readVarint();
+			out.droppedAttributesCount = reader.readVarint32();
 		} else {
 			reader.skip(wireType);
 		}
@@ -400,7 +456,7 @@ function decodeSpanLink(bytes: Uint8Array): OtlpJsonSpanLink {
 		} else if (fieldNumber === 4 && wireType === 2) {
 			attributes.push(decodeKeyValue(reader.readBytes()));
 		} else if (fieldNumber === 5 && wireType === 0) {
-			out.droppedAttributesCount = reader.readVarint();
+			out.droppedAttributesCount = reader.readVarint32();
 		} else if (fieldNumber === 6 && wireType === 5) {
 			out.flags = reader.readFixed32();
 		} else {
@@ -421,7 +477,7 @@ function decodeStatus(bytes: Uint8Array): OtlpJsonStatus {
 		if (fieldNumber === 2 && wireType === 2) {
 			out.message = reader.readString();
 		} else if (fieldNumber === 3 && wireType === 0) {
-			out.code = reader.readVarint();
+			out.code = reader.readVarint32();
 		} else {
 			reader.skip(wireType);
 		}
@@ -429,7 +485,7 @@ function decodeStatus(bytes: Uint8Array): OtlpJsonStatus {
 	return out;
 }
 
-function decodeKeyValue(bytes: Uint8Array): OtlpJsonAttribute {
+function decodeKeyValue(bytes: Uint8Array, depth: number = 0): OtlpJsonAttribute {
 	const reader = new Reader(bytes);
 	let key = "";
 	let value: OtlpJsonAnyValue = { stringValue: "" };
@@ -438,7 +494,7 @@ function decodeKeyValue(bytes: Uint8Array): OtlpJsonAttribute {
 		if (fieldNumber === 1 && wireType === 2) {
 			key = reader.readString();
 		} else if (fieldNumber === 2 && wireType === 2) {
-			value = decodeAnyValue(reader.readBytes());
+			value = decodeAnyValue(reader.readBytes(), depth + 1);
 		} else {
 			reader.skip(wireType);
 		}
@@ -446,7 +502,10 @@ function decodeKeyValue(bytes: Uint8Array): OtlpJsonAttribute {
 	return { key, value };
 }
 
-function decodeAnyValue(bytes: Uint8Array): OtlpJsonAnyValue {
+function decodeAnyValue(bytes: Uint8Array, depth: number = 0): OtlpJsonAnyValue {
+	if (depth > MAX_ANY_VALUE_DEPTH) {
+		throw new OtlpProtobufNestingTooDeepError(MAX_ANY_VALUE_DEPTH);
+	}
 	const reader = new Reader(bytes);
 	while (!reader.isAtEnd()) {
 		const { fieldNumber, wireType } = reader.readTag();
@@ -454,10 +513,10 @@ function decodeAnyValue(bytes: Uint8Array): OtlpJsonAnyValue {
 			return { stringValue: reader.readString() };
 		}
 		if (fieldNumber === 2 && wireType === 0) {
-			return { boolValue: reader.readVarint() !== 0 };
+			return { boolValue: reader.readVarint32() !== 0 };
 		}
 		if (fieldNumber === 3 && wireType === 0) {
-			return { intValue: String(reader.readVarint()) };
+			return { intValue: reader.readInt64AsString() };
 		}
 		if (fieldNumber === 4 && wireType === 1) {
 			return { doubleValue: reader.readFixed64AsDouble() };
@@ -468,7 +527,7 @@ function decodeAnyValue(bytes: Uint8Array): OtlpJsonAnyValue {
 			while (!inner.isAtEnd()) {
 				const t = inner.readTag();
 				if (t.fieldNumber === 1 && t.wireType === 2) {
-					values.push(decodeAnyValue(inner.readBytes()));
+					values.push(decodeAnyValue(inner.readBytes(), depth + 1));
 				} else {
 					inner.skip(t.wireType);
 				}
@@ -481,7 +540,7 @@ function decodeAnyValue(bytes: Uint8Array): OtlpJsonAnyValue {
 			while (!inner.isAtEnd()) {
 				const t = inner.readTag();
 				if (t.fieldNumber === 1 && t.wireType === 2) {
-					values.push(decodeKeyValue(inner.readBytes()));
+					values.push(decodeKeyValue(inner.readBytes(), depth + 1));
 				} else {
 					inner.skip(t.wireType);
 				}
