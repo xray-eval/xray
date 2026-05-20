@@ -397,9 +397,12 @@ async def _wait_for_analysis(
             if line.startswith("event:"):
                 event_type = line[len("event:") :].strip()
                 continue
-            if line.startswith("data:") and event_type == "state":
-                if _is_terminal_state_payload(line[len("data:") :].strip()):
-                    return
+            if (
+                line.startswith("data:")
+                and event_type == "state"
+                and _is_terminal_state_payload(line[len("data:") :].strip())
+            ):
+                return
 
 
 async def _upload_replay_audio(
