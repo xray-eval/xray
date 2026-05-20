@@ -12,14 +12,14 @@ const { renderWithRouter } = await import("../test-utils.tsx");
 afterEach(() => cleanup());
 
 describe("RootLayout", () => {
-	it("renders the xray heading and description chrome on every route", async () => {
+	it("renders the xray heading and minimal chrome tag on every route", async () => {
 		server.use(
 			http.get("http://localhost/v1/conversations", () => HttpResponse.json({ items: [] })),
 		);
 		const { ui } = renderWithRouter({ initialEntries: ["/"] });
 		render(ui);
 		expect(await screen.findByRole("heading", { name: /^xray$/i, level: 1 })).toBeTruthy();
-		expect(screen.getByText(/replay and eval/i)).toBeTruthy();
+		expect(screen.getByText(/voice-agent debugger/i)).toBeTruthy();
 	});
 
 	it("renders the route's outlet content underneath the chrome", async () => {

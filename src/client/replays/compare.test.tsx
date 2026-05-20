@@ -24,7 +24,7 @@ interface ReplayTurn {
 function buildReplay(
 	id: string,
 	turns: ReplayTurn[],
-	runConfig: unknown = null,
+	run_config: unknown = null,
 ): {
 	id: string;
 	conversation_id: string;
@@ -55,7 +55,7 @@ function buildReplay(
 		finished_at: "2026-05-15T10:00:30.000Z",
 		audio_path: null,
 		transcript: null,
-		run_config: runConfig,
+		run_config,
 		judge: { status: null, score: null, reason: null, error: null },
 		turns,
 		assertions: [],

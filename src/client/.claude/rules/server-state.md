@@ -67,13 +67,46 @@ Pure fetch logic (URL construction, schema validation, error mapping) lives in `
 
 Don't override these on individual queries without a written reason. Per-call overrides are a smell that the defaults are wrong.
 
-## 6 · Tests
+## 6 · Conditional fetches — use `skipToken`, not a fake `queryFn`
+
+When `queryFn` depends on a value that may be `undefined` (e.g. an id derived from a previous query), reach for TanStack Query's `skipToken` — never write a `Promise.reject(...)` branch behind an `enabled` flag. The rejected branch is unreachable at runtime (it's guarded by `enabled: false`), but it lies in the type and clutters the call site.
+
+**Banned:**
+
+```tsx
+const conversation = useQuery({
+  queryKey: ["conversations", { id: conversationId ?? "" }], // phantom "" slot
+  queryFn: ({ signal }) =>
+    conversationId !== undefined
+      ? getConversation(conversationId, { signal })
+      : Promise.reject(new Error("no conversation id")),  // dead code
+  enabled: conversationId !== undefined,
+});
+```
+
+**Correct:**
+
+```tsx
+import { skipToken, useQuery } from "@tanstack/react-query";
+
+const conversation = useQuery({
+  queryKey: ["conversations", { id: conversationId }],     // undefined is fine
+  queryFn:
+    conversationId === undefined
+      ? skipToken
+      : ({ signal }) => getConversation(conversationId, { signal }),
+});
+```
+
+`skipToken` is a sentinel value TanStack Query treats identically to `enabled: false` at runtime, but the type checker narrows `conversationId` to a defined value inside the function branch — so no dead-code reject, no `?? ""` fallback in the queryKey. One construct, zero unreachable code.
+
+## 7 · Tests
 
 - Wrap rendered components in `withQueryClient(...)` from `src/client/test-utils.tsx`. Each call constructs a fresh `QueryClient` so cache state doesn't leak between tests.
 - The test-time `QueryClient` overrides `retry: false` and `staleTime: 0` — make tests deterministic and force a real refetch on every render.
 - MSW intercepts `fetchSessions`'s underlying `fetch`; never mock the React Query hook itself.
 
-## 7 · Banned
+## 8 · Banned
 
 - `useEffect(() => fetch(...).then(setState), [...])` anywhere in `src/client/`. Convert to a `useQuery` in the same edit.
 - `useState` of fetched data. If you find yourself writing `const [items, setItems] = useState<Foo[]>([])` followed by an effect, you have server state — promote it to a query.

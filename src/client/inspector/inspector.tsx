@@ -1,12 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
+import { skipToken, useQuery } from "@tanstack/react-query";
+import { useParams } from "@tanstack/react-router";
+import { AlertTriangle, Check, X } from "lucide-react";
 import { match } from "ts-pattern";
 
+import { BackLink } from "@/client/components/back-link.tsx";
+import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 
-import { getReplay, replayAudioUrl, turnAudioUrl } from "../api/api.ts";
+import { getConversation, getReplay, replayAudioUrl, turnAudioUrl } from "../api/api.ts";
 import type {
 	AssertionResponse,
 	ModelUsageResponse,
@@ -17,6 +20,7 @@ import type {
 } from "../api/api.types.ts";
 import { AudioWithCaptions } from "../audio/audio-with-captions.tsx";
 import { formatTimestamp } from "../format.ts";
+import { JudgeStatusBadge, RunStatusBadge } from "../replay-status/replay-status.tsx";
 
 export function Inspector() {
 	const { replayId } = useParams({ from: "/replays/$replayId" });
@@ -26,27 +30,53 @@ export function Inspector() {
 	});
 
 	const conversationId = query.data?.conversation_id;
+	const conversation = useQuery({
+		queryKey: ["conversations", { id: conversationId }],
+		queryFn:
+			conversationId === undefined
+				? skipToken
+				: ({ signal }) => getConversation(conversationId, { signal }),
+	});
+	const conversationLabel =
+		conversation.data?.title ?? (conversationId !== undefined ? conversationId : null);
+
 	return (
-		<section>
-			<header className="mb-6 flex items-center justify-between">
-				<div>
+		<section className="space-y-10">
+			<div className="space-y-5">
+				<div className="flex flex-wrap items-center justify-between gap-3">
 					{conversationId !== undefined ? (
-						<Link
-							to="/conversations/$conversationId"
-							params={{ conversationId }}
-							className="text-sm text-muted-foreground hover:underline"
-						>
-							<span aria-hidden="true">←</span> Conversation
-						</Link>
+						<BackLink to="/conversations/$conversationId" params={{ conversationId }}>
+							Replays
+						</BackLink>
 					) : (
-						<Link to="/" className="text-sm text-muted-foreground hover:underline">
-							<span aria-hidden="true">←</span> Conversations
-						</Link>
+						<BackLink to="/">Conversations</BackLink>
 					)}
-					<h2 className="mt-2 text-2xl font-semibold">Replay</h2>
+					{conversationId !== undefined && conversationLabel !== null ? (
+						<Breadcrumbs
+							crumbs={[
+								{ label: "Conversations", to: "/" },
+								{
+									label: conversationLabel,
+									to: "/conversations/$conversationId",
+									params: { conversationId },
+								},
+								{ label: `${replayId.slice(0, 8)}…`, current: true },
+							]}
+						/>
+					) : (
+						<Breadcrumbs
+							crumbs={[
+								{ label: "Conversations", to: "/" },
+								{ label: "Replay", current: true },
+							]}
+						/>
+					)}
+				</div>
+				<div className="space-y-1.5">
+					<h2 className="text-2xl font-semibold tracking-tight">Replay</h2>
 					<p className="font-mono text-xs text-muted-foreground">{replayId}</p>
 				</div>
-			</header>
+			</div>
 
 			{match(query)
 				.with({ status: "pending" }, () => (
@@ -55,7 +85,7 @@ export function Inspector() {
 					</div>
 				))
 				.with({ status: "error" }, () => (
-					<p role="alert" className="text-destructive">
+					<p role="alert" className="text-sm text-destructive">
 						Failed to load replay.
 					</p>
 				))
@@ -68,7 +98,7 @@ export function Inspector() {
 function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<div className="grid gap-6 lg:grid-cols-3">
-			<div className="lg:col-span-2 grid gap-6">
+			<div className="grid gap-6 lg:col-span-2">
 				<HeaderCard replay={replay} />
 				<TranscriptCard replay={replay} />
 				<SpansCard spans={replay.spans} />
@@ -86,9 +116,11 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 
 function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
 	return (
-		<Card>
+		<Card className="gap-4">
 			<CardHeader>
-				<CardTitle className="text-base">Turns</CardTitle>
+				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+					Turns
+				</CardTitle>
 			</CardHeader>
 			<CardContent>
 				{replay.turns.length === 0 ? (
@@ -121,16 +153,26 @@ function TurnBlock({
 	assertions: AssertionResponse[];
 }) {
 	return (
-		<div className="rounded border p-3">
-			<div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-				<Badge variant={turn.role === "user" ? "secondary" : "default"}>{turn.role}</Badge>
-				<span>#{turn.idx}</span>
-				{turn.key !== null && <span>key: {turn.key}</span>}
-				{turn.started_at !== null && <span>· {formatTimestamp(turn.started_at)}</span>}
+		<div className="rounded-md border border-border/60 bg-muted/20 p-4">
+			<div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+				<Badge variant={turn.role === "user" ? "secondary" : "default"} className="font-normal">
+					{turn.role}
+				</Badge>
+				<span className="font-mono">#{turn.idx}</span>
+				{turn.key !== null && (
+					<span className="font-mono">
+						<span className="text-muted-foreground/60">key:</span> {turn.key}
+					</span>
+				)}
+				{turn.started_at !== null && (
+					<span className="tabular-nums">· {formatTimestamp(turn.started_at)}</span>
+				)}
 			</div>
-			{turn.transcript !== null && <p className="whitespace-pre-wrap text-sm">{turn.transcript}</p>}
+			{turn.transcript !== null && (
+				<p className="whitespace-pre-wrap text-sm leading-relaxed">{turn.transcript}</p>
+			)}
 			{turn.audio_path !== null && (
-				<div className="mt-2">
+				<div className="mt-3">
 					<AudioWithCaptions
 						src={turnAudioUrl(replay.id, turn.idx)}
 						captionText={turn.transcript}
@@ -140,7 +182,7 @@ function TurnBlock({
 				</div>
 			)}
 			{assertions.length > 0 && (
-				<ul className="mt-2 grid gap-1 text-xs" aria-label={`Assertions for turn ${turn.idx}`}>
+				<ul className="mt-3 grid gap-1.5 text-xs" aria-label={`Assertions for turn ${turn.idx}`}>
 					{assertions.map((a) => (
 						<li key={a.id} className="flex items-start gap-2">
 							<AssertionChip status={a.status} />
@@ -160,15 +202,19 @@ function TurnBlock({
 
 function AssertionChip({ status }: { status: AssertionResponse["status"] }) {
 	return match(status)
-		.with("passed", () => <Badge aria-label="passed">{"✓"}</Badge>)
+		.with("passed", () => (
+			<Badge aria-label="passed" className="bg-success text-success-foreground">
+				<Check className="size-3" strokeWidth={3} aria-hidden />
+			</Badge>
+		))
 		.with("failed", () => (
 			<Badge variant="destructive" aria-label="failed">
-				{"✗"}
+				<X className="size-3" strokeWidth={3} aria-hidden />
 			</Badge>
 		))
 		.with("errored", () => (
-			<Badge variant="secondary" aria-label="errored">
-				err
+			<Badge aria-label="errored" className="bg-warning text-warning-foreground">
+				<AlertTriangle className="size-3" strokeWidth={2.5} aria-hidden />
 			</Badge>
 		))
 		.exhaustive();
@@ -176,26 +222,35 @@ function AssertionChip({ status }: { status: AssertionResponse["status"] }) {
 
 function SpansCard({ spans }: { spans: SpanResponse[] }) {
 	return (
-		<Card>
+		<Card className="gap-4">
 			<CardHeader>
-				<CardTitle className="text-base">Span tree</CardTitle>
+				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+					Span tree
+				</CardTitle>
 			</CardHeader>
 			<CardContent>
 				{spans.length === 0 ? (
 					<p className="text-sm text-muted-foreground">
 						No trace spans recorded. Decorate your agent code with{" "}
-						<code>@xray.trace.stage(...)</code> to populate this panel — see{" "}
-						<code>docs/SDK.md</code>.
+						<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+							@xray.trace.stage(...)
+						</code>{" "}
+						to populate this panel — see <code className="font-mono text-xs">docs/SDK.md</code>.
 					</p>
 				) : (
 					<ul className="grid gap-2 text-xs">
 						{spans.map((s) => (
-							<li key={s.id} className="rounded border p-2 font-mono">
-								<div className="flex items-center justify-between">
+							<li
+								key={s.id}
+								className="rounded-md border border-border/60 bg-muted/20 p-2.5 font-mono"
+							>
+								<div className="flex items-center justify-between gap-2">
 									<span className="truncate">{s.name}</span>
-									<Badge variant="outline">{s.vocabulary}</Badge>
+									<Badge variant="outline" className="shrink-0 font-normal">
+										{s.vocabulary}
+									</Badge>
 								</div>
-								<div className="text-muted-foreground">
+								<div className="mt-1 text-muted-foreground tabular-nums">
 									{formatTimestamp(s.started_at)} → {formatTimestamp(s.ended_at)}
 								</div>
 							</li>
@@ -210,20 +265,19 @@ function SpansCard({ spans }: { spans: SpanResponse[] }) {
 function JudgeCard({ replay }: { replay: ReplayDetailResponse }) {
 	if (replay.judge.status === null) return null;
 	return (
-		<Card>
+		<Card className="gap-4">
 			<CardHeader>
-				<CardTitle className="text-base">Judge</CardTitle>
+				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+					Judge
+				</CardTitle>
 			</CardHeader>
-			<CardContent className="grid gap-2 text-sm">
-				<div>
-					<Badge>{replay.judge.status}</Badge>
-					{replay.judge.score !== null && <span className="ml-2">score: {replay.judge.score}</span>}
-				</div>
+			<CardContent className="grid gap-2.5 text-sm">
+				<JudgeStatusBadge status={replay.judge.status} score={replay.judge.score} />
 				{replay.judge.reason !== null && (
-					<p className="text-muted-foreground">{replay.judge.reason}</p>
+					<p className="text-sm leading-relaxed text-muted-foreground">{replay.judge.reason}</p>
 				)}
 				{replay.judge.error !== null && (
-					<p className="text-destructive">errored: {replay.judge.error}</p>
+					<p className="text-sm text-destructive">errored: {replay.judge.error}</p>
 				)}
 			</CardContent>
 		</Card>
@@ -233,12 +287,14 @@ function JudgeCard({ replay }: { replay: ReplayDetailResponse }) {
 function RunConfigCard({ replay }: { replay: ReplayDetailResponse }) {
 	if (replay.run_config === null || replay.run_config === undefined) return null;
 	return (
-		<Card>
+		<Card className="gap-4">
 			<CardHeader>
-				<CardTitle className="text-base">Run config</CardTitle>
+				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+					Run config
+				</CardTitle>
 			</CardHeader>
 			<CardContent>
-				<pre className="overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">
+				<pre className="overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-3 font-mono text-xs leading-relaxed">
 					{JSON.stringify(replay.run_config, null, 2)}
 				</pre>
 			</CardContent>
@@ -249,23 +305,28 @@ function RunConfigCard({ replay }: { replay: ReplayDetailResponse }) {
 function ToolCallsCard({ toolCalls }: { toolCalls: ToolCallResponse[] }) {
 	if (toolCalls.length === 0) return null;
 	return (
-		<Card>
+		<Card className="gap-4">
 			<CardHeader>
-				<CardTitle className="text-base">Tool calls</CardTitle>
+				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+					Tool calls
+				</CardTitle>
 			</CardHeader>
 			<CardContent>
 				<ul className="grid gap-2 text-xs">
 					{toolCalls.map((tc) => (
-						<li key={tc.id} className="rounded border p-2 font-mono">
+						<li
+							key={tc.id}
+							className="rounded-md border border-border/60 bg-muted/20 p-2.5 font-mono"
+						>
 							<div className="font-medium">{tc.name}</div>
 							{tc.args_json !== null && (
-								<div className="text-muted-foreground truncate">args: {tc.args_json}</div>
+								<div className="mt-1 truncate text-muted-foreground">args: {tc.args_json}</div>
 							)}
 							{tc.result_json !== null && (
-								<div className="text-muted-foreground truncate">result: {tc.result_json}</div>
+								<div className="truncate text-muted-foreground">result: {tc.result_json}</div>
 							)}
 							{tc.latency_ms !== null && (
-								<div className="text-muted-foreground">{tc.latency_ms}ms</div>
+								<div className="text-muted-foreground tabular-nums">{tc.latency_ms}ms</div>
 							)}
 						</li>
 					))}
@@ -278,19 +339,23 @@ function ToolCallsCard({ toolCalls }: { toolCalls: ToolCallResponse[] }) {
 function ModelUsageCard({ usage }: { usage: ModelUsageResponse[] }) {
 	if (usage.length === 0) return null;
 	return (
-		<Card>
+		<Card className="gap-4">
 			<CardHeader>
-				<CardTitle className="text-base">Model usage</CardTitle>
+				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+					Model usage
+				</CardTitle>
 			</CardHeader>
 			<CardContent>
 				<ul className="grid gap-2 text-xs">
 					{usage.map((u) => (
-						<li key={u.id} className="rounded border p-2">
-							<div className="flex items-center justify-between">
+						<li key={u.id} className="rounded-md border border-border/60 bg-muted/20 p-2.5">
+							<div className="flex items-center justify-between gap-2">
 								<span className="font-mono">{u.model ?? "(unknown)"}</span>
-								<Badge variant="outline">{u.provider ?? "?"}</Badge>
+								<Badge variant="outline" className="font-normal">
+									{u.provider ?? "?"}
+								</Badge>
 							</div>
-							<div className="text-muted-foreground">
+							<div className="mt-1 text-muted-foreground tabular-nums">
 								in: {u.input_tokens ?? "?"} · out: {u.output_tokens ?? "?"} · total:{" "}
 								{u.total_tokens ?? "?"}
 							</div>
@@ -308,22 +373,28 @@ function AssertionsCard({ assertions }: { assertions: AssertionResponse[] }) {
 	const failed = assertions.filter((a) => a.status === "failed").length;
 	const errored = assertions.filter((a) => a.status === "errored").length;
 	return (
-		<Card>
+		<Card className="gap-4">
 			<CardHeader>
-				<CardTitle className="text-base">Assertions</CardTitle>
+				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+					Assertions
+				</CardTitle>
 			</CardHeader>
 			<CardContent>
 				<div className="flex flex-wrap items-center gap-2 text-xs">
-					<Badge aria-label={`${passed} passed`}>
-						{passed} {"✓"}
+					<Badge
+						aria-label={`${passed} passed`}
+						className="bg-success tabular-nums text-success-foreground"
+					>
+						<Check className="size-3" strokeWidth={3} aria-hidden /> {passed}
 					</Badge>
-					<span className="text-muted-foreground">·</span>
-					<Badge variant="destructive" aria-label={`${failed} failed`}>
-						{failed} {"✗"}
+					<Badge variant="destructive" aria-label={`${failed} failed`} className="tabular-nums">
+						<X className="size-3" strokeWidth={3} aria-hidden /> {failed}
 					</Badge>
-					<span className="text-muted-foreground">·</span>
-					<Badge variant="secondary" aria-label={`${errored} errored`}>
-						{errored} err
+					<Badge
+						aria-label={`${errored} errored`}
+						className="bg-warning tabular-nums text-warning-foreground"
+					>
+						<AlertTriangle className="size-3" strokeWidth={2.5} aria-hidden /> {errored}
 					</Badge>
 				</div>
 			</CardContent>
@@ -333,26 +404,18 @@ function AssertionsCard({ assertions }: { assertions: AssertionResponse[] }) {
 
 function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
 	return (
-		<Card>
+		<Card className="gap-4">
 			<CardHeader>
-				<CardTitle className="flex items-center justify-between gap-3 text-base">
+				<CardTitle className="flex items-center justify-between gap-3 text-sm font-medium uppercase tracking-wider text-muted-foreground">
 					<span>Status</span>
-					{match(replay.status)
-						.with("running", () => <Badge variant="secondary">running</Badge>)
-						.with("completed", () => <Badge>completed</Badge>)
-						.with("failed", () => (
-							<Badge variant="destructive" title={replay.failure_reason ?? ""}>
-								failed{replay.failure_reason !== null ? `: ${replay.failure_reason}` : ""}
-							</Badge>
-						))
-						.exhaustive()}
+					<RunStatusBadge replay={replay} />
 				</CardTitle>
 			</CardHeader>
-			<CardContent className="text-sm text-muted-foreground">
+			<CardContent className="space-y-1.5 text-sm text-muted-foreground tabular-nums">
 				<div>Started {formatTimestamp(replay.started_at)}</div>
 				{replay.finished_at !== null && <div>Finished {formatTimestamp(replay.finished_at)}</div>}
 				{replay.audio_path !== null && (
-					<div className="mt-3">
+					<div className="mt-4">
 						<AudioWithCaptions
 							src={replayAudioUrl(replay.id)}
 							captionText={replay.transcript}
