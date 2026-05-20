@@ -1,16 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useState } from "react";
-import { match } from "ts-pattern";
+import { match, P } from "ts-pattern";
 
-import { Badge } from "@/client/components/ui/badge.tsx";
+import { BackLink } from "@/client/components/back-link.tsx";
+import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
+import { ClickableRow, stopRowNavigation } from "@/client/components/clickable-row.tsx";
 import { Button } from "@/client/components/ui/button.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/client/components/ui/table.tsx";
 
 import { getConversation, listReplaysForConversation } from "../api/api.ts";
 import type { ReplaySummaryResponse } from "../api/api.types.ts";
 import { formatTimestamp } from "../format.ts";
+import { JudgeStatusBadge, RunStatusBadge } from "../replay-status/replay-status.tsx";
 
 const MIN_COMPARE = 2;
 const MAX_COMPARE = 8;
@@ -38,70 +48,130 @@ export function ConversationDetail() {
 
 	const canCompare = selected.length >= MIN_COMPARE && selected.length <= MAX_COMPARE;
 
-	return (
-		<section>
-			<header className="mb-6">
-				<Link to="/" className="text-sm text-muted-foreground hover:underline">
-					<span aria-hidden="true">←</span> Conversations
-				</Link>
-				<h2 className="mt-2 text-2xl font-semibold">
-					{match(conversation)
-						.with({ status: "pending" }, () => <Skeleton className="inline-block h-7 w-48" />)
-						.with({ status: "error" }, () => conversationId)
-						.with({ status: "success" }, (q) => q.data.title ?? q.data.id)
-						.exhaustive()}
-				</h2>
-				<p className="text-xs text-muted-foreground font-mono">{conversationId}</p>
-			</header>
+	const conversationTitle = match(conversation)
+		.with({ status: "success" }, (q) => q.data.title ?? q.data.id)
+		.with(P.union({ status: "pending" }, { status: "error" }), () => conversationId)
+		.exhaustive();
 
-			<div className="mb-3 flex items-center justify-between gap-3">
-				<h3 className="text-lg font-medium">Replays</h3>
-				<div className="flex flex-col items-end gap-1">
-					<Button
-						variant={canCompare ? "default" : "secondary"}
-						disabled={!canCompare}
-						aria-describedby="compare-hint"
-						onClick={() =>
-							navigate({
-								to: "/compare/replays",
-								search: { ids: selected.join(",") },
-							})
-						}
-					>
-						Compare ({selected.length})
-					</Button>
-					<p id="compare-hint" className="text-xs text-muted-foreground">
-						Select {MIN_COMPARE}–{MAX_COMPARE} replays to compare.
-					</p>
+	return (
+		<section className="space-y-10">
+			<div className="space-y-5">
+				<div className="flex flex-wrap items-center justify-between gap-3">
+					<BackLink to="/">Conversations</BackLink>
+					<Breadcrumbs
+						crumbs={[
+							{ label: "Conversations", to: "/" },
+							{ label: conversationTitle, current: true },
+						]}
+					/>
+				</div>
+				<div className="space-y-1.5">
+					<h2 className="text-2xl font-semibold tracking-tight">
+						{match(conversation)
+							.with({ status: "pending" }, () => <Skeleton className="inline-block h-7 w-48" />)
+							.with({ status: "error" }, () => conversationId)
+							.with({ status: "success" }, (q) => q.data.title ?? q.data.id)
+							.exhaustive()}
+					</h2>
+					<p className="font-mono text-xs text-muted-foreground">{conversationId}</p>
 				</div>
 			</div>
 
-			{match(replays)
-				.with({ status: "pending" }, () => <ReplaysListSkeleton />)
-				.with({ status: "error" }, () => (
-					<p role="alert" className="text-destructive">
-						Failed to load replays.
-					</p>
-				))
-				.with({ status: "success" }, (q) =>
-					q.data.items.length === 0 ? (
-						<ReplaysEmptyState />
-					) : (
-						<ul className="grid gap-2">
-							{q.data.items.map((r) => (
-								<li key={r.id}>
-									<ReplayRow
-										replay={r}
-										selected={selected.includes(r.id)}
-										onToggle={() => toggle(r.id)}
-									/>
-								</li>
-							))}
-						</ul>
-					),
-				)
-				.exhaustive()}
+			<div className="space-y-4">
+				<div className="flex flex-wrap items-end justify-between gap-3">
+					<div className="space-y-1">
+						<h3 className="text-base font-semibold tracking-tight">Replays</h3>
+						<p className="text-xs text-muted-foreground">
+							Each run of this Conversation against your LiveKit agent.
+						</p>
+					</div>
+					<div className="flex items-center gap-3 text-xs text-muted-foreground">
+						<span id="compare-hint" className="hidden sm:inline">
+							Select {MIN_COMPARE}–{MAX_COMPARE} replays to compare.
+						</span>
+						<Button
+							variant={canCompare ? "default" : "outline"}
+							size="sm"
+							disabled={!canCompare}
+							aria-describedby="compare-hint"
+							onClick={() =>
+								navigate({
+									to: "/compare/replays",
+									search: { ids: selected.join(",") },
+								})
+							}
+						>
+							Compare ({selected.length})
+						</Button>
+					</div>
+				</div>
+
+				{match(replays)
+					.with({ status: "pending" }, () => <ReplaysTableSkeleton />)
+					.with({ status: "error" }, () => (
+						<p role="alert" className="text-sm text-destructive">
+							Failed to load replays.
+						</p>
+					))
+					.with({ status: "success" }, (q) =>
+						q.data.items.length === 0 ? (
+							<ReplaysEmptyState />
+						) : (
+							<ReplaysTable replays={q.data.items} selected={selected} onToggle={toggle} />
+						),
+					)
+					.exhaustive()}
+			</div>
 		</section>
+	);
+}
+
+function ReplaysTable({
+	replays,
+	selected,
+	onToggle,
+}: {
+	replays: readonly ReplaySummaryResponse[];
+	selected: readonly string[];
+	onToggle: (id: string) => void;
+}) {
+	const navigate = useNavigate();
+	return (
+		<div className="overflow-hidden rounded-lg border border-border/60 bg-card">
+			<Table className="text-sm">
+				<TableHeader className="bg-muted/30">
+					<TableRow className="border-border/60 hover:bg-transparent">
+						<TableHead className="w-10 px-4" />
+						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							ID
+						</TableHead>
+						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							Status
+						</TableHead>
+						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							Judge
+						</TableHead>
+						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							Version
+						</TableHead>
+						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							Started
+						</TableHead>
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{replays.map((r) => (
+						<ReplayRow
+							key={r.id}
+							replay={r}
+							selected={selected.includes(r.id)}
+							onToggle={() => onToggle(r.id)}
+							onOpen={() => navigate({ to: "/replays/$replayId", params: { replayId: r.id } })}
+						/>
+					))}
+				</TableBody>
+			</Table>
+		</div>
 	);
 }
 
@@ -109,90 +179,75 @@ function ReplayRow({
 	replay,
 	selected,
 	onToggle,
+	onOpen,
 }: {
 	replay: ReplaySummaryResponse;
 	selected: boolean;
 	onToggle: () => void;
+	onOpen: () => void;
 }) {
 	return (
-		<Card className={selected ? "border-primary" : undefined}>
-			<CardHeader>
-				<CardTitle className="flex items-center justify-between gap-3 text-base">
-					<div className="flex items-center gap-2">
-						<input
-							type="checkbox"
-							checked={selected}
-							onChange={onToggle}
-							aria-label={`Select replay ${replay.id} for compare`}
-						/>
-						<Link
-							to="/replays/$replayId"
-							params={{ replayId: replay.id }}
-							className="rounded-sm hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-						>
-							<span className="font-mono text-sm">{replay.id.slice(0, 8)}…</span>
-						</Link>
-					</div>
-					<StatusChip replay={replay} />
-				</CardTitle>
-			</CardHeader>
-			<CardContent className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-				<span>v{replay.conversation_version}</span>
-				<span>started {formatTimestamp(replay.started_at)}</span>
-				{replay.judge_status !== null && (
-					<span>
-						judge: <Badge variant="outline">{replay.judge_status}</Badge>
-						{replay.judge_score !== null ? ` (${replay.judge_score})` : ""}
-					</span>
-				)}
-				{replay.run_config !== null && typeof replay.run_config === "object" && (
-					<span className="truncate max-w-[40ch] font-mono">
-						run_config: {JSON.stringify(replay.run_config)}
-					</span>
-				)}
-			</CardContent>
-		</Card>
+		<ClickableRow
+			selected={selected}
+			onToggle={onToggle}
+			onOpen={onOpen}
+			selectLabel={`Select replay ${replay.id} for compare`}
+		>
+			<TableCell className="px-4 py-3 font-mono text-xs">
+				<Link
+					to="/replays/$replayId"
+					params={{ replayId: replay.id }}
+					onClick={stopRowNavigation}
+					className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+				>
+					{replay.id.slice(0, 8)}…
+				</Link>
+			</TableCell>
+			<TableCell className="px-4 py-3">
+				<RunStatusBadge replay={replay} />
+			</TableCell>
+			<TableCell className="px-4 py-3 text-xs text-muted-foreground">
+				<JudgeCell replay={replay} />
+			</TableCell>
+			<TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">
+				v{replay.conversation_version}
+			</TableCell>
+			<TableCell className="px-4 py-3 text-xs text-muted-foreground tabular-nums">
+				{formatTimestamp(replay.started_at)}
+			</TableCell>
+		</ClickableRow>
 	);
 }
 
-function StatusChip({ replay }: { replay: ReplaySummaryResponse }) {
-	return match(replay.status)
-		.with("running", () => <Badge variant="secondary">running</Badge>)
-		.with("completed", () => <Badge>completed</Badge>)
-		.with("failed", () => {
-			const reason = replay.failure_reason;
-			return (
-				<Badge
-					variant="destructive"
-					title={reason ?? ""}
-					aria-label={reason !== null ? `failed: ${reason}` : "failed"}
-				>
-					failed{reason !== null ? `: ${reason}` : ""}
-				</Badge>
-			);
-		})
-		.exhaustive();
+function JudgeCell({ replay }: { replay: ReplaySummaryResponse }) {
+	if (replay.judge_status === null) return <span className="text-muted-foreground/60">—</span>;
+	return <JudgeStatusBadge status={replay.judge_status} score={replay.judge_score} />;
 }
 
 const SKELETON_SLOTS = ["a", "b", "c"] as const;
-function ReplaysListSkeleton() {
+function ReplaysTableSkeleton() {
 	return (
-		<ul className="grid gap-2">
-			{SKELETON_SLOTS.map((slot) => (
-				<li key={slot}>
-					<Skeleton className="h-16 w-full" />
-				</li>
-			))}
-		</ul>
+		<div className="overflow-hidden rounded-lg border border-border/60 bg-card">
+			<div className="divide-y divide-border/60">
+				{SKELETON_SLOTS.map((slot) => (
+					<div key={slot} className="flex items-center gap-4 px-4 py-3">
+						<Skeleton className="size-4 rounded" />
+						<Skeleton className="h-4 w-32" />
+						<Skeleton className="h-4 w-20" />
+						<Skeleton className="h-4 flex-1" />
+					</div>
+				))}
+			</div>
+		</div>
 	);
 }
 
 function ReplaysEmptyState() {
 	return (
-		<Card className="border-dashed">
-			<CardContent className="py-10 text-center text-sm text-muted-foreground">
+		<div className="rounded-lg border border-dashed border-border/60 px-6 py-16 text-center">
+			<p className="text-sm text-muted-foreground">
 				No replays for this Conversation yet. Run it with the SDK to record one.
-			</CardContent>
-		</Card>
+			</p>
+		</div>
 	);
 }

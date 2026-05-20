@@ -3,10 +3,17 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { match } from "ts-pattern";
 
-import { Badge } from "@/client/components/ui/badge.tsx";
+import { ClickableRow, stopRowNavigation } from "@/client/components/clickable-row.tsx";
 import { Button } from "@/client/components/ui/button.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/client/components/ui/table.tsx";
 
 import { listConversations } from "../api/api.ts";
 import type { ConversationSummary } from "../api/api.types.ts";
@@ -30,22 +37,24 @@ export function ConversationsList() {
 	const canCompare = selected.length === COMPARE_COUNT;
 
 	return (
-		<section>
-			<header className="mb-6 flex items-baseline justify-between">
-				<h2 className="text-2xl font-semibold">Conversations</h2>
+		<section className="space-y-8">
+			<div className="flex flex-col gap-1">
+				<h2 className="text-xl font-semibold tracking-tight">Conversations</h2>
 				<p className="text-sm text-muted-foreground">
-					Each Conversation is a Python test definition. Replays land underneath as they run.
+					Each Conversation is a test definition authored with the xray SDK. Tick two rows to diff
+					their turn structure.
 				</p>
-			</header>
-			<div className="mb-3 flex items-center justify-between gap-3">
-				<p className="text-sm text-muted-foreground">
-					{selected.length === 0
-						? "Tick two rows to compare their turn definitions."
-						: `${selected.length} selected`}
-				</p>
-				<div className="flex flex-col items-end gap-1">
+			</div>
+
+			<div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3 text-xs text-muted-foreground">
+				<span>{selected.length === 0 ? "No selection" : `${selected.length} selected`}</span>
+				<div className="flex items-center gap-3">
+					<span id="compare-conversations-hint" className="hidden sm:inline">
+						Pick exactly two to compare.
+					</span>
 					<Button
-						variant={canCompare ? "default" : "secondary"}
+						variant={canCompare ? "default" : "outline"}
+						size="sm"
 						disabled={!canCompare}
 						aria-describedby="compare-conversations-hint"
 						onClick={() =>
@@ -57,15 +66,13 @@ export function ConversationsList() {
 					>
 						Compare ({selected.length})
 					</Button>
-					<p id="compare-conversations-hint" className="text-xs text-muted-foreground">
-						Pick exactly two Conversations to compare.
-					</p>
 				</div>
 			</div>
+
 			{match(query)
-				.with({ status: "pending" }, () => <ConversationsListSkeleton />)
+				.with({ status: "pending" }, () => <ConversationsTableSkeleton />)
 				.with({ status: "error" }, () => (
-					<p role="alert" className="text-destructive">
+					<p role="alert" className="text-sm text-destructive">
 						Failed to load conversations.
 					</p>
 				))
@@ -73,17 +80,7 @@ export function ConversationsList() {
 					q.data.items.length === 0 ? (
 						<EmptyState />
 					) : (
-						<ul className="grid gap-3">
-							{q.data.items.map((item) => (
-								<li key={item.id}>
-									<ConversationRow
-										conversation={item}
-										selected={selected.some((s) => s.id === item.id)}
-										onToggle={() => toggle(item)}
-									/>
-								</li>
-							))}
-						</ul>
+						<ConversationsTable items={q.data.items} selected={selected} onToggle={toggle} />
 					),
 				)
 				.exhaustive()}
@@ -91,74 +88,125 @@ export function ConversationsList() {
 	);
 }
 
+function ConversationsTable({
+	items,
+	selected,
+	onToggle,
+}: {
+	items: readonly ConversationSummary[];
+	selected: readonly ConversationSummary[];
+	onToggle: (item: ConversationSummary) => void;
+}) {
+	const navigate = useNavigate();
+	return (
+		<div className="overflow-hidden rounded-lg border border-border/60 bg-card">
+			<Table className="text-sm">
+				<TableHeader className="bg-muted/30">
+					<TableRow className="border-border/60 hover:bg-transparent">
+						<TableHead className="w-10 px-4" />
+						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							Title
+						</TableHead>
+						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							ID
+						</TableHead>
+						<TableHead className="px-4 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							Versions
+						</TableHead>
+						<TableHead className="px-4 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							Replays
+						</TableHead>
+						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+							Latest
+						</TableHead>
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{items.map((item) => (
+						<ConversationRow
+							key={item.id}
+							conversation={item}
+							selected={selected.some((s) => s.id === item.id)}
+							onToggle={() => onToggle(item)}
+							onOpen={() =>
+								navigate({
+									to: "/conversations/$conversationId",
+									params: { conversationId: item.id },
+								})
+							}
+						/>
+					))}
+				</TableBody>
+			</Table>
+		</div>
+	);
+}
+
 function ConversationRow({
 	conversation,
 	selected,
 	onToggle,
+	onOpen,
 }: {
 	conversation: ConversationSummary;
 	selected: boolean;
 	onToggle: () => void;
+	onOpen: () => void;
 }) {
 	return (
-		<Card
-			className={
-				selected ? "border-primary transition-colors" : "transition-colors hover:bg-muted/40"
-			}
+		<ClickableRow
+			selected={selected}
+			onToggle={onToggle}
+			onOpen={onOpen}
+			selectLabel={`Select conversation ${conversation.id} to compare`}
 		>
-			<CardHeader>
-				<CardTitle className="flex items-center justify-between gap-3">
-					<div className="flex min-w-0 items-center gap-3">
-						<input
-							type="checkbox"
-							checked={selected}
-							onChange={onToggle}
-							aria-label={`Select conversation ${conversation.id} to compare`}
-						/>
-						<Link
-							to="/conversations/$conversationId"
-							params={{ conversationId: conversation.id }}
-							className="truncate rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-						>
-							{conversation.title ?? conversation.id}
-						</Link>
-					</div>
-					<span className="flex items-center gap-2">
-						<Badge variant="outline">{conversation.versions} versions</Badge>
-						<Badge variant="secondary">{conversation.replays} replays</Badge>
-					</span>
-				</CardTitle>
-			</CardHeader>
-			<CardContent className="text-xs text-muted-foreground">
-				<span className="font-mono">{conversation.id}</span>
-				<span className="mx-2">·</span>
-				<span>latest {conversation.latest_version}</span>
-			</CardContent>
-		</Card>
+			<TableCell className="px-4 py-3 font-medium">
+				<Link
+					to="/conversations/$conversationId"
+					params={{ conversationId: conversation.id }}
+					onClick={stopRowNavigation}
+					className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+				>
+					{conversation.title ?? conversation.id}
+				</Link>
+			</TableCell>
+			<TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">
+				{conversation.id}
+			</TableCell>
+			<TableCell className="px-4 py-3 text-right tabular-nums">{conversation.versions}</TableCell>
+			<TableCell className="px-4 py-3 text-right tabular-nums">{conversation.replays}</TableCell>
+			<TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">
+				{conversation.latest_version}
+			</TableCell>
+		</ClickableRow>
 	);
 }
 
-const SKELETON_SLOTS = ["a", "b", "c"] as const;
-function ConversationsListSkeleton() {
+const SKELETON_SLOTS = ["a", "b", "c", "d"] as const;
+function ConversationsTableSkeleton() {
 	return (
-		<ul className="grid gap-3">
-			{SKELETON_SLOTS.map((slot) => (
-				<li key={slot}>
-					<Skeleton className="h-20 w-full" />
-				</li>
-			))}
-		</ul>
+		<div className="overflow-hidden rounded-lg border border-border/60 bg-card">
+			<div className="divide-y divide-border/60">
+				{SKELETON_SLOTS.map((slot) => (
+					<div key={slot} className="flex items-center gap-4 px-4 py-3">
+						<Skeleton className="size-4 rounded" />
+						<Skeleton className="h-4 flex-1" />
+						<Skeleton className="h-4 w-24" />
+						<Skeleton className="h-4 w-12" />
+					</div>
+				))}
+			</div>
+		</div>
 	);
 }
 
 function EmptyState() {
 	return (
-		<Card className="border-dashed">
-			<CardContent className="py-12 text-center text-sm text-muted-foreground">
-				No conversations yet. Author one in Python with
-				<code className="mx-1 rounded bg-muted px-1.5 py-0.5">xray-py</code> and run it against your
-				LiveKit room — see <code className="ml-1">docs/SDK.md</code>.
-			</CardContent>
-		</Card>
+		<div className="rounded-lg border border-dashed border-border/60 px-6 py-16 text-center">
+			<p className="text-sm text-muted-foreground">
+				No conversations yet. Author one with the xray SDK and run it against your LiveKit room —
+				see <code className="font-mono text-xs">docs/SDK.md</code>.
+			</p>
+		</div>
 	);
 }

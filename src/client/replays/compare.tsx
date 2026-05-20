@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useSearch } from "@tanstack/react-router";
+import { useSearch } from "@tanstack/react-router";
 import { match } from "ts-pattern";
 
+import { BackLink } from "@/client/components/back-link.tsx";
+import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
@@ -58,11 +60,17 @@ export function CompareReplays() {
 
 function CompareHeader() {
 	return (
-		<header className="mb-4">
-			<Link to="/" className="text-sm text-muted-foreground hover:underline">
-				<span aria-hidden="true">←</span> Conversations
-			</Link>
-			<h2 className="mt-2 text-2xl font-semibold">Compare replays</h2>
+		<header className="mb-8 space-y-5">
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<BackLink to="/">Conversations</BackLink>
+				<Breadcrumbs
+					crumbs={[
+						{ label: "Conversations", to: "/" },
+						{ label: "Compare replays", current: true },
+					]}
+				/>
+			</div>
+			<h2 className="text-2xl font-semibold tracking-tight">Compare replays</h2>
 		</header>
 	);
 }
