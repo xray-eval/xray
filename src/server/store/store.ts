@@ -13,8 +13,15 @@ import { Database } from "bun:sqlite";
 
 const MIGRATIONS_FOLDER = new URL("./migrations", import.meta.url).pathname;
 
-const LEGACY_TABLES = ["sessions", "replay_runs", "tool_calls_v1", "turns"] as const;
-const NEW_TABLES = ["conversations", "replays", "replay_turns"] as const;
+const LEGACY_TABLES = [
+	"sessions",
+	"replay_runs",
+	"tool_calls_v1",
+	"turns",
+	"replay_meta",
+	"assertions",
+] as const;
+const NEW_TABLES = ["conversations", "replays", "replay_turns", "speech_segments"] as const;
 
 export type StoreSchema = typeof schema;
 export type StoreDb = BunSQLiteDatabase<StoreSchema>;

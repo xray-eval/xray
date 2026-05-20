@@ -6,25 +6,21 @@ import { upsertConversation } from "@/server/conversations/conversations.service
 import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
 import { createReplay } from "@/server/replays/replays.service.ts";
 import { makeCreateReplayRequest } from "@/server/replays/replays.test-utils.ts";
-import { replayTurns } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 
 export interface AudioFixtureReplay {
 	readonly replayId: string;
-	readonly turnIdx: number;
 }
 
-export function seedReplayWithTurn(
+export function seedReplayForAudio(
 	store: Store,
 	overrides: {
 		conversationId?: string;
 		conversationVersion?: string;
-		turnIdx?: number;
 	} = {},
 ): AudioFixtureReplay {
 	const conversationId = overrides.conversationId ?? "conv-audio";
 	const conversationVersion = overrides.conversationVersion ?? "v1";
-	const turnIdx = overrides.turnIdx ?? 0;
 	upsertConversation(
 		store,
 		makeConversationSpec({ id: conversationId, version: conversationVersion }),
@@ -36,20 +32,7 @@ export function seedReplayWithTurn(
 			conversation_version: conversationVersion,
 		}),
 	);
-	store.db
-		.insert(replayTurns)
-		.values({
-			replayId: detail.id,
-			idx: turnIdx,
-			role: "agent",
-			key: null,
-			startedAt: "2026-05-18T12:00:00.000Z",
-			endedAt: "2026-05-18T12:00:02.000Z",
-			transcript: null,
-			audioPath: null,
-		})
-		.run();
-	return { replayId: detail.id, turnIdx };
+	return { replayId: detail.id };
 }
 
 export function makeTempAudioRoot(): { path: string; dispose(): void } {
@@ -62,11 +45,8 @@ export function makeTempAudioRoot(): { path: string; dispose(): void } {
 	};
 }
 
-export function audioUrl(replayId: string, turnIdx?: number): string {
-	if (turnIdx === undefined) {
-		return `http://test.local/v1/replays/${replayId}/audio`;
-	}
-	return `http://test.local/v1/replays/${replayId}/turns/${turnIdx}/audio`;
+export function replayAudioUrl(replayId: string): string {
+	return `http://test.local/v1/replays/${replayId}/audio`;
 }
 
 export function fakeAudioBytes(seed = 0): Uint8Array<ArrayBuffer> {

@@ -34,5 +34,5 @@
 		}
 	},
 	"include": ["src", "biome-plugins", "scripts", "bun-test-setup.ts"],
-	"exclude": ["node_modules", "dist"]
+	"exclude": ["node_modules", "dist", "src/client/**"]
 }

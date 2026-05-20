@@ -10,43 +10,26 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 import type {
-	AssertionStatus,
-	JudgeStatus,
+	AnalysisStep,
 	ReplayFailureReason,
-	ReplayModality,
-	ReplayStatus,
+	ReplayLifecycleState,
 	SpanVocabulary,
 	TurnRole,
 } from "./types.ts";
 
-// Each `.$type<...>()` narrows the column's TypeScript type without changing
-// the stored SQL type — keeps row shapes branded with the same identifiers
-// the server services use end-to-end.
-//
-// Conventions (kept consistent with the rest of the codebase):
-// - Primary keys are `text` UUIDs unless the table is a child collection
-//   keyed by a parent + ordinal (e.g. `replay_turns`).
-// - Timestamps are UTC ISO 8601 stored as `text`; numeric durations as
-//   `integer` milliseconds.
-// - JSON payloads stay as JSON-encoded `text` columns; deserialization is
-//   the reader's job. SQLite's JSON1 functions are intentionally avoided
-//   so a future migration to a different embedded engine has no
-//   storage-engine-specific surface to port.
+// Conventions (kept consistent across the codebase):
+// - Primary keys are `text` UUIDs unless the table is a child collection keyed
+//   by a parent + ordinal (e.g. `replay_turns`).
+// - Timestamps are UTC ISO 8601 stored as `text`; offsets within an audio
+//   recording are `integer` milliseconds from the recording's `t=0`.
+// - JSON payloads stay as JSON-encoded `text` columns; deserialization is the
+//   reader's job.
 
-// Conversations — dev-authored test definitions
-//
-// Composite primary key `(id, version)`: the dev controls `id`, the SDK
-// computes `version` as a fingerprint over turn structure. Two POSTs with
-// the same `(id, version)` upsert idempotently; an upsert against an
-// existing `(id, version)` with a different `turns_json` is rejected by
-// the service as `VersionFingerprintMismatchError`.
 export const conversations = sqliteTable(
 	"conversations",
 	{
 		id: text("id").notNull(),
 		version: text("version").notNull(),
-		// JSON-encoded array of turn descriptors. Schema validated at the wire
-		// boundary; storage is opaque to the DB.
 		turnsJson: text("turns_json").notNull(),
 		title: text("title"),
 		createdAt: text("created_at").notNull(),
@@ -57,62 +40,69 @@ export const conversations = sqliteTable(
 	],
 );
 
-// Replays — one execution of one Conversation
+// Replays — one execution of one Conversation.
 //
-// `conversation_id` + `conversation_version` together reference a row in
-// `conversations`. We do NOT declare it as a composite FK because Drizzle's
-// SQLite dialect spells composite FKs inconsistently across versions; the
-// service validates the (id, version) pair on insert.
+// Lifecycle is server-owned: the driver POSTs to create (`pending`), PATCHes
+// the row to `running` while it executes, the server flips to
+// `recording_uploaded` on POST /audio and to `analyzing` on POST /analyze.
+// The bunqueue worker transitions to `completed` or `failed` when the job
+// terminates.
 export const replays = sqliteTable(
 	"replays",
 	{
 		id: text("id").primaryKey(),
 		conversationId: text("conversation_id").notNull(),
 		conversationVersion: text("conversation_version").notNull(),
-		status: text("status").$type<ReplayStatus>().notNull(),
+		lifecycleState: text("lifecycle_state").$type<ReplayLifecycleState>().notNull(),
+		// Current analysis sub-step, surfaced over SSE. Null outside `analyzing`.
+		analysisStep: text("analysis_step").$type<AnalysisStep | null>(),
 		failureReason: text("failure_reason").$type<ReplayFailureReason | null>(),
 		startedAt: text("started_at").notNull(),
 		finishedAt: text("finished_at"),
-		// Path under XRAY_AUDIO_ROOT to the full-replay audio mixdown, if any.
-		// Per-turn segments live on `replay_turns`.
+		// Path under XRAY_AUDIO_ROOT to the uploaded stereo WAV.
 		audioPath: text("audio_path"),
-		transcript: text("transcript"),
+		// Opaque dev-side snapshot of the SUT config at run start.
+		runConfigJson: text("run_config_json"),
+		// bunqueue job id assigned when /analyze is invoked. Null until then.
+		jobId: text("job_id"),
 	},
 	(t) => [
 		index("idx_replays_conversation").on(t.conversationId, t.conversationVersion, t.startedAt),
 		index("idx_replays_started_at").on(t.startedAt),
-		check("replays_status_ck", sql`${t.status} IN ('running', 'completed', 'failed')`),
+		check(
+			"replays_lifecycle_state_ck",
+			sql`${t.lifecycleState} IN ('pending', 'running', 'recording_uploaded', 'analyzing', 'completed', 'failed')`,
+		),
 	],
 );
 
-// Replay meta — 1:1 side table for fields that change after the row exists
-//
-// Split out so creating a replay (single insert into `replays`) is cheap and
-// the read-heavy fields (status chip, judge result, run_config diff in the UI)
-// can be updated without rewriting the main row's wide audio/transcript blobs.
-export const replayMeta = sqliteTable(
-	"replay_meta",
+// Speech segments — VAD output, one row per detected voiced chunk per channel.
+export const speechSegments = sqliteTable(
+	"speech_segments",
 	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
 		replayId: text("replay_id")
-			.primaryKey()
+			.notNull()
 			.references(() => replays.id, { onDelete: "cascade" }),
-		modality: text("modality").$type<ReplayModality>().notNull().default("voice"),
-		// Dev-supplied snapshot of the system-under-test's external config
-		// (env vars, model rev, feature flags) at run start. Diffed in the UI
-		// between replays; opaque to xray.
-		runConfigJson: text("run_config_json"),
-		judgeStatus: text("judge_status").$type<JudgeStatus | null>(),
-		judgeScore: integer("judge_score"),
-		judgeReason: text("judge_reason"),
-		judgeError: text("judge_error"),
+		channel: text("channel").$type<TurnRole>().notNull(),
+		startMs: integer("start_ms").notNull(),
+		endMs: integer("end_ms").notNull(),
 	},
-	(t) => [check("replay_meta_modality_ck", sql`${t.modality} IN ('voice')`)],
+	(t) => [
+		index("idx_speech_segments_replay_start").on(t.replayId, t.startMs),
+		check("speech_segments_channel_ck", sql`${t.channel} IN ('user', 'agent')`),
+	],
 );
 
-// Replay turns — per-turn audio segments + transcripts + cross-replay key
+// Replay turns — derived from speech_segments.
 //
-// `idx` is the ordinal within the replay (0-based). `key` is a dev-declared
-// cross-Conversation alignment key; the UI joins on it for compare views.
+// `turn_start_ms` / `turn_end_ms` are the "turn boundary" — start = directly
+// after the other side's last segment ended; end = this side's last segment
+// in the turn ended.
+// `voice_start_ms` / `voice_end_ms` are the "voice-active boundary" — start =
+// this side's first speech in the turn, end = this side's last speech in the
+// turn (equals turn_end_ms under the current no-overlap rule, stored
+// separately for future overlap handling).
 export const replayTurns = sqliteTable(
 	"replay_turns",
 	{
@@ -121,12 +111,10 @@ export const replayTurns = sqliteTable(
 			.references(() => replays.id, { onDelete: "cascade" }),
 		idx: integer("idx").notNull(),
 		role: text("role").$type<TurnRole>().notNull(),
-		// Optional cross-replay/cross-conversation alignment key.
-		key: text("key"),
-		startedAt: text("started_at"),
-		endedAt: text("ended_at"),
-		transcript: text("transcript"),
-		audioPath: text("audio_path"),
+		turnStartMs: integer("turn_start_ms").notNull(),
+		turnEndMs: integer("turn_end_ms").notNull(),
+		voiceStartMs: integer("voice_start_ms").notNull(),
+		voiceEndMs: integer("voice_end_ms").notNull(),
 	},
 	(t) => [
 		primaryKey({ columns: [t.replayId, t.idx], name: "replay_turns_pk" }),
@@ -135,10 +123,7 @@ export const replayTurns = sqliteTable(
 	],
 );
 
-// Spans — recognized OTLP spans persisted under a replay
-//
-// One row per accepted span. Unrecognized vocabularies are dropped at the
-// OTLP receiver and never reach this table.
+// Spans — recognized OTLP spans persisted under a replay.
 export const spans = sqliteTable(
 	"spans",
 	{
@@ -153,8 +138,6 @@ export const spans = sqliteTable(
 		vocabulary: text("vocabulary").$type<SpanVocabulary>().notNull(),
 		startedAt: text("started_at").notNull(),
 		endedAt: text("ended_at").notNull(),
-		// JSON-encoded attribute bag, post-filter (only the fields the
-		// vocabulary recognized).
 		attributesJson: text("attributes_json").notNull(),
 	},
 	(t) => [
@@ -165,7 +148,6 @@ export const spans = sqliteTable(
 	],
 );
 
-// Tool calls — extracted from gen_ai / langfuse / xray.* tool-call spans
 export const toolCalls = sqliteTable(
 	"tool_calls",
 	{
@@ -173,8 +155,6 @@ export const toolCalls = sqliteTable(
 		replayId: text("replay_id")
 			.notNull()
 			.references(() => replays.id, { onDelete: "cascade" }),
-		// Optional pointer to the replay_turn this call landed under, by ordinal.
-		// Some span vocabularies don't carry per-turn context; that's fine.
 		turnIdx: integer("turn_idx"),
 		spanId: text("span_id"),
 		name: text("name").notNull(),
@@ -187,7 +167,6 @@ export const toolCalls = sqliteTable(
 	(t) => [index("idx_tool_calls_replay").on(t.replayId, t.startedAt)],
 );
 
-// Model usage — extracted from gen_ai / langfuse LLM-call spans
 export const modelUsage = sqliteTable(
 	"model_usage",
 	{
@@ -207,25 +186,4 @@ export const modelUsage = sqliteTable(
 		latencyMs: integer("latency_ms"),
 	},
 	(t) => [index("idx_model_usage_replay").on(t.replayId, t.startedAt)],
-);
-
-// Assertions — per-turn predicate results posted by the SDK as xray.* spans
-export const assertions = sqliteTable(
-	"assertions",
-	{
-		id: integer("id").primaryKey({ autoIncrement: true }),
-		replayId: text("replay_id")
-			.notNull()
-			.references(() => replays.id, { onDelete: "cascade" }),
-		turnIdx: integer("turn_idx").notNull(),
-		name: text("name").notNull(),
-		status: text("status").$type<AssertionStatus>().notNull(),
-		message: text("message"),
-		recordedAt: text("recorded_at").notNull(),
-	},
-	(t) => [
-		index("idx_assertions_replay_turn").on(t.replayId, t.turnIdx),
-		unique("assertions_replay_turn_name_uk").on(t.replayId, t.turnIdx, t.name),
-		check("assertions_status_ck", sql`${t.status} IN ('passed', 'failed', 'errored')`),
-	],
 );

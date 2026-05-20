@@ -5,72 +5,41 @@ import {
 	ConversationVersionSchema,
 } from "@/server/conversations/conversations.types.ts";
 import {
-	ASSERTION_STATUSES,
-	JUDGE_STATUSES,
+	ANALYSIS_STEPS,
 	REPLAY_FAILURE_REASONS,
-	REPLAY_MODALITIES,
-	REPLAY_STATUSES,
+	REPLAY_LIFECYCLE_STATES,
 	SPAN_VOCABULARIES,
 	TURN_ROLES,
 } from "@/server/store/types.ts";
 
 const MAX_RUN_CONFIG_BYTES = 32 * 1024;
-const MAX_JUDGE_REASON = 4 * 1024;
-const MAX_TRANSCRIPT = 1024 * 1024;
 const MAX_COMPARE_REPLAYS = 8;
 const MIN_COMPARE_REPLAYS = 2;
 
 export const ReplayIdSchema = v.pipe(v.string(), v.regex(/^[0-9a-fA-F-]{36}$/, "Must be a UUID"));
 
-export const ReplayStatusSchema = v.picklist(REPLAY_STATUSES);
+export const ReplayLifecycleStateSchema = v.picklist(REPLAY_LIFECYCLE_STATES);
+export const AnalysisStepSchema = v.picklist(ANALYSIS_STEPS);
 export const ReplayFailureReasonSchema = v.picklist(REPLAY_FAILURE_REASONS);
-export const ReplayModalitySchema = v.picklist(REPLAY_MODALITIES);
-export const JudgeStatusSchema = v.picklist(JUDGE_STATUSES);
-export const AssertionStatusSchema = v.picklist(ASSERTION_STATUSES);
 export const TurnRoleSchema = v.picklist(TURN_ROLES);
 export const SpanVocabularySchema = v.picklist(SPAN_VOCABULARIES);
 
-/**
- * Body of `POST /v1/replays`. The SDK posts this before joining the room
- * so the replay row exists when the first OTLP span arrives. `run_config`
- * is a free-form JSON blob — xray stores it opaquely and surfaces it in
- * the UI for diffs across the same Conversation.
- */
 export const CreateReplayRequestSchema = v.object({
 	conversation_id: ConversationIdSchema,
 	conversation_version: ConversationVersionSchema,
-	modality: v.optional(ReplayModalitySchema, "voice"),
 	run_config: v.optional(v.unknown()),
 });
 export type CreateReplayRequest = v.InferOutput<typeof CreateReplayRequestSchema>;
 
-/**
- * Body of `PATCH /v1/replays/:id`. Every field is optional; the SDK calls
- * this multiple times during a run to set status, then judge result, etc.
- * Validation enforces value vocabularies; the service enforces transition
- * legality (e.g. can't move out of `failed`).
- */
 export const UpdateReplayRequestSchema = v.object({
-	status: v.optional(ReplayStatusSchema),
+	lifecycle_state: v.optional(ReplayLifecycleStateSchema),
 	failure_reason: v.optional(v.nullable(ReplayFailureReasonSchema)),
 	finished_at: v.optional(v.nullable(v.pipe(v.string(), v.isoTimestamp()))),
-	transcript: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(MAX_TRANSCRIPT)))),
-	audio_path: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(1024)))),
-	run_config: v.optional(v.nullable(v.unknown())),
-	judge: v.optional(
-		v.object({
-			status: JudgeStatusSchema,
-			score: v.optional(v.nullable(v.pipe(v.number(), v.integer()))),
-			reason: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(MAX_JUDGE_REASON)))),
-			error: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(MAX_JUDGE_REASON)))),
-		}),
-	),
 });
 export type UpdateReplayRequest = v.InferOutput<typeof UpdateReplayRequestSchema>;
 
 export const RUN_CONFIG_MAX_BYTES = MAX_RUN_CONFIG_BYTES;
 
-/** A single tool call (extracted from a recognized span). */
 export const ToolCallResponseSchema = v.object({
 	id: v.number(),
 	turn_idx: v.nullable(v.number()),
@@ -102,23 +71,20 @@ export type ModelUsageResponse = v.InferOutput<typeof ModelUsageResponseSchema>;
 export const ReplayTurnResponseSchema = v.object({
 	idx: v.number(),
 	role: TurnRoleSchema,
-	key: v.nullable(v.string()),
-	started_at: v.nullable(v.string()),
-	ended_at: v.nullable(v.string()),
-	transcript: v.nullable(v.string()),
-	audio_path: v.nullable(v.string()),
+	turn_start_ms: v.number(),
+	turn_end_ms: v.number(),
+	voice_start_ms: v.number(),
+	voice_end_ms: v.number(),
 });
 export type ReplayTurnResponse = v.InferOutput<typeof ReplayTurnResponseSchema>;
 
-export const AssertionResponseSchema = v.object({
+export const SpeechSegmentResponseSchema = v.object({
 	id: v.number(),
-	turn_idx: v.number(),
-	name: v.string(),
-	status: AssertionStatusSchema,
-	message: v.nullable(v.string()),
-	recorded_at: v.string(),
+	channel: TurnRoleSchema,
+	start_ms: v.number(),
+	end_ms: v.number(),
 });
-export type AssertionResponse = v.InferOutput<typeof AssertionResponseSchema>;
+export type SpeechSegmentResponse = v.InferOutput<typeof SpeechSegmentResponseSchema>;
 
 export const SpanResponseSchema = v.object({
 	id: v.number(),
@@ -133,48 +99,44 @@ export const SpanResponseSchema = v.object({
 });
 export type SpanResponse = v.InferOutput<typeof SpanResponseSchema>;
 
-/** Summary fields returned by `GET /v1/conversations/:id/replays`. */
 export const ReplaySummaryResponseSchema = v.object({
 	id: v.string(),
 	conversation_id: v.string(),
 	conversation_version: v.string(),
-	status: ReplayStatusSchema,
+	lifecycle_state: ReplayLifecycleStateSchema,
+	analysis_step: v.nullable(AnalysisStepSchema),
 	failure_reason: v.nullable(ReplayFailureReasonSchema),
-	modality: ReplayModalitySchema,
 	started_at: v.string(),
 	finished_at: v.nullable(v.string()),
-	judge_status: v.nullable(JudgeStatusSchema),
-	judge_score: v.nullable(v.number()),
 	run_config: v.unknown(),
 });
 export type ReplaySummaryResponse = v.InferOutput<typeof ReplaySummaryResponseSchema>;
 
-/** Full detail returned by `GET /v1/replays/:id`. */
 export const ReplayDetailResponseSchema = v.object({
 	id: v.string(),
 	conversation_id: v.string(),
 	conversation_version: v.string(),
-	status: ReplayStatusSchema,
+	lifecycle_state: ReplayLifecycleStateSchema,
+	analysis_step: v.nullable(AnalysisStepSchema),
 	failure_reason: v.nullable(ReplayFailureReasonSchema),
-	modality: ReplayModalitySchema,
 	started_at: v.string(),
 	finished_at: v.nullable(v.string()),
 	audio_path: v.nullable(v.string()),
-	transcript: v.nullable(v.string()),
+	job_id: v.nullable(v.string()),
 	run_config: v.unknown(),
-	judge: v.object({
-		status: v.nullable(JudgeStatusSchema),
-		score: v.nullable(v.number()),
-		reason: v.nullable(v.string()),
-		error: v.nullable(v.string()),
-	}),
 	turns: v.array(ReplayTurnResponseSchema),
-	assertions: v.array(AssertionResponseSchema),
+	speech_segments: v.array(SpeechSegmentResponseSchema),
 	tool_calls: v.array(ToolCallResponseSchema),
 	model_usage: v.array(ModelUsageResponseSchema),
 	spans: v.array(SpanResponseSchema),
 });
 export type ReplayDetailResponse = v.InferOutput<typeof ReplayDetailResponseSchema>;
+
+export const AnalyzeReplayResponseSchema = v.object({
+	job_id: v.string(),
+	lifecycle_state: ReplayLifecycleStateSchema,
+});
+export type AnalyzeReplayResponse = v.InferOutput<typeof AnalyzeReplayResponseSchema>;
 
 export const ListReplaysResponseSchema = v.object({
 	items: v.array(ReplaySummaryResponseSchema),

@@ -4,8 +4,8 @@ import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import {
 	ConversationVersionNotFoundError,
+	ReplayLifecycleTransitionError,
 	ReplayNotFoundError,
-	ReplayStatusTransitionError,
 } from "./replays.errors.ts";
 import {
 	compareReplays,
@@ -18,7 +18,7 @@ import { makeCreateReplayRequest, seedReplay } from "./replays.test-utils.ts";
 import { describe, expect, it } from "bun:test";
 
 describe("createReplay", () => {
-	it("creates a row with status='running' and modality default 'voice'", () => {
+	it("creates a row with lifecycle_state='pending'", () => {
 		const store = makeTempStore();
 		upsertConversation(
 			store,
@@ -30,10 +30,11 @@ describe("createReplay", () => {
 			makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
 			{ now: () => "2026-05-18T12:00:00.000Z" },
 		);
-		expect(detail.status).toBe("running");
-		expect(detail.modality).toBe("voice");
+		expect(detail.lifecycle_state).toBe("pending");
 		expect(detail.started_at).toBe("2026-05-18T12:00:00.000Z");
-		expect(detail.judge.status).toBeNull();
+		expect(detail.id).toMatch(/[0-9a-f-]{36}/);
+		expect(detail.analysis_step).toBeNull();
+		expect(detail.failure_reason).toBeNull();
 		store.close();
 	});
 
@@ -65,25 +66,23 @@ describe("createReplay", () => {
 });
 
 describe("updateReplay", () => {
-	it("applies status + finished_at + judge fields", () => {
+	it("applies lifecycle_state + finished_at", () => {
 		const store = makeTempStore();
 		const id = seedReplay(store);
 		const after = updateReplay(store, id, {
-			status: "completed",
-			finished_at: "2026-05-18T12:05:00.000Z",
-			judge: { status: "passed", score: 92, reason: "responded correctly" },
+			lifecycle_state: "running",
+			finished_at: null,
 		});
-		expect(after.status).toBe("completed");
-		expect(after.finished_at).toBe("2026-05-18T12:05:00.000Z");
-		expect(after.judge.status).toBe("passed");
-		expect(after.judge.score).toBe(92);
+		expect(after.lifecycle_state).toBe("running");
 		store.close();
 	});
 
 	it("throws ReplayNotFoundError for unknown id", () => {
 		const store = makeTempStore();
 		expect(() =>
-			updateReplay(store, "00000000-0000-0000-0000-000000000000", { status: "completed" }),
+			updateReplay(store, "00000000-0000-0000-0000-000000000000", {
+				lifecycle_state: "running",
+			}),
 		).toThrow(ReplayNotFoundError);
 		store.close();
 	});
@@ -97,15 +96,14 @@ describe("updateReplay", () => {
 		store.close();
 	});
 
-	it("rejects status transitions out of 'failed' (terminal)", () => {
+	it("rejects transitions out of a terminal state", () => {
 		const store = makeTempStore();
 		const id = seedReplay(store);
-		updateReplay(store, id, { status: "failed", failure_reason: "agent_not_joined" });
-		expect(() => updateReplay(store, id, { status: "completed" })).toThrow(
-			ReplayStatusTransitionError,
+		updateReplay(store, id, { lifecycle_state: "failed", failure_reason: "driver_aborted" });
+		expect(() => updateReplay(store, id, { lifecycle_state: "completed" })).toThrow(
+			ReplayLifecycleTransitionError,
 		);
-		// Same status (idempotent re-PATCH of the same terminal state) is allowed.
-		expect(() => updateReplay(store, id, { status: "failed" })).not.toThrow();
+		expect(() => updateReplay(store, id, { lifecycle_state: "failed" })).not.toThrow();
 		store.close();
 	});
 });
@@ -133,7 +131,10 @@ describe("getReplay / compareReplays / listReplaysForConversation", () => {
 		const store = makeTempStore();
 		seedReplay(store, { conversationId: "c-list" });
 		const id = seedReplay(store, { conversationId: "c-list" });
-		updateReplay(store, id, { status: "completed", finished_at: "2026-05-18T12:10:00.000Z" });
+		updateReplay(store, id, {
+			lifecycle_state: "completed",
+			finished_at: "2026-05-18T12:10:00.000Z",
+		});
 		const items = listReplaysForConversation(store, "c-list");
 		expect(items).toHaveLength(2);
 		const first = items[0]?.started_at ?? "";

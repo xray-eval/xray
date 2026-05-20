@@ -1,4 +1,6 @@
 import { makeTempAudioRoot } from "./audio/audio.test-utils.ts";
+import { makeFakeJobRunner } from "./jobs/jobs.test-utils.ts";
+import { makeReplayEvents } from "./replays/replays.events.ts";
 import { createApp } from "./server.ts";
 import type { Store } from "./store/store.ts";
 import { makeTempStore } from "./store/test-utils.ts";
@@ -11,7 +13,11 @@ let app: ReturnType<typeof createApp>;
 beforeEach(() => {
 	store = makeTempStore();
 	audio = makeTempAudioRoot();
-	app = createApp(store, { audioRoot: audio.path });
+	app = createApp(store, {
+		audioRoot: audio.path,
+		jobRunner: makeFakeJobRunner(),
+		events: makeReplayEvents(),
+	});
 });
 
 afterEach(() => {

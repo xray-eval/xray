@@ -3,9 +3,9 @@ import { openStore } from "./store.ts";
 import type {
 	ConversationInput,
 	ReplayInput,
-	ReplayMetaInput,
 	ReplayTurnInput,
 	SpanInput,
+	SpeechSegmentInput,
 } from "./types.ts";
 
 /**
@@ -40,25 +40,14 @@ export function makeReplayInput(overrides: Partial<ReplayInput> = {}): ReplayInp
 		id: `replay-${replayCounter}`,
 		conversationId: "conv-1",
 		conversationVersion: "v0001",
-		status: "running",
+		lifecycleState: "pending",
+		analysisStep: null,
 		failureReason: null,
 		startedAt: "2026-05-16T12:00:00.000Z",
 		finishedAt: null,
 		audioPath: null,
-		transcript: null,
-		...overrides,
-	};
-}
-
-export function makeReplayMetaInput(overrides: Partial<ReplayMetaInput> = {}): ReplayMetaInput {
-	return {
-		replayId: `replay-${replayCounter}`,
-		modality: "voice",
 		runConfigJson: null,
-		judgeStatus: null,
-		judgeScore: null,
-		judgeReason: null,
-		judgeError: null,
+		jobId: null,
 		...overrides,
 	};
 }
@@ -68,11 +57,22 @@ export function makeReplayTurnInput(overrides: Partial<ReplayTurnInput> = {}): R
 		replayId: `replay-${replayCounter}`,
 		idx: 0,
 		role: "user",
-		key: null,
-		startedAt: "2026-05-16T12:00:01.000Z",
-		endedAt: "2026-05-16T12:00:02.000Z",
-		transcript: "hello",
-		audioPath: null,
+		turnStartMs: 0,
+		turnEndMs: 1000,
+		voiceStartMs: 0,
+		voiceEndMs: 1000,
+		...overrides,
+	};
+}
+
+export function makeSpeechSegmentInput(
+	overrides: Partial<SpeechSegmentInput> = {},
+): SpeechSegmentInput {
+	return {
+		replayId: `replay-${replayCounter}`,
+		channel: "user",
+		startMs: 0,
+		endMs: 1000,
 		...overrides,
 	};
 }

@@ -1,4 +1,6 @@
 import { makeTempAudioRoot } from "@/server/audio/audio.test-utils.ts";
+import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
+import { makeReplayEvents } from "@/server/replays/replays.events.ts";
 import { createApp } from "@/server/server.ts";
 import type { Store } from "@/server/store/store.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
@@ -12,7 +14,11 @@ let app: ReturnType<typeof createApp>;
 beforeAll(() => {
 	store = makeTempStore();
 	audio = makeTempAudioRoot();
-	app = createApp(store, { audioRoot: audio.path });
+	app = createApp(store, {
+		audioRoot: audio.path,
+		jobRunner: makeFakeJobRunner(),
+		events: makeReplayEvents(),
+	});
 });
 
 afterAll(() => {
@@ -39,8 +45,9 @@ describe("OpenAPI doc (/openapi.json)", () => {
 		expect(paths).toContain("/v1/replays");
 		expect(paths).toContain("/v1/replays/{id}");
 		expect(paths).toContain("/v1/replays/compare");
+		expect(paths).toContain("/v1/replays/{id}/analyze");
+		expect(paths).toContain("/v1/replays/{id}/events");
 		expect(paths).toContain("/v1/otlp/v1/traces");
-		expect(paths).toContain("/v1/replays/{id}/turns/{idx}/audio");
 		expect(paths).toContain("/v1/replays/{id}/audio");
 	});
 });

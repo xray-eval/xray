@@ -4,7 +4,6 @@ import {
 	AudioNotUploadedError,
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
-	AudioTurnNotFoundError,
 	InvalidAudioPathError,
 	UnsupportedAudioContentTypeError,
 } from "./audio.errors.ts";
@@ -39,17 +38,9 @@ describe("audio errors", () => {
 		expect(e.maxBytes).toBe(1234);
 	});
 
-	it("AudioTurnNotFoundError carries replayId + turnIdx", () => {
-		const e = new AudioTurnNotFoundError("r", 3);
-		expect(e.replayId).toBe("r");
-		expect(e.turnIdx).toBe(3);
-	});
-
-	it("AudioNotUploadedError accepts an optional turnIdx", () => {
+	it("AudioNotUploadedError carries replayId", () => {
 		const a = new AudioNotUploadedError("r");
-		expect(a.turnIdx).toBeNull();
-		const b = new AudioNotUploadedError("r", 4);
-		expect(b.turnIdx).toBe(4);
+		expect(a.replayId).toBe("r");
 	});
 
 	it("AudioPathOutsideRootError carries the attempted path + root", () => {

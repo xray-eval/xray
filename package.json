@@ -26,9 +26,9 @@
 		"docker:smoke": "bash scripts/docker-smoke.sh",
 		"db:generate": "drizzle-kit generate",
 		"db:studio": "drizzle-kit studio",
-		"test": "bun test --isolate",
-		"test:watch": "bun test --isolate --watch",
-		"test:coverage": "bun test --isolate --coverage"
+		"test": "bun test --isolate --path-ignore-patterns '**/src/client/**'",
+		"test:watch": "bun test --isolate --watch --path-ignore-patterns '**/src/client/**'",
+		"test:coverage": "bun test --isolate --coverage --path-ignore-patterns '**/src/client/**'"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.14",
@@ -54,6 +54,7 @@
 		"@tanstack/react-router": "1.169.2",
 		"@valibot/to-json-schema": "1.7.0",
 		"bun-plugin-tailwind": "0.1.2",
+		"bunqueue": "2.7.12",
 		"class-variance-authority": "0.7.1",
 		"clsx": "2.1.1",
 		"drizzle-orm": "0.45.2",

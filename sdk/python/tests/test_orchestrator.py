@@ -133,7 +133,7 @@ async def test_run_creates_conversation_then_replay_then_patches_with_judge():
     assert patch_replay.called
 
     body = _decoded_body(patch_replay)
-    assert '"status":"completed"' in body
+    assert '"lifecycle_state":"completed"' in body
     assert '"judge"' in body
     assert '"score":99' in body
 
@@ -174,7 +174,7 @@ async def test_run_marks_failed_when_runtime_raises():
     assert result.status == "failed"
     assert patch_replay.called
     body = _decoded_body(patch_replay)
-    assert '"status":"failed"' in body
+    assert '"lifecycle_state":"failed"' in body
     # Typed XrayError surfaces its `failure_reason` directly — no
     # substring matching, no message parsing.
     assert '"failure_reason":"agent_not_joined"' in body
@@ -325,7 +325,7 @@ async def test_audio_upload_failure_demotes_replay_to_failed(tmp_path: Path):
     result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert result.status == "failed"
     body = _decoded_body(patch_replay)
-    assert '"status":"failed"' in body
+    assert '"lifecycle_state":"failed"' in body
 
 
 @respx.mock

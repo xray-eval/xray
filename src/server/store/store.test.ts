@@ -8,22 +8,21 @@ import { makeEnv } from "@/server/env/test-utils.ts";
 
 import { LegacySchemaDetectedError, StoreParentDirNotFoundError } from "./errors.ts";
 import {
-	assertions,
 	conversations,
 	modelUsage,
-	replayMeta,
 	replays,
 	replayTurns,
 	spans,
+	speechSegments,
 	toolCalls,
 } from "./schema.ts";
 import { openStore, openStoreFromEnv } from "./store.ts";
 import {
 	makeConversationInput,
 	makeReplayInput,
-	makeReplayMetaInput,
 	makeReplayTurnInput,
 	makeSpanInput,
+	makeSpeechSegmentInput,
 } from "./test-utils.ts";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -54,21 +53,21 @@ describe("openStore", () => {
 			.map((r) => r.name);
 		expect(tables).toEqual(
 			expect.arrayContaining([
-				"assertions",
 				"conversations",
 				"model_usage",
-				"replay_meta",
 				"replay_turns",
 				"replays",
 				"spans",
+				"speech_segments",
 				"tool_calls",
 			]),
 		);
+		expect(tables).not.toContain("replay_meta");
+		expect(tables).not.toContain("assertions");
 		store.close();
 	});
 
 	it("enables WAL journal mode", () => {
-		// :memory: databases report `memory`, not `wal` — exercise on a file path.
 		const fileStore = openStore({ path: tmpDbPath() });
 		const [row] = fileStore.db.all<PragmaRow>(sql`PRAGMA journal_mode`);
 		expect(row?.journal_mode).toBe("wal");
@@ -114,6 +113,14 @@ describe("openStore", () => {
 		expect(() => openStore({ path })).toThrow(LegacySchemaDetectedError);
 	});
 
+	it("treats pre-audio-ground-truth tables as legacy (replay_meta)", () => {
+		const path = tmpDbPath();
+		const seed = new Database(path, { create: true, strict: true });
+		seed.exec("CREATE TABLE replay_meta (replay_id TEXT PRIMARY KEY)");
+		seed.close();
+		expect(() => openStore({ path })).toThrow(LegacySchemaDetectedError);
+	});
+
 	it("does not flag a fresh DB or a DB already on the new schema", () => {
 		const path = tmpDbPath();
 		const fresh = openStore({ path });
@@ -131,12 +138,12 @@ describe("openStore", () => {
 		const replay = makeReplayInput({ id: "replay-cascade", conversationId: "conv-cascade" });
 		store.db.insert(replays).values(replay).run();
 		store.db
-			.insert(replayMeta)
-			.values(makeReplayMetaInput({ replayId: replay.id }))
-			.run();
-		store.db
 			.insert(replayTurns)
 			.values(makeReplayTurnInput({ replayId: replay.id, idx: 0 }))
+			.run();
+		store.db
+			.insert(speechSegments)
+			.values(makeSpeechSegmentInput({ replayId: replay.id }))
 			.run();
 		store.db
 			.insert(spans)
@@ -150,25 +157,14 @@ describe("openStore", () => {
 			.insert(modelUsage)
 			.values({ replayId: replay.id, provider: "openai", model: "gpt-4o" })
 			.run();
-		store.db
-			.insert(assertions)
-			.values({
-				replayId: replay.id,
-				turnIdx: 0,
-				name: "first",
-				status: "passed",
-				recordedAt: "2026-05-16T12:00:01.000Z",
-			})
-			.run();
 
 		store.db.delete(replays).where(eq(replays.id, replay.id)).run();
 
-		expect(store.db.select().from(replayMeta).all()).toEqual([]);
 		expect(store.db.select().from(replayTurns).all()).toEqual([]);
+		expect(store.db.select().from(speechSegments).all()).toEqual([]);
 		expect(store.db.select().from(spans).all()).toEqual([]);
 		expect(store.db.select().from(toolCalls).all()).toEqual([]);
 		expect(store.db.select().from(modelUsage).all()).toEqual([]);
-		expect(store.db.select().from(assertions).all()).toEqual([]);
 		store.close();
 	});
 });

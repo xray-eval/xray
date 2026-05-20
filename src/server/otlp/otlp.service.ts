@@ -1,14 +1,7 @@
 import { count, eq } from "drizzle-orm";
 
 import { replayExists } from "@/server/replays/replays.service.ts";
-import {
-	assertions,
-	modelUsage,
-	replayMeta,
-	replayTurns,
-	spans,
-	toolCalls,
-} from "@/server/store/schema.ts";
+import { modelUsage, spans, toolCalls } from "@/server/store/schema.ts";
 import type { Store, StoreDb } from "@/server/store/store.ts";
 
 import { TooManySpansPerRequestError } from "./otlp.errors.ts";
@@ -174,66 +167,6 @@ function persistExtracted(
 				})),
 			)
 			.run();
-	}
-	if (extraction.assertions && extraction.assertions.length > 0) {
-		for (const a of extraction.assertions) {
-			tx.insert(assertions)
-				.values({
-					replayId,
-					turnIdx: a.turnIdx,
-					name: a.name,
-					status: a.status,
-					message: a.message,
-					recordedAt: a.recordedAt,
-				})
-				.onConflictDoUpdate({
-					target: [assertions.replayId, assertions.turnIdx, assertions.name],
-					set: {
-						status: a.status,
-						message: a.message,
-						recordedAt: a.recordedAt,
-					},
-				})
-				.run();
-		}
-	}
-	if (extraction.judge) {
-		tx.update(replayMeta)
-			.set({
-				judgeStatus: extraction.judge.status,
-				judgeScore: extraction.judge.score,
-				judgeReason: extraction.judge.reason,
-				judgeError: extraction.judge.error,
-			})
-			.where(eq(replayMeta.replayId, replayId))
-			.run();
-	}
-	if (extraction.turnUpdates && extraction.turnUpdates.length > 0) {
-		for (const u of extraction.turnUpdates) {
-			tx.insert(replayTurns)
-				.values({
-					replayId,
-					idx: u.idx,
-					role: u.role,
-					key: u.key,
-					startedAt: u.startedAt,
-					endedAt: u.endedAt,
-					transcript: u.transcript,
-					audioPath: u.audioPath,
-				})
-				.onConflictDoUpdate({
-					target: [replayTurns.replayId, replayTurns.idx],
-					set: {
-						role: u.role,
-						key: u.key,
-						startedAt: u.startedAt,
-						endedAt: u.endedAt,
-						transcript: u.transcript,
-						audioPath: u.audioPath,
-					},
-				})
-				.run();
-		}
 	}
 }
 

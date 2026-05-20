@@ -4,18 +4,22 @@ import * as v from "valibot";
 import { createConversationsRouter } from "@/server/conversations/conversations.router.ts";
 import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
 import { readJson } from "@/server/core/test-utils.ts";
+import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
+import { makeReplayEvents } from "./replays.events.ts";
 import { createReplaysRouter } from "./replays.router.ts";
 import { makeCreateReplayRequest, seedReplay } from "./replays.test-utils.ts";
 import { describe, expect, it } from "bun:test";
 
 function makeApp() {
 	const store = makeTempStore();
+	const jobRunner = makeFakeJobRunner();
+	const events = makeReplayEvents();
 	const app = new Hono();
 	app.route("/v1", createConversationsRouter(store));
-	app.route("/v1", createReplaysRouter(store));
-	return { app, store };
+	app.route("/v1", createReplaysRouter(store, jobRunner, events));
+	return { app, store, jobRunner, events };
 }
 
 async function postConversation(app: Hono, id: string, version = "v1") {
@@ -28,7 +32,7 @@ async function postConversation(app: Hono, id: string, version = "v1") {
 }
 
 describe("POST /v1/replays", () => {
-	it("returns 201 + a running detail row", async () => {
+	it("returns 201 + a pending detail row", async () => {
 		const { app } = makeApp();
 		await postConversation(app, "c");
 		const res = await app.request("/v1/replays", {
@@ -39,8 +43,8 @@ describe("POST /v1/replays", () => {
 			),
 		});
 		expect(res.status).toBe(201);
-		const body = await readJson(res, v.object({ status: v.string(), id: v.string() }));
-		expect(body.status).toBe("running");
+		const body = await readJson(res, v.object({ lifecycle_state: v.string(), id: v.string() }));
+		expect(body.lifecycle_state).toBe("pending");
 		expect(body.id).toMatch(/[0-9a-f-]{36}/);
 	});
 
@@ -68,25 +72,20 @@ describe("POST /v1/replays", () => {
 });
 
 describe("PATCH /v1/replays/:id", () => {
-	it("updates status + judge + finished_at", async () => {
+	it("updates lifecycle_state + finished_at", async () => {
 		const { app, store } = makeApp();
 		const id = seedReplay(store);
 		const res = await app.request(`/v1/replays/${id}`, {
 			method: "PATCH",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
-				status: "completed",
-				finished_at: "2026-05-18T12:05:00.000Z",
-				judge: { status: "passed", score: 92 },
+				lifecycle_state: "running",
+				finished_at: null,
 			}),
 		});
 		expect(res.status).toBe(200);
-		const body = await readJson(
-			res,
-			v.object({ status: v.string(), judge: v.object({ score: v.number() }) }),
-		);
-		expect(body.status).toBe("completed");
-		expect(body.judge.score).toBe(92);
+		const body = await readJson(res, v.object({ lifecycle_state: v.string() }));
+		expect(body.lifecycle_state).toBe("running");
 	});
 
 	it("returns 404 for unknown id", async () => {
@@ -94,7 +93,7 @@ describe("PATCH /v1/replays/:id", () => {
 		const res = await app.request("/v1/replays/00000000-0000-0000-0000-000000000099", {
 			method: "PATCH",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ status: "completed" }),
+			body: JSON.stringify({ lifecycle_state: "running" }),
 		});
 		expect(res.status).toBe(404);
 	});
@@ -104,7 +103,7 @@ describe("PATCH /v1/replays/:id", () => {
 		const res = await app.request("/v1/replays/not-a-uuid", {
 			method: "PATCH",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ status: "completed" }),
+			body: JSON.stringify({ lifecycle_state: "running" }),
 		});
 		expect(res.status).toBe(400);
 	});
@@ -121,6 +120,44 @@ describe("GET /v1/replays/:id", () => {
 	it("returns 404 for unknown id", async () => {
 		const { app } = makeApp();
 		const res = await app.request("/v1/replays/00000000-0000-0000-0000-000000000099");
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("POST /v1/replays/:id/analyze", () => {
+	it("returns 202 + job_id when the replay is in recording_uploaded state", async () => {
+		const { app, store, jobRunner } = makeApp();
+		const id = seedReplay(store);
+		// Flip to recording_uploaded via direct SQL update (audio router does this
+		// in production after POST /audio).
+		const { replays } = await import("@/server/store/schema.ts");
+		const { eq } = await import("drizzle-orm");
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "recording_uploaded", audioPath: "x/replay.wav" })
+			.where(eq(replays.id, id))
+			.run();
+
+		const res = await app.request(`/v1/replays/${id}/analyze`, { method: "POST" });
+		expect(res.status).toBe(202);
+		const body = await readJson(res, v.object({ job_id: v.string(), lifecycle_state: v.string() }));
+		expect(body.lifecycle_state).toBe("analyzing");
+		expect(jobRunner.enqueued).toHaveLength(1);
+		expect(jobRunner.enqueued[0]?.replayId).toBe(id);
+	});
+
+	it("returns 409 when the replay is not in recording_uploaded state", async () => {
+		const { app, store } = makeApp();
+		const id = seedReplay(store);
+		const res = await app.request(`/v1/replays/${id}/analyze`, { method: "POST" });
+		expect(res.status).toBe(409);
+	});
+
+	it("returns 404 for unknown id", async () => {
+		const { app } = makeApp();
+		const res = await app.request("/v1/replays/00000000-0000-0000-0000-000000000099/analyze", {
+			method: "POST",
+		});
 		expect(res.status).toBe(404);
 	});
 });

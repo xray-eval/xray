@@ -4,14 +4,7 @@ import { upsertConversation } from "@/server/conversations/conversations.service
 import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
 import { createReplay } from "@/server/replays/replays.service.ts";
 import { makeCreateReplayRequest } from "@/server/replays/replays.test-utils.ts";
-import {
-	assertions,
-	modelUsage,
-	replayMeta,
-	replayTurns,
-	spans,
-	toolCalls,
-} from "@/server/store/schema.ts";
+import { modelUsage, spans, toolCalls } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import { TooManySpansPerRequestError } from "./otlp.errors.ts";
@@ -69,8 +62,8 @@ describe("ingestOtlpTraces — filter posture", () => {
 	});
 });
 
-describe("ingestOtlpTraces — xray vocabulary", () => {
-	it("persists an xray.assertion span as a span + assertion row", () => {
+describe("ingestOtlpTraces — xray vocabulary (raw spans only)", () => {
+	it("persists xray.* spans as raw spans only (no structured extraction in v0.2)", () => {
 		const { store, replayId } = setupReplay();
 		const req = makeOtlpRequest({
 			replayId,
@@ -83,65 +76,17 @@ describe("ingestOtlpTraces — xray vocabulary", () => {
 						"xray.assertion.status": "passed",
 					},
 				},
+				{ name: "xray.judge", attributes: { "xray.judge.status": "failed" } },
+				{ name: "xray.turn", attributes: { "xray.turn.idx": 0, "xray.turn.role": "agent" } },
+				{ name: "xray.stage.stt" },
+				{ name: "xray.stage.tts" },
 			],
 		});
 		const { result } = ingestOtlpTraces(store, req);
-		expect(result.persistedSpans).toBe(1);
-		const span = store.db.select().from(spans).where(eq(spans.replayId, replayId)).get();
-		expect(span?.vocabulary).toBe("xray");
-		const row = store.db.select().from(assertions).where(eq(assertions.replayId, replayId)).get();
-		expect(row?.status).toBe("passed");
-		expect(row?.name).toBe("first_turn_responds");
-		store.close();
-	});
-
-	it("xray.judge updates replay_meta", () => {
-		const { store, replayId } = setupReplay();
-		const req = makeOtlpRequest({
-			replayId,
-			spans: [
-				{
-					name: "xray.judge",
-					attributes: {
-						"xray.judge.status": "failed",
-						"xray.judge.score": 12,
-						"xray.judge.reason": "missed the booking",
-					},
-				},
-			],
-		});
-		ingestOtlpTraces(store, req);
-		const meta = store.db.select().from(replayMeta).where(eq(replayMeta.replayId, replayId)).get();
-		expect(meta?.judgeStatus).toBe("failed");
-		expect(meta?.judgeScore).toBe(12);
-		store.close();
-	});
-
-	it("xray.turn upserts a replay_turn row", () => {
-		const { store, replayId } = setupReplay();
-		const req = makeOtlpRequest({
-			replayId,
-			spans: [
-				{
-					name: "xray.turn",
-					attributes: {
-						"xray.turn.idx": 0,
-						"xray.turn.role": "agent",
-						"xray.turn.key": "a0",
-						"xray.turn.transcript": "hello back",
-					},
-				},
-			],
-		});
-		ingestOtlpTraces(store, req);
-		const turn = store.db
-			.select()
-			.from(replayTurns)
-			.where(eq(replayTurns.replayId, replayId))
-			.get();
-		expect(turn?.transcript).toBe("hello back");
-		expect(turn?.role).toBe("agent");
-		store.close();
+		expect(result.persistedSpans).toBe(5);
+		const rows = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
+		expect(rows).toHaveLength(5);
+		for (const r of rows) expect(r.vocabulary).toBe("xray");
 	});
 });
 
@@ -240,8 +185,6 @@ describe("ingestOtlpTraces — limits", () => {
 
 	it("counts over-cap spans into partialSuccess.rejectedSpans without rolling back under-cap inserts in the same batch", () => {
 		const { store, replayId } = setupReplay();
-		// Pre-fill close to the cap directly through SQL — much faster than
-		// driving MAX_SPANS_PER_REPLAY ingest cycles.
 		const bulk: {
 			replayId: string;
 			traceId: string;
@@ -264,7 +207,6 @@ describe("ingestOtlpTraces — limits", () => {
 				attributesJson: "{}",
 			});
 		}
-		// chunk in batches; sqlite has a parameter limit per statement
 		for (let i = 0; i < bulk.length; i += 250) {
 			store.db
 				.insert(spans)

@@ -72,6 +72,9 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 50 * 1024 * 1024
 
 ReplayStatus: TypeAlias = Literal["completed", "failed"]
+ReplayLifecycleState: TypeAlias = Literal[
+    "pending", "running", "recording_uploaded", "analyzing", "completed", "failed"
+]
 
 
 # ─── Wire payloads (snake_case) ───────────────────────────────────────
@@ -80,7 +83,6 @@ ReplayStatus: TypeAlias = Literal["completed", "failed"]
 class ReplayCreateBody(TypedDict):
     conversation_id: str
     conversation_version: str
-    modality: Literal["voice"]
     run_config: NotRequired[dict[str, JsonValue]]
 
 
@@ -98,7 +100,11 @@ class JudgePatchBody(TypedDict):
 
 
 class ReplayPatchBody(TypedDict):
-    status: ReplayStatus
+    """PATCH /v1/replays/:id body. Server's new schema accepts only
+    `lifecycle_state` / `failure_reason` / `finished_at`; unknown keys
+    (e.g. `judge`) are silently stripped server-side and have no effect."""
+
+    lifecycle_state: ReplayLifecycleState
     failure_reason: NotRequired[FailureReason]
     judge: NotRequired[JudgePatchBody]
 
@@ -151,7 +157,6 @@ async def run(
         create_body: ReplayCreateBody = {
             "conversation_id": conversation.id,
             "conversation_version": conversation.version,
-            "modality": "voice",
         }
         if run_config is not None:
             create_body["run_config"] = run_config.to_wire()
@@ -221,6 +226,37 @@ async def run(
             except Exception:
                 logger.exception("audio upload errored on replay %s", replay_id)
                 status, failure_reason = "failed", "runtime_error"
+
+        # 5b. Kick off server-side VAD/turn analysis if we uploaded audio.
+        # Best-effort: a 4xx / 5xx here (e.g. server in dev mode, endpoint not
+        # yet deployed, or replay state mismatch) demotes us to the legacy
+        # path — the assertions below still get the old per-turn enrichment
+        # view without VAD-derived turn boundaries.
+        analysis_kicked = False
+        if (
+            status == "completed"
+            and runtime_result is not None
+            and runtime_result.full_audio_path is not None
+        ):
+            try:
+                r = await client.post(f"/v1/replays/{replay_id}/analyze")
+                if r.is_success:
+                    analysis_kicked = True
+                else:
+                    logger.warning(
+                        "POST /v1/replays/%s/analyze returned %s; skipping VAD wait",
+                        replay_id,
+                        r.status_code,
+                    )
+            except Exception:
+                logger.warning("could not start analysis for replay %s", replay_id, exc_info=True)
+
+        # 5c. Wait for analysis to terminate via SSE. Also best-effort.
+        if analysis_kicked:
+            try:
+                await _wait_for_analysis(client, replay_id)
+            except Exception:
+                logger.warning("SSE wait failed for replay %s", replay_id, exc_info=True)
 
         # 6. Fetch the rich per-turn view and merge into each agent
         # response so assertions see tool_calls / model_usage / stage
@@ -296,7 +332,7 @@ def _build_patch_body(
     failure_reason: FailureReason | None,
     judge: JudgeOutcome | None,
 ) -> ReplayPatchBody:
-    body: ReplayPatchBody = {"status": status}
+    body: ReplayPatchBody = {"lifecycle_state": status}
     if failure_reason is not None:
         body["failure_reason"] = failure_reason
     if judge is not None:
@@ -313,6 +349,57 @@ def _judge_to_wire(judge: JudgeOutcome) -> JudgePatchBody:
     if judge.error is not None:
         body["error"] = judge.error
     return body
+
+
+class _SseStateData(BaseModel):
+    """Inbound shape for the SSE `state` event's JSON body."""
+
+    lifecycle_state: str | None = None
+
+
+def _is_terminal_state_payload(raw: str) -> bool:
+    """Best-effort parse of the SSE `state` event's JSON body. Returns True
+    iff the payload's `lifecycle_state` is `completed` or `failed`.
+    """
+    try:
+        decoded = _SseStateData.model_validate_json(raw)
+    except (ValueError, ValidationError):
+        return False
+    return decoded.lifecycle_state == "completed" or decoded.lifecycle_state == "failed"
+
+
+async def _wait_for_analysis(
+    client: httpx.AsyncClient,
+    replay_id: str,
+    *,
+    timeout_s: float = 300.0,
+) -> None:
+    """Stream `GET /v1/replays/:id/events` and return when the replay reaches
+    a terminal lifecycle (`completed` or `failed`). Pure-stdlib SSE parser —
+    one `event: <type>\\n` line followed by one `data: <json>\\n` line, blank
+    line terminates the message. Heartbeats (`:` prefix) are skipped.
+    """
+    async with client.stream(
+        "GET",
+        f"/v1/replays/{replay_id}/events",
+        timeout=timeout_s,
+        headers={"accept": "text/event-stream"},
+    ) as response:
+        response.raise_for_status()
+        event_type: str | None = None
+        async for raw_line in response.aiter_lines():
+            line = raw_line.rstrip("\r")
+            if line == "":
+                event_type = None
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event_type = line[len("event:") :].strip()
+                continue
+            if line.startswith("data:") and event_type == "state":
+                if _is_terminal_state_payload(line[len("data:") :].strip()):
+                    return
 
 
 async def _upload_replay_audio(
