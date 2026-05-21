@@ -52,6 +52,36 @@ Every behavior lands red → green → refactor. The failing test goes in *first
 
 `pnpm docker:smoke` is the **single most important** local check — it is exactly what CI runs before publishing. If it passes locally, it passes in CI.
 
+## Parallel worktrees
+
+Working on two branches at once? Use a git worktree so each branch gets its own
+`pnpm dev` container, host port, SQLite file, and `node_modules`:
+
+```bash
+bash scripts/new-worktree.sh feat/foo            # base = main
+bash scripts/new-worktree.sh fix/bar develop     # base = develop
+```
+
+The script creates `../xray-feat-foo` (sibling of this repo), checks out the
+new branch, copies your `.env`, picks the lowest free port at or above 8081,
+appends `HOST_PORT` + `COMPOSE_PROJECT_NAME` to the new `.env`, and runs
+`pnpm install --frozen-lockfile`. `compose.dev.yaml` reads those two vars, so
+each worktree's `pnpm dev` binds a distinct host port and gets its own named
+Docker volumes (`xray-feat-foo_dev_data`, `xray-feat-foo_dev_node_modules`).
+
+The main checkout still binds `8080:8080` and names its container `xray-dev`
+when `HOST_PORT` and `COMPOSE_PROJECT_NAME` are unset — no change to the
+default loop.
+
+Teardown:
+
+```bash
+cd ../xray-feat-foo
+docker compose -f compose.dev.yaml down -v     # wipes the worktree's volumes
+cd -
+git worktree remove ../xray-feat-foo
+```
+
 ## Code layout
 
 - **Vertical slices, not technical layers.** `src/adapters/elevenlabs/`, `src/graph/`, `src/inspector/` — each folder owns its own components, hooks, types, helpers. No top-level `components/`, `hooks/`, `services/`, `utils/` god-folders.
