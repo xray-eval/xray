@@ -13,6 +13,7 @@ import {
 import type { Store } from "@/server/store/store.ts";
 import type {
 	ModelUsageRow,
+	ReplayFailureReason,
 	ReplayLifecycleState,
 	ReplayRow,
 	ReplayTurnRow,
@@ -263,6 +264,48 @@ export function findReplay(store: Store, id: string): ReplayRow | undefined {
 
 export function replayExists(store: Store, id: string): boolean {
 	return findReplay(store, id) !== undefined;
+}
+
+export interface MarkReplayFailedOptions {
+	now?: () => string;
+}
+
+/**
+ * Stamp a replay's row with `lifecycle_state='failed'` + reason + cleared
+ * `analysis_step` + `finished_at`, then emit the matching SSE events.
+ *
+ * Idempotent and terminal-safe: if the row is already in a terminal state
+ * (`completed` or `failed`), this is a no-op — no DB write, no SSE emit. That
+ * matters because bunqueue's `failed` event can fire more than once across a
+ * job's retry lifecycle, and a terminal `completed` row must not be unwound
+ * by a stray late failure.
+ *
+ * Silent on a missing row — the bunqueue onFailed callback must not throw on
+ * a replay whose row vanished (e.g. operator wiped /data mid-flight).
+ */
+export function markReplayFailed(
+	store: Store,
+	events: ReplayEvents,
+	replayId: string,
+	reason: ReplayFailureReason,
+	opts: MarkReplayFailedOptions = {},
+): void {
+	const existing = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+	if (existing === undefined) return;
+	if (existing.lifecycleState === "completed" || existing.lifecycleState === "failed") return;
+	const now = opts.now ?? (() => new Date().toISOString());
+	store.db
+		.update(replays)
+		.set({
+			lifecycleState: "failed",
+			failureReason: reason,
+			analysisStep: null,
+			finishedAt: now(),
+		})
+		.where(eq(replays.id, replayId))
+		.run();
+	events.emit(replayId, { type: "failed", reason });
+	events.emit(replayId, { type: "state", lifecycle_state: "failed", analysis_step: null });
 }
 
 /**

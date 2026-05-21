@@ -334,22 +334,17 @@ export function createReplaysRouter(
 					}
 				};
 
-				// Initial state — clients pick up the row as it stands when they
-				// connect, without having to GET /replays/:id first.
-				const initialState: {
-					type: "state";
-					lifecycle_state: string;
-					analysis_step: string | null;
-				} = {
-					type: "state",
-					lifecycle_state: replay.lifecycleState,
-					analysis_step: replay.analysisStep,
-				};
-				await stream.writeSSE({ event: "state", data: JSON.stringify(initialState) });
-				if (replay.lifecycleState === "completed" || replay.lifecycleState === "failed") {
-					return;
-				}
-
+				// Subscribe BEFORE the awaited initial-state write. The initial
+				// `await stream.writeSSE(...)` yields the event loop; if we
+				// subscribed after, any event the worker emitted during that
+				// gap would be dropped (the dispatcher in ReplayEvents has no
+				// buffering — events with zero listeners are lost). Hono's
+				// stream serializes queued writes in FIFO order, so a worker
+				// event that fires between subscribe and the initial write is
+				// queued behind it. The duplicate `state` event the listener
+				// may produce immediately after the initial state is shape-
+				// identical to the initial event — idempotent for the SDK,
+				// harmless for the inspector.
 				const unsubscribe = events.subscribe(id, (event) => {
 					void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).then(() => {
 						if (event.type === "completed" || event.type === "failed") {
@@ -363,6 +358,25 @@ export function createReplaysRouter(
 					cleanup();
 					unsubscribe();
 				});
+
+				// Initial state — clients pick up the row as it stands when they
+				// connect, without having to GET /replays/:id first.
+				const initialState: {
+					type: "state";
+					lifecycle_state: string;
+					analysis_step: string | null;
+				} = {
+					type: "state",
+					lifecycle_state: replay.lifecycleState,
+					analysis_step: replay.analysisStep,
+				};
+				await stream.writeSSE({ event: "state", data: JSON.stringify(initialState) });
+
+				if (replay.lifecycleState === "completed" || replay.lifecycleState === "failed") {
+					cleanup();
+					unsubscribe();
+					return;
+				}
 
 				heartbeat = setInterval(() => {
 					void stream.write(": heartbeat\n\n");

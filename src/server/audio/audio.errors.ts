@@ -77,3 +77,27 @@ export class InvalidWavFormatError extends AudioError {
 		this.reason = reason;
 	}
 }
+
+/**
+ * Caller tried to upload audio for a replay whose `lifecycle_state` doesn't
+ * allow it. Allowed states: `pending`, `running`, `recording_uploaded`. The
+ * forbidden states are:
+ *   - `analyzing` — a worker is mid-run; a fresh WAV would race the VAD pass
+ *     and the worker's transaction.
+ *   - `completed` / `failed` — terminal; we don't unwind, and a re-upload
+ *     would leave stale `replay_turns` + `speech_segments` (the previous
+ *     analysis's output) dangling until somebody invoked /analyze again.
+ *
+ * Maps to HTTP 409. Mirrors the PATCH-side `ReplayLifecycleTransitionError`
+ * guard so both write paths are consistent.
+ */
+export class ReplayUploadStateError extends AudioError {
+	readonly replayId: string;
+	readonly currentState: string;
+	constructor(replayId: string, currentState: string) {
+		super(`Replay "${replayId}" is in state "${currentState}" — upload not allowed`);
+		this.name = "ReplayUploadStateError";
+		this.replayId = replayId;
+		this.currentState = currentState;
+	}
+}

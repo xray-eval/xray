@@ -7,11 +7,13 @@ import * as v from "valibot";
 import { findReplay } from "@/server/replays/replays.service.ts";
 import { replays } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
+import type { ReplayLifecycleState } from "@/server/store/types.ts";
 
 import {
 	AudioNotUploadedError,
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
+	ReplayUploadStateError,
 } from "./audio.errors.ts";
 import type { AudioContentType, AudioExtension, AudioStream } from "./audio.types.ts";
 import {
@@ -20,21 +22,35 @@ import {
 	EXTENSION_TO_RESPONSE_CONTENT_TYPE,
 } from "./audio.types.ts";
 
+// States in which a fresh audio upload is safe. `analyzing` is excluded
+// because the worker is reading the previous WAV and writing derived rows in
+// the same transaction; overwriting underneath it would race. `completed` /
+// `failed` are excluded because they're terminal — unwinding lifecycle would
+// leave stale `replay_turns` + `speech_segments` from the previous analysis.
+const UPLOAD_ALLOWED_STATES: readonly ReplayLifecycleState[] = [
+	"pending",
+	"running",
+	"recording_uploaded",
+];
+
 export async function uploadReplayAudio(
 	store: Store,
 	audioRoot: string,
 	params: { replayId: string; contentType: AudioContentType; bytes: Uint8Array<ArrayBuffer> },
 ): Promise<string> {
 	const { replayId, contentType, bytes } = params;
-	if (findReplay(store, replayId) === undefined) {
+	const existing = findReplay(store, replayId);
+	if (existing === undefined) {
 		throw new AudioReplayNotFoundError(replayId);
+	}
+	if (!UPLOAD_ALLOWED_STATES.includes(existing.lifecycleState)) {
+		throw new ReplayUploadStateError(replayId, existing.lifecycleState);
 	}
 	const extension = CONTENT_TYPE_TO_EXTENSION[contentType];
 	const relativePath = replayRelativePath(replayId, extension);
 	const absolutePath = resolveInsideRoot(audioRoot, relativePath);
 
-	const previous = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
-	const previousAudioPath = previous?.audioPath ?? null;
+	const previousAudioPath = existing.audioPath;
 
 	await mkdir(dirname(absolutePath), { recursive: true });
 	await writeFile(absolutePath, bytes);

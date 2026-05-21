@@ -22,6 +22,7 @@ import {
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
 	InvalidAudioPathError,
+	ReplayUploadStateError,
 	UnsupportedAudioContentTypeError,
 } from "./audio.errors.ts";
 import { readReplayAudio, uploadReplayAudio } from "./audio.service.ts";
@@ -78,6 +79,13 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 					description: "Replay not found.",
 					content: {
 						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
+					},
+				},
+				"409": {
+					description:
+						"Replay's lifecycle_state is not one of `pending` / `running` / `recording_uploaded` (the only states in which a fresh audio upload is safe). Caller must wait for analysis to finish or accept the current replay as final.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
 					},
 				},
 				"413": {
@@ -179,6 +187,16 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 			)
 			.with(P.instanceOf(AudioNotUploadedError), (e) =>
 				c.json({ error: "audio_not_found", replay_id: e.replayId }, 404),
+			)
+			.with(P.instanceOf(ReplayUploadStateError), (e) =>
+				c.json(
+					{
+						error: "replay_upload_state_invalid",
+						replay_id: e.replayId,
+						current_state: e.currentState,
+					},
+					409,
+				),
 			)
 			.with(P.instanceOf(AudioPathOutsideRootError), (e) => {
 				console.error("audio path resolved outside root", e);

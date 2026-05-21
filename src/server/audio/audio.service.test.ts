@@ -10,6 +10,7 @@ import {
 	AudioNotUploadedError,
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
+	ReplayUploadStateError,
 } from "./audio.errors.ts";
 import { readReplayAudio, uploadReplayAudio } from "./audio.service.ts";
 import { fakeAudioBytes, makeTempAudioRoot, seedReplayForAudio } from "./audio.test-utils.ts";
@@ -82,6 +83,94 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 				bytes: fakeAudioBytes(),
 			}),
 		).rejects.toBeInstanceOf(AudioReplayNotFoundError);
+	});
+});
+
+describe("uploadReplayAudio — lifecycle guard", () => {
+	it("allows upload in `running` state (driver retries before analysis)", async () => {
+		const { replayId } = seedReplayForAudio(store);
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "running" })
+			.where(eq(replays.id, replayId))
+			.run();
+		await expect(
+			uploadReplayAudio(store, audio.path, {
+				replayId,
+				contentType: "audio/wav",
+				bytes: fakeAudioBytes(),
+			}),
+		).resolves.toBeString();
+	});
+
+	it("allows re-upload in `recording_uploaded` (overwrite before /analyze)", async () => {
+		const { replayId } = seedReplayForAudio(store);
+		await uploadReplayAudio(store, audio.path, {
+			replayId,
+			contentType: "audio/wav",
+			bytes: fakeAudioBytes(1),
+		});
+		// Now in recording_uploaded — re-upload should still work (e.g.
+		// driver retries after a network blip).
+		await expect(
+			uploadReplayAudio(store, audio.path, {
+				replayId,
+				contentType: "audio/wav",
+				bytes: fakeAudioBytes(2),
+			}),
+		).resolves.toBeString();
+	});
+
+	it("rejects upload while `analyzing` (worker is running, would race)", async () => {
+		const { replayId } = seedReplayForAudio(store);
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "analyzing", analysisStep: "vad", jobId: "j-1" })
+			.where(eq(replays.id, replayId))
+			.run();
+		const err = await captureThrown(() =>
+			uploadReplayAudio(store, audio.path, {
+				replayId,
+				contentType: "audio/wav",
+				bytes: fakeAudioBytes(),
+			}),
+		);
+		expect(err).toBeInstanceOf(ReplayUploadStateError);
+		if (!(err instanceof ReplayUploadStateError)) throw err;
+		expect(err.replayId).toBe(replayId);
+		expect(err.currentState).toBe("analyzing");
+	});
+
+	it("rejects upload from terminal `completed`", async () => {
+		const { replayId } = seedReplayForAudio(store);
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "completed" })
+			.where(eq(replays.id, replayId))
+			.run();
+		await expect(
+			uploadReplayAudio(store, audio.path, {
+				replayId,
+				contentType: "audio/wav",
+				bytes: fakeAudioBytes(),
+			}),
+		).rejects.toBeInstanceOf(ReplayUploadStateError);
+	});
+
+	it("rejects upload from terminal `failed`", async () => {
+		const { replayId } = seedReplayForAudio(store);
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "failed", failureReason: "max_attempts_exceeded" })
+			.where(eq(replays.id, replayId))
+			.run();
+		await expect(
+			uploadReplayAudio(store, audio.path, {
+				replayId,
+				contentType: "audio/wav",
+				bytes: fakeAudioBytes(),
+			}),
+		).rejects.toBeInstanceOf(ReplayUploadStateError);
 	});
 });
 

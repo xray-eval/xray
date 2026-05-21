@@ -25,8 +25,10 @@ const VAD_SAMPLE_RATE = 16_000;
  *   - flip `replays.lifecycle_state` to `completed`
  *
  * Errors throw `JobProcessingError`; bunqueue's retry policy handles transient
- * IO. After max attempts the wrapper's `onFailed` hook flips the replay to
- * `failed` with a reason mapped from the bunqueue DLQ.
+ * IO. Once retries are exhausted, bunqueue fires its `failed` event — the
+ * runner's `onFailed` hook (wired in `src/server/main.ts`) calls
+ * `markReplayFailed` to stamp `lifecycle_state='failed'` +
+ * `failure_reason='max_attempts_exceeded'` on the row.
  */
 export function makeAnalyzeProcessor(
 	store: Store,

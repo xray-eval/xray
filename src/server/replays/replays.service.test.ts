@@ -1,5 +1,8 @@
+import { eq } from "drizzle-orm";
+
 import { upsertConversation } from "@/server/conversations/conversations.service.ts";
 import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
+import { replays } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import {
@@ -7,11 +10,14 @@ import {
 	ReplayLifecycleTransitionError,
 	ReplayNotFoundError,
 } from "./replays.errors.ts";
+import type { ReplayEvent } from "./replays.events.ts";
+import { makeReplayEvents } from "./replays.events.ts";
 import {
 	compareReplays,
 	createReplay,
 	getReplay,
 	listReplaysForConversation,
+	markReplayFailed,
 	updateReplay,
 } from "./replays.service.ts";
 import { makeCreateReplayRequest, seedReplay } from "./replays.test-utils.ts";
@@ -104,6 +110,91 @@ describe("updateReplay", () => {
 			ReplayLifecycleTransitionError,
 		);
 		expect(() => updateReplay(store, id, { lifecycle_state: "failed" })).not.toThrow();
+		store.close();
+	});
+});
+
+describe("markReplayFailed", () => {
+	it("writes lifecycle_state='failed' + reason + finished_at and emits SSE events", () => {
+		const store = makeTempStore();
+		const id = seedReplay(store);
+		// Park the row in `analyzing` to mimic a job that started before the
+		// worker exhausted retries.
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "analyzing", analysisStep: "vad", jobId: "job-1" })
+			.where(eq(replays.id, id))
+			.run();
+		const events = makeReplayEvents();
+		const seen: ReplayEvent[] = [];
+		events.subscribe(id, (e) => seen.push(e));
+
+		markReplayFailed(store, events, id, "max_attempts_exceeded", {
+			now: () => "2026-05-21T12:34:56.000Z",
+		});
+
+		const row = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		expect(row?.lifecycleState).toBe("failed");
+		expect(row?.failureReason).toBe("max_attempts_exceeded");
+		expect(row?.analysisStep).toBeNull();
+		expect(row?.finishedAt).toBe("2026-05-21T12:34:56.000Z");
+		expect(seen).toEqual([
+			{ type: "failed", reason: "max_attempts_exceeded" },
+			{ type: "state", lifecycle_state: "failed", analysis_step: null },
+		]);
+		store.close();
+	});
+
+	it("is idempotent: second call on a row already in `failed` is a no-op (no SSE, no finished_at clobber)", () => {
+		const store = makeTempStore();
+		const id = seedReplay(store);
+		const events = makeReplayEvents();
+		markReplayFailed(store, events, id, "max_attempts_exceeded", {
+			now: () => "2026-05-21T12:00:00.000Z",
+		});
+		const afterFirst = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		const seen: ReplayEvent[] = [];
+		events.subscribe(id, (e) => seen.push(e));
+
+		markReplayFailed(store, events, id, "stalled", {
+			now: () => "2026-05-21T13:00:00.000Z",
+		});
+
+		const afterSecond = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		expect(afterSecond?.finishedAt).toBe(afterFirst?.finishedAt);
+		expect(afterSecond?.failureReason).toBe("max_attempts_exceeded");
+		expect(seen).toEqual([]);
+		store.close();
+	});
+
+	it("refuses to unwind a row already in `completed`", () => {
+		const store = makeTempStore();
+		const id = seedReplay(store);
+		updateReplay(store, id, {
+			lifecycle_state: "completed",
+			finished_at: "2026-05-21T10:00:00.000Z",
+		});
+		const events = makeReplayEvents();
+		const seen: ReplayEvent[] = [];
+		events.subscribe(id, (e) => seen.push(e));
+
+		markReplayFailed(store, events, id, "max_attempts_exceeded");
+
+		const row = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		expect(row?.lifecycleState).toBe("completed");
+		expect(row?.failureReason).toBeNull();
+		expect(seen).toEqual([]);
+		store.close();
+	});
+
+	it("silently returns when the replay id does not exist", () => {
+		const store = makeTempStore();
+		const events = makeReplayEvents();
+		// No throw — the bunqueue onFailed callback should not blow up on a
+		// vanished row (e.g. operator deleted the volume mid-flight).
+		expect(() =>
+			markReplayFailed(store, events, "00000000-0000-0000-0000-0000000000ff", "worker_lost"),
+		).not.toThrow();
 		store.close();
 	});
 });

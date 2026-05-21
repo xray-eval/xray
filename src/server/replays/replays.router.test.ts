@@ -12,6 +12,27 @@ import { createReplaysRouter } from "./replays.router.ts";
 import { makeCreateReplayRequest, seedReplay } from "./replays.test-utils.ts";
 import { describe, expect, it } from "bun:test";
 
+async function readSseUntilCompleted(
+	body: ReadableStream<Uint8Array>,
+	timeoutMs = 3_000,
+): Promise<string> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	const deadline = Date.now() + timeoutMs;
+	let buf = "";
+	try {
+		while (Date.now() < deadline) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buf += decoder.decode(value, { stream: true });
+			if (buf.includes("event: completed")) break;
+		}
+	} finally {
+		await reader.cancel().catch(() => undefined);
+	}
+	return buf;
+}
+
 function makeApp() {
 	const store = makeTempStore();
 	const jobRunner = makeFakeJobRunner();
@@ -120,6 +141,39 @@ describe("GET /v1/replays/:id", () => {
 	it("returns 404 for unknown id", async () => {
 		const { app } = makeApp();
 		const res = await app.request("/v1/replays/00000000-0000-0000-0000-000000000099");
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("GET /v1/replays/:id/events (SSE)", () => {
+	it("delivers an event emitted right after the request opens (subscribe-before-write race fix)", async () => {
+		const { app, store, events } = makeApp();
+		const id = seedReplay(store);
+
+		const res = await app.request(`/v1/replays/${id}/events`);
+		expect(res.status).toBe(200);
+		expect(res.body).not.toBeNull();
+		const body = res.body;
+		if (body === null) throw new Error("missing SSE body");
+
+		// `app.request` resolves once the handler's response is shaped (status +
+		// headers); the body stream stays open. By this point the SSE handler
+		// must have already subscribed — otherwise this emit lands with zero
+		// listeners and the test reads only the initial state.
+		events.emit(id, { type: "progress", percent: 10, step: "vad" });
+		events.emit(id, { type: "state", lifecycle_state: "completed", analysis_step: null });
+		events.emit(id, { type: "completed", turns_written: 1, segments_written: 2 });
+
+		const text = await readSseUntilCompleted(body);
+		expect(text).toContain('"lifecycle_state":"pending"'); // initial
+		expect(text).toContain('"percent":10'); // emitted progress
+		expect(text).toContain('"lifecycle_state":"completed"'); // emitted state
+		expect(text).toContain('"turns_written":1'); // emitted completed
+	});
+
+	it("returns 404 for unknown id", async () => {
+		const { app } = makeApp();
+		const res = await app.request("/v1/replays/00000000-0000-0000-0000-000000000099/events");
 		expect(res.status).toBe(404);
 	});
 });

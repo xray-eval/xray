@@ -9,6 +9,7 @@ import { loadEnv } from "./env/env.ts";
 import { makeAnalyzeProcessor } from "./jobs/analyze-replay/analyze-replay.processor.ts";
 import { createJobRunner } from "./jobs/jobs.bunqueue.ts";
 import { makeReplayEvents } from "./replays/replays.events.ts";
+import { markReplayFailed } from "./replays/replays.service.ts";
 import { createApp } from "./server.ts";
 import { openStoreFromEnv } from "./store/store.ts";
 
@@ -29,8 +30,12 @@ const jobRunner = createJobRunner({
 	dataPath: bunqueuePath,
 	processor: makeAnalyzeProcessor(store, audioRoot, events),
 	onFailed: (replayId, error) => {
-		events.emit(replayId, { type: "failed", reason: error.message });
-		events.emit(replayId, { type: "state", lifecycle_state: "failed", analysis_step: null });
+		// bunqueue only fires `failed` once retries are exhausted (see
+		// jobs.bunqueue.ts retry config). Map to `max_attempts_exceeded`
+		// — the one ReplayFailureReason value that's faithful without
+		// substring-matching the error message.
+		console.error(`analyze-replay job for replay ${replayId} failed`, error);
+		markReplayFailed(store, events, replayId, "max_attempts_exceeded");
 	},
 });
 

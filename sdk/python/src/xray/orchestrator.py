@@ -252,11 +252,27 @@ async def run(
                 logger.warning("could not start analysis for replay %s", replay_id, exc_info=True)
 
         # 5c. Wait for analysis to terminate via SSE. Also best-effort.
+        # If the server stamped the row `failed` (e.g. bunqueue exhausted
+        # retries → onFailed → markReplayFailed), we must flip the SDK-side
+        # status to match: the server's `updateReplay` blocks
+        # terminal→different-terminal PATCHes with 409, so PATCHing
+        # `lifecycle_state='completed'` on a row already `failed` would
+        # raise. Don't override `failure_reason` — the server already wrote
+        # `max_attempts_exceeded`, and our PATCH omits the field so the
+        # server's value is preserved.
         if analysis_kicked:
             try:
-                await _wait_for_analysis(client, replay_id)
+                terminal = await _wait_for_analysis(client, replay_id)
             except Exception:
                 logger.warning("SSE wait failed for replay %s", replay_id, exc_info=True)
+            else:
+                if terminal == "failed" and status == "completed":
+                    logger.warning(
+                        "server marked replay %s `failed` during analysis; "
+                        "demoting SDK status to match",
+                        replay_id,
+                    )
+                    status = "failed"
 
         # 6. Fetch the rich per-turn view and merge into each agent
         # response so assertions see tool_calls / model_usage / stage
@@ -357,15 +373,20 @@ class _SseStateData(BaseModel):
     lifecycle_state: str | None = None
 
 
-def _is_terminal_state_payload(raw: str) -> bool:
-    """Best-effort parse of the SSE `state` event's JSON body. Returns True
-    iff the payload's `lifecycle_state` is `completed` or `failed`.
+def _terminal_state_from_payload(raw: str) -> Literal["completed", "failed"] | None:
+    """Best-effort parse of the SSE `state` event's JSON body. Returns the
+    terminal lifecycle if the payload's `lifecycle_state` is `completed` or
+    `failed`, ``None`` otherwise (including on parse failure).
     """
     try:
         decoded = _SseStateData.model_validate_json(raw)
     except (ValueError, ValidationError):
-        return False
-    return decoded.lifecycle_state == "completed" or decoded.lifecycle_state == "failed"
+        return None
+    if decoded.lifecycle_state == "completed":
+        return "completed"
+    if decoded.lifecycle_state == "failed":
+        return "failed"
+    return None
 
 
 async def _wait_for_analysis(
@@ -373,11 +394,21 @@ async def _wait_for_analysis(
     replay_id: str,
     *,
     timeout_s: float = 300.0,
-) -> None:
-    """Stream `GET /v1/replays/:id/events` and return when the replay reaches
-    a terminal lifecycle (`completed` or `failed`). Pure-stdlib SSE parser —
-    one `event: <type>\\n` line followed by one `data: <json>\\n` line, blank
-    line terminates the message. Heartbeats (`:` prefix) are skipped.
+) -> Literal["completed", "failed"] | None:
+    """Stream `GET /v1/replays/:id/events` and return the terminal lifecycle
+    the server reached (`"completed"` or `"failed"`). Returns ``None`` if the
+    stream closed without ever emitting a terminal `state` event.
+
+    The caller uses the return value to keep the SDK-side `status` consistent
+    with the server's row: if VAD failed, the server has already stamped
+    `lifecycle_state='failed'` + `failure_reason='max_attempts_exceeded'` via
+    `markReplayFailed`, and the subsequent PATCH must echo `'failed'` —
+    otherwise the server's `ReplayLifecycleTransitionError` guard rejects the
+    PATCH with a 409.
+
+    Pure-stdlib SSE parser — one `event: <type>\\n` line followed by one
+    `data: <json>\\n` line, blank line terminates the message. Heartbeats
+    (`:` prefix) are skipped.
     """
     async with client.stream(
         "GET",
@@ -397,12 +428,11 @@ async def _wait_for_analysis(
             if line.startswith("event:"):
                 event_type = line[len("event:") :].strip()
                 continue
-            if (
-                line.startswith("data:")
-                and event_type == "state"
-                and _is_terminal_state_payload(line[len("data:") :].strip())
-            ):
-                return
+            if line.startswith("data:") and event_type == "state":
+                terminal = _terminal_state_from_payload(line[len("data:") :].strip())
+                if terminal is not None:
+                    return terminal
+        return None
 
 
 async def _upload_replay_audio(

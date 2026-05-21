@@ -8,6 +8,10 @@ export type AnalyzeProcessor = (payload: AnalyzeReplayPayload) => Promise<Analyz
 export interface JobRunnerOptions {
 	dataPath: string;
 	concurrency?: number;
+	/** Override the default (3) bunqueue retry count. Tests use 1 to skip retries. */
+	retryAttempts?: number;
+	/** Override the default (2000ms) bunqueue retry base delay. Tests use 10ms. */
+	retryDelayMs?: number;
 	processor: AnalyzeProcessor;
 	onProgress?: (replayId: string, percent: number, step: ProgressStep | null) => void;
 	onCompleted?: (replayId: string, result: AnalyzeReplayResult) => void;
@@ -36,12 +40,25 @@ const RETRY_DELAY_MS = 2000;
 export function createJobRunner(opts: JobRunnerOptions): JobRunner {
 	const jobIdToReplayId = new Map<string, string>();
 
+	const retryAttempts = opts.retryAttempts ?? RETRY_ATTEMPTS;
+	const retryDelayMs = opts.retryDelayMs ?? RETRY_DELAY_MS;
 	const queue = new Bunqueue<AnalyzeReplayPayload, AnalyzeReplayResult>(QUEUE_NAME, {
 		embedded: true,
 		dataPath: opts.dataPath,
 		concurrency: opts.concurrency ?? DEFAULT_CONCURRENCY,
-		retry: { maxAttempts: RETRY_ATTEMPTS, strategy: "exponential", delay: RETRY_DELAY_MS },
+		retry: { maxAttempts: retryAttempts, strategy: "exponential", delay: retryDelayMs },
 		processor: async (job) => opts.processor(job.data),
+	});
+
+	// bunqueue's EventEmitter emits an `error` event (with `{context, jobId}`
+	// attached) when its internal SQLite writes fail — e.g. SQLITE_IOERR_VNODE,
+	// SQLITE_FULL, or a transient lock conflict during DLQ persistence. An
+	// unhandled `error` on an EventEmitter crashes the host process; bunqueue
+	// still proceeds to emit `failed` for the caller's onFailed hook even when
+	// its own DLQ write fails (see bunqueue/dist/client/worker/processor.js).
+	// We log + swallow so the lifecycle markFailed path still runs.
+	queue.on("error", (err: unknown) => {
+		console.error("bunqueue internal error (swallowed; onFailed still fires)", err);
 	});
 
 	if (opts.onProgress !== undefined) {
@@ -72,7 +89,7 @@ export function createJobRunner(opts: JobRunnerOptions): JobRunner {
 	return {
 		async enqueue(payload) {
 			try {
-				const job = await queue.add(JOB_NAME, payload, { attempts: RETRY_ATTEMPTS });
+				const job = await queue.add(JOB_NAME, payload, { attempts: retryAttempts });
 				jobIdToReplayId.set(job.id, payload.replayId);
 				return job.id;
 			} catch (cause) {
