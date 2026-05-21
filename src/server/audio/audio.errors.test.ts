@@ -4,6 +4,8 @@ import {
 	AudioNotUploadedError,
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
+	AudioTurnsInvariantError,
+	InvalidAudioExtensionError,
 	InvalidAudioPathError,
 	UnsupportedAudioContentTypeError,
 } from "./audio.errors.ts";
@@ -52,5 +54,30 @@ describe("audio errors", () => {
 	it("AudioReplayNotFoundError carries replayId", () => {
 		const e = new AudioReplayNotFoundError("r");
 		expect(e.replayId).toBe("r");
+	});
+
+	it("InvalidAudioExtensionError is an AudioError with relativePath + issues", () => {
+		const issues = [
+			{
+				kind: "schema",
+				type: "picklist",
+				input: "xyz",
+				expected: '"opus" | "ogg" | "webm" | "mp3" | "wav"',
+				received: '"xyz"',
+				message: "m",
+			},
+		] as const;
+		const e = new InvalidAudioExtensionError("r-123/replay.xyz", issues);
+		expect(e).toBeInstanceOf(AudioError);
+		expect(e.name).toBe("InvalidAudioExtensionError");
+		expect(e.relativePath).toBe("r-123/replay.xyz");
+		expect(e.issues).toBe(issues);
+	});
+
+	it("AudioTurnsInvariantError is an AudioError with reason", () => {
+		const e = new AudioTurnsInvariantError("buildTurn called with empty segments");
+		expect(e).toBeInstanceOf(AudioError);
+		expect(e.name).toBe("AudioTurnsInvariantError");
+		expect(e.reason).toBe("buildTurn called with empty segments");
 	});
 });

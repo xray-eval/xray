@@ -101,3 +101,36 @@ export class ReplayUploadStateError extends AudioError {
 		this.currentState = currentState;
 	}
 }
+
+/**
+ * Stored `audio_path` has an extension that doesn't match any known
+ * `AudioExtension`. Caller cannot trigger this on the upload path — the
+ * extension is derived server-side from a validated `AudioContentType`. It
+ * fires only on the read path when the DB row was hand-edited or written by
+ * an older schema. Maps to HTTP 500 alongside `AudioPathOutsideRootError`.
+ */
+export class InvalidAudioExtensionError extends AudioError {
+	readonly relativePath: string;
+	readonly issues: readonly BaseIssue<unknown>[];
+
+	constructor(relativePath: string, issues: readonly BaseIssue<unknown>[]) {
+		super(`Stored audio path "${relativePath}" has an unsupported extension`);
+		this.name = "InvalidAudioExtensionError";
+		this.relativePath = relativePath;
+		this.issues = issues;
+	}
+}
+
+/**
+ * `buildTurn` was called with zero segments, which the caller's loop is meant
+ * to prevent. Thrown only as a type-narrowing guard; never expected at
+ * runtime. Maps to HTTP 500.
+ */
+export class AudioTurnsInvariantError extends AudioError {
+	readonly reason: string;
+	constructor(reason: string) {
+		super(`Audio turns invariant violated: ${reason}`);
+		this.name = "AudioTurnsInvariantError";
+		this.reason = reason;
+	}
+}

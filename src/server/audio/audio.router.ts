@@ -21,6 +21,7 @@ import {
 	AudioNotUploadedError,
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
+	InvalidAudioExtensionError,
 	InvalidAudioPathError,
 	ReplayUploadStateError,
 	UnsupportedAudioContentTypeError,
@@ -200,6 +201,10 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 			)
 			.with(P.instanceOf(AudioPathOutsideRootError), (e) => {
 				console.error("audio path resolved outside root", e);
+				return c.json({ error: "store_failure" }, 500);
+			})
+			.with(P.instanceOf(InvalidAudioExtensionError), (e) => {
+				console.error("stored audio path has unsupported extension", e);
 				return c.json({ error: "store_failure" }, 500);
 			})
 			.with(P.instanceOf(Error), (e) => {

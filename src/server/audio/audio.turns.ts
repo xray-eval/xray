@@ -1,3 +1,4 @@
+import { AudioTurnsInvariantError } from "./audio.errors.ts";
 import type { DerivedTurn, VadSegment } from "./audio.types.ts";
 
 interface TaggedSegment {
@@ -67,8 +68,7 @@ function buildTurn(
 	const first = segments[0];
 	const last = segments[segments.length - 1];
 	if (first === undefined || last === undefined) {
-		// Unreachable: caller only invokes with non-empty segments.
-		throw new Error("buildTurn called with empty segments");
+		throw new AudioTurnsInvariantError("buildTurn called with empty segments");
 	}
 	return {
 		idx,

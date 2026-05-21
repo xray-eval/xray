@@ -13,6 +13,7 @@ import {
 	AudioNotUploadedError,
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
+	InvalidAudioExtensionError,
 	ReplayUploadStateError,
 } from "./audio.errors.ts";
 import type { AudioContentType, AudioExtension, AudioStream } from "./audio.types.ts";
@@ -109,5 +110,7 @@ function resolveInsideRoot(audioRoot: string, relativePath: string): string {
 }
 
 function extensionFromPath(path: string): AudioExtension {
-	return v.parse(AudioExtensionSchema, extname(path).slice(1));
+	const result = v.safeParse(AudioExtensionSchema, extname(path).slice(1));
+	if (!result.success) throw new InvalidAudioExtensionError(path, result.issues);
+	return result.output;
 }
