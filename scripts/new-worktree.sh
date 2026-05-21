@@ -85,6 +85,14 @@ else
     echo "error: branch name must match [A-Za-z0-9._/-]+" >&2
     exit 2
   fi
+  # The regex above is more permissive than git itself (it would accept
+  # `..foo`, `foo.lock`, `-foo`, `foo/`, etc.). Let git own ref validity so
+  # the failure surfaces here rather than as a cryptic error from
+  # `git worktree add -b` halfway through setup.
+  if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
+    echo "error: '$BRANCH' is not a valid git branch name" >&2
+    exit 2
+  fi
   BASE="${2:-main}"
   # `/` → `-` so `feat/foo` becomes one path segment.
   SLUG="${BRANCH//\//-}"
@@ -127,9 +135,17 @@ port_in_use() {
 }
 
 claimed_ports() {
+  # `local -` (bash 4.4+) scopes any shopt changes to this function so
+  # nullglob doesn't leak out and silently change globbing semantics
+  # later in the script.
+  local -
   shopt -s nullglob
   local env_file
-  for env_file in "$(dirname "$REPO_ROOT")"/xray-*/.env; do
+  # `xray*/.env` (not `xray-*/.env`) so the main checkout — typically
+  # named `xray` with no suffix — is also scanned. Otherwise a HOST_PORT
+  # set there can collide with a worktree picking the same number while
+  # `pnpm dev` isn't running (so the /dev/tcp probe sees nothing).
+  for env_file in "$(dirname "$REPO_ROOT")"/xray*/.env; do
     grep -E '^HOST_PORT=[0-9]+' "$env_file" 2>/dev/null | cut -d= -f2 || true
   done
 }
@@ -180,25 +196,46 @@ else
   # `--detach`: don't create a local branch here. `gh pr checkout` will fetch
   # the PR head, create a local branch from it, and `--force` past any
   # existing checkout. Works for both same-repo PRs and fork PRs.
+  #
+  # `gh pr checkout --force` *resets* an existing local branch named after
+  # the PR head if the dev happened to have one. If we later branch -D it
+  # during rollback we'd destroy commits the dev didn't ask us to delete.
+  # Resolve the head name first so we can tell whether the branch existed
+  # before this script touched anything.
+  PR_HEAD_BRANCH="$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)"
+  PR_BRANCH_PRE_EXISTED=0
+  if git show-ref --verify --quiet "refs/heads/${PR_HEAD_BRANCH}"; then
+    PR_BRANCH_PRE_EXISTED=1
+  fi
   git worktree add --detach "$DIR" HEAD
   CREATED_WORKTREE=1
   (cd "$DIR" && gh pr checkout "$PR_NUMBER" --force)
-  CREATED_BRANCH="$(cd "$DIR" && git rev-parse --abbrev-ref HEAD)"
+  # Only mark the branch as "ours to roll back" if we actually created it.
+  # If the dev already had it, leave CREATED_BRANCH empty so the trap
+  # leaves their branch alone — same logic applies to the teardown
+  # summary printed at the end.
+  if [[ $PR_BRANCH_PRE_EXISTED -eq 0 ]]; then
+    CREATED_BRANCH="$(cd "$DIR" && git rev-parse --abbrev-ref HEAD)"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
 # Seed .env
 #
 # Prefer copying the main checkout's .env (so existing local secrets carry
-# over); fall back to .env.example for a fresh clone. `cp -p` preserves
-# chmod 600 if the source was tightened. `.env` is gitignored, and worktrees
-# share the .git tree, so the new worktree inherits the same gitignore rule.
+# over); fall back to .env.example for a fresh clone. `cp -p` preserves the
+# source mode — but `.env.example` is checked in at 644, so a fresh clone
+# would land a world-readable .env. Force 600 after the copy so a later
+# `echo SECRET=... >> .env` doesn't sit at 644 until the dev remembers to
+# tighten it. `.env` is gitignored, and worktrees share the .git tree, so
+# the new worktree inherits the same gitignore rule.
 
 if [[ -f "${REPO_ROOT}/.env" ]]; then
   cp -p "${REPO_ROOT}/.env" "${DIR}/.env"
 else
   cp -p "${REPO_ROOT}/.env.example" "${DIR}/.env"
 fi
+chmod 600 "${DIR}/.env"
 
 {
   echo ""
@@ -219,9 +256,25 @@ fi
 # fresh Claude session opened in the new dir) can `cat` it deterministically
 # instead of scraping stdout interleaved with `pnpm install` output.
 
+# Teardown snippet differs by mode:
+#   branch mode — we created the branch, dev expects `branch -D` to remove it.
+#   pr mode     — the branch is the dev's iteration branch (and may have been
+#                 pre-existing). Use lowercase `-d` so git refuses if it would
+#                 destroy unmerged work; dev can decide whether to force.
+if [[ "$MODE" == "branch" ]]; then
+  DISPLAY_BRANCH="${CREATED_BRANCH}"
+  TEARDOWN_BRANCH_LINE="cd \"${REPO_ROOT}\" && git worktree remove \"${DIR}\" && git branch -D \"${CREATED_BRANCH}\""
+else
+  DISPLAY_BRANCH="${PR_HEAD_BRANCH}"
+  if [[ $PR_BRANCH_PRE_EXISTED -eq 1 ]]; then
+    DISPLAY_BRANCH="${DISPLAY_BRANCH} (pre-existed before this run)"
+  fi
+  TEARDOWN_BRANCH_LINE="cd \"${REPO_ROOT}\" && git worktree remove \"${DIR}\""$'\n'"  # keep PR branch (\"${PR_HEAD_BRANCH}\") around; run \`git branch -d ${PR_HEAD_BRANCH}\` once you no longer need it"
+fi
+
 SUMMARY="worktree ready
   path:        ${DIR}
-  branch:      ${CREATED_BRANCH}  (mode: ${MODE})
+  branch:      ${DISPLAY_BRANCH}  (mode: ${MODE})
   host port:   ${PORT}
   compose:     xray-${SLUG}
 
@@ -234,7 +287,7 @@ next:
 
 teardown:
   cd \"${DIR}\" && docker compose -f compose.dev.yaml down -v
-  cd \"${REPO_ROOT}\" && git worktree remove \"${DIR}\" && git branch -D \"${CREATED_BRANCH}\"
+  ${TEARDOWN_BRANCH_LINE}
 "
 
 printf '%s\n' "$SUMMARY"
