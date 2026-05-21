@@ -77,6 +77,7 @@ flowchart LR
 
     D1 -- "POST /v1/conversations<br/>POST /v1/replays<br/>POST /audio<br/>POST /analyze<br/>GET /events (SSE)<br/>PATCH /v1/replays/:id" --> CTL
     D2 -- "publish audio track" --> LKR
+    D2 -- "xray.turn spans<br/>(raw spans only —<br/>turn boundaries come<br/>from server-side VAD)" --> OTLP
     LKR -- "deliver audio +<br/>live transcripts" --> A2
     A2 -- "gen_ai.* / xray.stage.* /<br/>any OTEL spans" --> OTLP
 ```
@@ -206,7 +207,10 @@ span names: `xray.turn`, `xray.assertion`, `xray.judge`, `xray.stage.stt`,
 `spans` table for the inspector's timeline) but no longer produce
 structured rows — turn boundaries come from server-side VAD; assertion
 + judge are SDK-side evaluations until the server-side eval flow ships
-in a follow-up PR.
+in a follow-up PR. `xray.turn` is emitted by the **driver** (LiveKitDriver
+wraps each played user turn and each captured agent turn in an `xray.turn`
+span) — useful for the inspector's per-turn timeline view, redundant with
+the VAD-derived turn boundaries the server writes to `replay_turns`.
 
 **gen_ai semconv** (`gen-ai-semconv.ts`) — `gen_ai.tool` → `tool_calls`,
 `gen_ai.client.operation` → `model_usage`. **Langfuse** vocabulary

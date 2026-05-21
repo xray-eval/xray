@@ -1,19 +1,26 @@
 import { Bunqueue } from "bunqueue/client";
 
 import { JobEnqueueError } from "./jobs.errors.ts";
-import type { AnalyzeReplayPayload, AnalyzeReplayResult, ProgressStep } from "./jobs.types.ts";
+import type { AnalyzeReplayPayload, AnalyzeReplayResult } from "./jobs.types.ts";
 
 export type AnalyzeProcessor = (payload: AnalyzeReplayPayload) => Promise<AnalyzeReplayResult>;
 
 export interface JobRunnerOptions {
 	dataPath: string;
+	/**
+	 * Number of replays the worker processes in parallel. Default 1.
+	 *
+	 * Peak memory per worker is ~117 MB at the 50 MB WAV cap (raw bytes +
+	 * stereo Int16 channels + 16 kHz downsampled buffers + VAD frame array).
+	 * `concurrency * 120 MB` is a useful rule-of-thumb when sizing the
+	 * container. Bumping above 1 needs proportional RAM headroom.
+	 */
 	concurrency?: number;
 	/** Override the default (3) bunqueue retry count. Tests use 1 to skip retries. */
 	retryAttempts?: number;
 	/** Override the default (2000ms) bunqueue retry base delay. Tests use 10ms. */
 	retryDelayMs?: number;
 	processor: AnalyzeProcessor;
-	onProgress?: (replayId: string, percent: number, step: ProgressStep | null) => void;
 	onCompleted?: (replayId: string, result: AnalyzeReplayResult) => void;
 	onFailed?: (replayId: string, error: Error) => void;
 }
@@ -31,15 +38,16 @@ const RETRY_DELAY_MS = 2000;
 
 /**
  * Wrap bunqueue@2.7.12 with an xray-shaped surface: one queue named
- * `analyze-replay`, payload + result typed against our domain, progress
- * events relayed by replay id rather than the bunqueue job. The wrapper
- * keeps a `Map<jobId, replayId>` so progress listeners can resolve the
- * caller-facing identifier even when bunqueue surfaces `job` as `null`
- * (which it does during shutdown / cancellation paths).
+ * `analyze-replay`, payload + result typed against our domain, lifecycle
+ * callbacks keyed by replay id rather than the bunqueue job id.
+ *
+ * Progress is not threaded through bunqueue's `job.updateProgress` channel;
+ * the analyze-replay processor emits progress directly onto the local
+ * `ReplayEvents` pub/sub (which is what the SSE handler subscribes to).
+ * Routing progress through bunqueue would require passing the `job` argument
+ * into the processor closure for zero behavioural gain.
  */
 export function createJobRunner(opts: JobRunnerOptions): JobRunner {
-	const jobIdToReplayId = new Map<string, string>();
-
 	const retryAttempts = opts.retryAttempts ?? RETRY_ATTEMPTS;
 	const retryDelayMs = opts.retryDelayMs ?? RETRY_DELAY_MS;
 	const queue = new Bunqueue<AnalyzeReplayPayload, AnalyzeReplayResult>(QUEUE_NAME, {
@@ -61,19 +69,9 @@ export function createJobRunner(opts: JobRunnerOptions): JobRunner {
 		console.error("bunqueue internal error (swallowed; onFailed still fires)", err);
 	});
 
-	if (opts.onProgress !== undefined) {
-		const onProgress = opts.onProgress;
-		queue.on("progress", (job, percent) => {
-			if (job === null) return;
-			const replayId = jobIdToReplayId.get(job.id) ?? job.data.replayId;
-			onProgress(replayId, percent, null);
-		});
-	}
-
 	if (opts.onCompleted !== undefined) {
 		const onCompleted = opts.onCompleted;
 		queue.on("completed", (job, result) => {
-			jobIdToReplayId.delete(job.id);
 			onCompleted(job.data.replayId, result);
 		});
 	}
@@ -81,7 +79,6 @@ export function createJobRunner(opts: JobRunnerOptions): JobRunner {
 	if (opts.onFailed !== undefined) {
 		const onFailed = opts.onFailed;
 		queue.on("failed", (job, error) => {
-			jobIdToReplayId.delete(job.id);
 			onFailed(job.data.replayId, error);
 		});
 	}
@@ -90,7 +87,6 @@ export function createJobRunner(opts: JobRunnerOptions): JobRunner {
 		async enqueue(payload) {
 			try {
 				const job = await queue.add(JOB_NAME, payload, { attempts: retryAttempts });
-				jobIdToReplayId.set(job.id, payload.replayId);
 				return job.id;
 			} catch (cause) {
 				throw new JobEnqueueError(payload.replayId, { cause });

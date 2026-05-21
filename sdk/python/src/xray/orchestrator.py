@@ -554,16 +554,39 @@ class _XrayStageAttrs(BaseModel):
 
 async def _fetch_replay_enrichment(client: httpx.AsyncClient, replay_id: str) -> _ReplayEnrichment:
     """``GET /v1/replays/:id`` and bin the tool_calls / model_usage rows
-    by ``turn_idx``. Silent fallback to empty maps on any error — the
-    happy path is best-effort enrichment, not a failure dimension."""
+    by ``turn_idx``. Best-effort: on any failure returns empty maps. Any
+    assertion that depends on tool_calls / model_usage / stage_timings
+    will see the empty view and likely evaluate `False`, so callers should
+    treat a missing-enrichment warning in the log as a possible cause of
+    unexpected assertion failures.
+
+    A 404 is treated as "analysis still in progress / never ran" and
+    logged at info — the row genuinely has no rows yet. Every other
+    exception (network error, schema drift, malformed JSON) is logged at
+    warning with the exception class name so the operator can distinguish
+    "no data yet" from "the fetch broke"."""
     try:
         r = await client.get(f"/v1/replays/{replay_id}")
         r.raise_for_status()
         body = _ReplayEnrichmentBody.model_validate(r.json())
-    except Exception:
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            logger.info(
+                "replay %s has no enrichment yet (404); assertions get thin view", replay_id
+            )
+        else:
+            logger.warning(
+                "GET /v1/replays/%s returned %s; assertions get thin view",
+                replay_id,
+                e.response.status_code,
+            )
+        return _ReplayEnrichment({}, {}, {})
+    except Exception as e:
         logger.warning(
-            "failed to fetch replay enrichment for %s; assertions get thin view",
+            "failed to fetch replay enrichment for %s (%s: %s); assertions get thin view",
             replay_id,
+            type(e).__name__,
+            e,
         )
         return _ReplayEnrichment({}, {}, {})
 

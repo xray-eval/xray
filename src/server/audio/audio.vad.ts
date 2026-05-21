@@ -1,6 +1,16 @@
 import type { VadConfig, VadSegment } from "./audio.types.ts";
 
 const DEFAULT_FRAME_DURATION_MS = 30;
+// 5e6 mean energy ≈ 2236 int16 RMS amplitude ≈ -23 dBFS. Calibrated against
+// the synthetic test fixtures only (200 Hz sine at amplitude 15000 trips,
+// 500-amplitude background doesn't). Real WebRTC + TTS output has not been
+// measured against this; mis-tuning on real audio is plausible (too strict
+// = quiet speech missed; too sensitive = WebRTC comfort noise tripped).
+// Tuning today requires forking + rebuilding — the `VadConfig` surface is
+// exposed but the analyze-replay processor doesn't thread an operator knob
+// through (intentional for v0.2 — promote to env var once a real-audio
+// calibration fixture exists). See audio.types.ts:VadConfig + the
+// "Accuracy" note below.
 const DEFAULT_ENERGY_THRESHOLD = 5_000_000;
 const DEFAULT_MERGE_GAP_MS = 200;
 const DEFAULT_MIN_SEGMENT_MS = 80;
@@ -23,8 +33,10 @@ const DEFAULT_ZCR_MAX = 0.5;
  *
  * Accuracy is lower than libfvad / Silero; acceptable for v0 because xray's
  * input is the driver's recorded WebRTC stream (no microphone noise) and
- * the dev's controlled TTS output. Replaceable behind this `runVadOnChannel`
- * interface — keep the signature stable.
+ * the dev's controlled TTS output. The thresholds above are calibrated only
+ * against synthetic sine fixtures (see audio.vad.test.ts) — no real LiveKit
+ * recording is in the test corpus yet. Replaceable behind this
+ * `runVadOnChannel` interface — keep the signature stable.
  */
 export function runVadOnChannel(
 	pcm: Int16Array,

@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import { getConversationVersion } from "@/server/conversations/conversations.service.ts";
 import type { JobRunner } from "@/server/jobs/jobs.bunqueue.ts";
@@ -309,10 +309,24 @@ export function markReplayFailed(
 }
 
 /**
- * POST /v1/replays/:id/analyze handler. Validates that the replay has an
- * uploaded recording, enqueues the bunqueue job, and flips the row to
- * `analyzing` with `analysis_step='vad'`. Emits a `state` event so any
- * SSE listener picks up the transition without polling.
+ * POST /v1/replays/:id/analyze handler. Atomically claims the analyzing
+ * lifecycle for this replay before enqueuing, so two concurrent /analyze
+ * calls for the same id can't both schedule bunqueue jobs.
+ *
+ * Order matters:
+ *   1. Pre-check via findReplay so a 404 / 409 lands without touching the
+ *      DB write path.
+ *   2. Conditional UPDATE: `set lifecycle_state='analyzing' where
+ *      lifecycle_state='recording_uploaded'`. SQLite's single-writer
+ *      serializes this — only one concurrent caller flips the row.
+ *   3. Re-read to confirm we hold the claim. If the row is in any other
+ *      state, another caller raced — surface `ReplayNotReadyForAnalysisError`
+ *      with the current state.
+ *   4. Enqueue. On failure, rollback the UPDATE so the operator can retry
+ *      without the row being permanently stuck in `analyzing`.
+ *   5. Stamp the bunqueue jobId.
+ *
+ * Emits a `state` event after the claim + enqueue both succeed.
  */
 export async function enqueueAnalysis(
 	store: Store,
@@ -325,12 +339,30 @@ export async function enqueueAnalysis(
 	if (replay.lifecycleState !== "recording_uploaded") {
 		throw new ReplayNotReadyForAnalysisError(id, replay.lifecycleState);
 	}
-	const jobId = await jobRunner.enqueue({ replayId: id });
+
 	store.db
 		.update(replays)
-		.set({ lifecycleState: "analyzing", analysisStep: "vad", jobId })
-		.where(eq(replays.id, id))
+		.set({ lifecycleState: "analyzing", analysisStep: "vad" })
+		.where(and(eq(replays.id, id), eq(replays.lifecycleState, "recording_uploaded")))
 		.run();
+
+	const claimed = findReplay(store, id);
+	if (claimed === undefined || claimed.lifecycleState !== "analyzing") {
+		throw new ReplayNotReadyForAnalysisError(id, claimed?.lifecycleState ?? "unknown");
+	}
+
+	let jobId: string;
+	try {
+		jobId = await jobRunner.enqueue({ replayId: id });
+	} catch (cause) {
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "recording_uploaded", analysisStep: null })
+			.where(and(eq(replays.id, id), eq(replays.lifecycleState, "analyzing")))
+			.run();
+		throw cause;
+	}
+	store.db.update(replays).set({ jobId }).where(eq(replays.id, id)).run();
 	events.emit(id, { type: "state", lifecycle_state: "analyzing", analysis_step: "vad" });
 	return { jobId, lifecycleState: "analyzing" };
 }

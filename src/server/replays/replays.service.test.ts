@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 
 import { upsertConversation } from "@/server/conversations/conversations.service.ts";
 import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
+import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { replays } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
@@ -9,12 +10,14 @@ import {
 	ConversationVersionNotFoundError,
 	ReplayLifecycleTransitionError,
 	ReplayNotFoundError,
+	ReplayNotReadyForAnalysisError,
 } from "./replays.errors.ts";
 import type { ReplayEvent } from "./replays.events.ts";
 import { makeReplayEvents } from "./replays.events.ts";
 import {
 	compareReplays,
 	createReplay,
+	enqueueAnalysis,
 	getReplay,
 	listReplaysForConversation,
 	markReplayFailed,
@@ -195,6 +198,88 @@ describe("markReplayFailed", () => {
 		expect(() =>
 			markReplayFailed(store, events, "00000000-0000-0000-0000-0000000000ff", "worker_lost"),
 		).not.toThrow();
+		store.close();
+	});
+});
+
+describe("enqueueAnalysis — atomic claim", () => {
+	function seedRecordingUploaded(store: ReturnType<typeof makeTempStore>): string {
+		const id = seedReplay(store);
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "recording_uploaded", audioPath: `${id}/replay.wav` })
+			.where(eq(replays.id, id))
+			.run();
+		return id;
+	}
+
+	it("two concurrent calls: exactly one enqueues, the other throws ReplayNotReadyForAnalysisError", async () => {
+		const store = makeTempStore();
+		const id = seedRecordingUploaded(store);
+		const events = makeReplayEvents();
+
+		// Gate the FakeJobRunner so both callers can observe the same
+		// `recording_uploaded` pre-state. Without the gate the first call's
+		// synchronous bun:sqlite write closes the race before the second
+		// caller's microtask runs.
+		const gate = Promise.withResolvers<void>();
+		let enqueuedCount = 0;
+		const runner = makeFakeJobRunner();
+		const gatedRunner = {
+			...runner,
+			async enqueue(payload: { replayId: string }) {
+				enqueuedCount += 1;
+				await gate.promise;
+				return runner.enqueue(payload);
+			},
+		};
+
+		const a = enqueueAnalysis(store, gatedRunner, events, id);
+		const b = enqueueAnalysis(store, gatedRunner, events, id);
+		// Let both bodies reach the await inside gatedRunner.enqueue.
+		await Promise.resolve();
+		await Promise.resolve();
+		gate.resolve();
+
+		const settled = await Promise.allSettled([a, b]);
+		const fulfilled = settled.filter((s) => s.status === "fulfilled");
+		const rejected = settled.filter((s) => s.status === "rejected");
+		expect(fulfilled).toHaveLength(1);
+		expect(rejected).toHaveLength(1);
+		const rejection = rejected[0];
+		if (rejection?.status !== "rejected") throw new Error("expected one rejection");
+		expect(rejection.reason).toBeInstanceOf(ReplayNotReadyForAnalysisError);
+		// Only one bunqueue enqueue call was actually attempted — the loser
+		// short-circuits before reaching the runner.
+		expect(enqueuedCount).toBe(1);
+
+		const row = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		expect(row?.lifecycleState).toBe("analyzing");
+		expect(row?.analysisStep).toBe("vad");
+		store.close();
+	});
+
+	it("rolls back to `recording_uploaded` when the bunqueue enqueue throws", async () => {
+		const store = makeTempStore();
+		const id = seedRecordingUploaded(store);
+		const events = makeReplayEvents();
+		const throwingRunner = {
+			async enqueue() {
+				throw new Error("bunqueue offline");
+			},
+			async close() {
+				// no-op
+			},
+		};
+
+		await expect(enqueueAnalysis(store, throwingRunner, events, id)).rejects.toThrow(
+			"bunqueue offline",
+		);
+
+		const row = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		expect(row?.lifecycleState).toBe("recording_uploaded");
+		expect(row?.analysisStep).toBeNull();
+		expect(row?.jobId).toBeNull();
 		store.close();
 	});
 });
