@@ -9,7 +9,6 @@ import {
 	BodyTooLargeResponseSchema,
 	openApiSchemaFromValibot,
 	ReplayNotFoundResponseSchema,
-	StoreFailureResponseSchema,
 	UnsupportedContentTypeResponseSchema,
 	ValidationErrorResponseSchema,
 } from "@/server/core/types.ts";
@@ -22,24 +21,18 @@ import {
 	AudioNotUploadedError,
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
-	AudioTurnNotFoundError,
+	InvalidAudioExtensionError,
 	InvalidAudioPathError,
+	ReplayUploadStateError,
 	UnsupportedAudioContentTypeError,
 } from "./audio.errors.ts";
-import {
-	readReplayAudio,
-	readTurnAudio,
-	uploadReplayAudio,
-	uploadTurnAudio,
-} from "./audio.service.ts";
+import { readReplayAudio, uploadReplayAudio } from "./audio.service.ts";
 import type { AudioContentType } from "./audio.types.ts";
 import {
 	AudioContentTypeSchema,
 	CONTENT_TYPE_TO_EXTENSION,
 	EXTENSION_TO_RESPONSE_CONTENT_TYPE,
 	MAX_AUDIO_BYTES,
-	TurnIdxParamDocSchema,
-	TurnIdxParamSchema,
 	UploadAudioResponseSchema,
 } from "./audio.types.ts";
 
@@ -55,24 +48,18 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 	const router = new Hono();
 
 	router.post(
-		"/replays/:id/turns/:idx/audio",
+		"/replays/:id/audio",
 		describeRoute({
 			tags: ["Audio"],
-			summary: "Upload raw audio bytes for one turn",
+			summary: "Upload the full-replay stereo audio",
 			description:
-				"Body is raw audio bytes. Use the `Content-Type` header to declare the format. Re-uploading the same `{replayId, turnIdx}` with the same content-type overwrites the file; a different content-type replaces it and removes the old extension's file.",
+				"Body is raw audio bytes (typically a 48kHz int16 stereo WAV with left=user, right=agent, written by the driver's wall-clock capture). Server-side VAD on the uploaded file produces `replay_turns` and `speech_segments` rows.",
 			parameters: [
 				{
 					in: "path",
 					name: "id",
 					required: true,
 					schema: openApiSchemaFromValibot(ReplayIdSchema),
-				},
-				{
-					in: "path",
-					name: "idx",
-					required: true,
-					schema: openApiSchemaFromValibot(TurnIdxParamDocSchema),
 				},
 			],
 			requestBody: { required: true, content: UPLOAD_CONTENT_MAP },
@@ -90,141 +77,16 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 					},
 				},
 				"404": {
-					description: "Replay or turn not found.",
-					content: {
-						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
-					},
-				},
-				"413": {
-					description: "Audio exceeded the 50 MB cap.",
-					content: {
-						"application/json": { schema: openApiSchemaFromValibot(BodyTooLargeResponseSchema) },
-					},
-				},
-				"415": {
-					description: "Content-Type is not a supported audio format.",
-					content: {
-						"application/json": {
-							schema: openApiSchemaFromValibot(UnsupportedContentTypeResponseSchema),
-						},
-					},
-				},
-				"500": {
-					description: "Unhandled store-side failure.",
-					content: {
-						"application/json": { schema: openApiSchemaFromValibot(StoreFailureResponseSchema) },
-					},
-				},
-			},
-		}),
-		bodyLimit({
-			maxSize: MAX_AUDIO_BYTES,
-			onError: () => {
-				throw new AudioBodyTooLargeError(MAX_AUDIO_BYTES);
-			},
-		}),
-		async (c) => {
-			const { replayId, turnIdx } = parseTurnPathParams(c.req.param("id"), c.req.param("idx"));
-			const contentType = parseAudioContentType(c.req.header("content-type"));
-			const buffer = await c.req.arrayBuffer();
-			const bytes = new Uint8Array(buffer);
-			const audioPath = await uploadTurnAudio(store, audioRoot, {
-				replayId,
-				turnIdx,
-				contentType,
-				bytes,
-			});
-			return c.json({ ok: true, audio_path: audioPath });
-		},
-	);
-
-	router.get(
-		"/replays/:id/turns/:idx/audio",
-		describeRoute({
-			tags: ["Audio"],
-			summary: "Stream stored audio bytes for one turn",
-			parameters: [
-				{
-					in: "path",
-					name: "id",
-					required: true,
-					schema: openApiSchemaFromValibot(ReplayIdSchema),
-				},
-				{
-					in: "path",
-					name: "idx",
-					required: true,
-					schema: openApiSchemaFromValibot(TurnIdxParamDocSchema),
-				},
-			],
-			responses: {
-				"200": {
-					description: "Audio bytes, in the format declared on upload.",
-					content: DOWNLOAD_CONTENT_MAP,
-				},
-				"400": {
-					description: "Path failed validation.",
-					content: {
-						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
-					},
-				},
-				"404": {
-					description: "Turn has no recorded audio (or no such turn).",
-					content: {
-						"application/json": { schema: openApiSchemaFromValibot(AudioNotFoundResponseSchema) },
-					},
-				},
-			},
-		}),
-		async (c) => {
-			const { replayId, turnIdx } = parseTurnPathParams(c.req.param("id"), c.req.param("idx"));
-			const { stream, contentLength, contentType } = await readTurnAudio(
-				store,
-				audioRoot,
-				replayId,
-				turnIdx,
-			);
-			return c.body(stream, 200, {
-				"Content-Type": contentType,
-				"Content-Length": String(contentLength),
-				"Cache-Control": "private, no-cache",
-			});
-		},
-	);
-
-	router.post(
-		"/replays/:id/audio",
-		describeRoute({
-			tags: ["Audio"],
-			summary: "Upload the full-replay audio mixdown",
-			description:
-				"One file per replay. The SDK uploads this once when the run completes — the inspector plays it back with per-turn segments derived from `replay_turns` timestamps.",
-			parameters: [
-				{
-					in: "path",
-					name: "id",
-					required: true,
-					schema: openApiSchemaFromValibot(ReplayIdSchema),
-				},
-			],
-			requestBody: { required: true, content: UPLOAD_CONTENT_MAP },
-			responses: {
-				"200": {
-					description: "Mixdown stored.",
-					content: {
-						"application/json": { schema: openApiSchemaFromValibot(UploadAudioResponseSchema) },
-					},
-				},
-				"400": {
-					description: "Path failed validation.",
-					content: {
-						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
-					},
-				},
-				"404": {
 					description: "Replay not found.",
 					content: {
 						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
+					},
+				},
+				"409": {
+					description:
+						"Replay's lifecycle_state is not one of `pending` / `running` / `recording_uploaded` (the only states in which a fresh audio upload is safe). Caller must wait for analysis to finish or accept the current replay as final.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
 					},
 				},
 				"413": {
@@ -267,7 +129,7 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 		"/replays/:id/audio",
 		describeRoute({
 			tags: ["Audio"],
-			summary: "Stream the full-replay audio mixdown",
+			summary: "Stream the full-replay stereo audio",
 			parameters: [
 				{
 					in: "path",
@@ -324,18 +186,25 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 			.with(P.instanceOf(AudioReplayNotFoundError), (e) =>
 				c.json({ error: "replay_not_found", replay_id: e.replayId }, 404),
 			)
-			.with(
-				P.union(P.instanceOf(AudioTurnNotFoundError), P.instanceOf(AudioNotUploadedError)),
-				(e) =>
-					c.json(
-						e.turnIdx === null
-							? { error: "audio_not_found", replay_id: e.replayId }
-							: { error: "audio_not_found", replay_id: e.replayId, turn_idx: e.turnIdx },
-						404,
-					),
+			.with(P.instanceOf(AudioNotUploadedError), (e) =>
+				c.json({ error: "audio_not_found", replay_id: e.replayId }, 404),
+			)
+			.with(P.instanceOf(ReplayUploadStateError), (e) =>
+				c.json(
+					{
+						error: "replay_upload_state_invalid",
+						replay_id: e.replayId,
+						current_state: e.currentState,
+					},
+					409,
+				),
 			)
 			.with(P.instanceOf(AudioPathOutsideRootError), (e) => {
 				console.error("audio path resolved outside root", e);
+				return c.json({ error: "store_failure" }, 500);
+			})
+			.with(P.instanceOf(InvalidAudioExtensionError), (e) => {
+				console.error("stored audio path has unsupported extension", e);
 				return c.json({ error: "store_failure" }, 500);
 			})
 			.with(P.instanceOf(Error), (e) => {
@@ -348,17 +217,6 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 	);
 
 	return router;
-}
-
-function parseTurnPathParams(
-	rawReplayId: string,
-	rawTurnIdx: string,
-): { replayId: string; turnIdx: number } {
-	const idCheck = v.safeParse(ReplayIdSchema, rawReplayId);
-	if (!idCheck.success) throw new InvalidAudioPathError(idCheck.issues);
-	const idxCheck = v.safeParse(TurnIdxParamSchema, rawTurnIdx);
-	if (!idxCheck.success) throw new InvalidAudioPathError(idxCheck.issues);
-	return { replayId: idCheck.output, turnIdx: idxCheck.output };
 }
 
 function parseReplayIdParam(raw: string): string {

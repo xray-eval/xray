@@ -42,7 +42,6 @@ from xray.conversation import (
     AgentResponse,
     AssertionOutcome,
     AssertionPredicate,
-    AssertionStatus,
     Conversation,
     JudgeOutcome,
     JudgePredicate,
@@ -72,6 +71,9 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 50 * 1024 * 1024
 
 ReplayStatus: TypeAlias = Literal["completed", "failed"]
+ReplayLifecycleState: TypeAlias = Literal[
+    "pending", "running", "recording_uploaded", "analyzing", "completed", "failed"
+]
 
 
 # ─── Wire payloads (snake_case) ───────────────────────────────────────
@@ -80,7 +82,6 @@ ReplayStatus: TypeAlias = Literal["completed", "failed"]
 class ReplayCreateBody(TypedDict):
     conversation_id: str
     conversation_version: str
-    modality: Literal["voice"]
     run_config: NotRequired[dict[str, JsonValue]]
 
 
@@ -90,17 +91,15 @@ class _ReplayCreateResponse(BaseModel):
     id: str
 
 
-class JudgePatchBody(TypedDict):
-    status: AssertionStatus
-    score: NotRequired[int]
-    reason: NotRequired[str]
-    error: NotRequired[str]
-
-
 class ReplayPatchBody(TypedDict):
-    status: ReplayStatus
+    """PATCH /v1/replays/:id body. Mirrors the server's
+    ``UpdateReplayRequestSchema`` exactly (per
+    ``sdk/python/.claude/rules/typed-boundaries.md`` §1) — no fields the
+    server doesn't accept."""
+
+    lifecycle_state: ReplayLifecycleState
     failure_reason: NotRequired[FailureReason]
-    judge: NotRequired[JudgePatchBody]
+    finished_at: NotRequired[str]
 
 
 # ─── Orchestrator result ──────────────────────────────────────────────
@@ -151,7 +150,6 @@ async def run(
         create_body: ReplayCreateBody = {
             "conversation_id": conversation.id,
             "conversation_version": conversation.version,
-            "modality": "voice",
         }
         if run_config is not None:
             create_body["run_config"] = run_config.to_wire()
@@ -182,7 +180,7 @@ async def run(
 
         # 4. Run the runtime. Typed errors surface their own
         # `failure_reason`; everything else falls through to a generic
-        # `runtime_error` PATCH — no substring matching, per the
+        # `driver_aborted` PATCH — no substring matching, per the
         # restructure contract.
         status: ReplayStatus = "completed"
         failure_reason: FailureReason | None = None
@@ -194,7 +192,7 @@ async def run(
             status, failure_reason = "failed", e.failure_reason
         except Exception:
             logger.exception("unclassified runtime failure on replay %s", replay_id)
-            status, failure_reason = "failed", "runtime_error"
+            status, failure_reason = "failed", "driver_aborted"
         finally:
             await runtime.aclose()
             # Flush driver-side spans + detach baggage before we proceed
@@ -220,7 +218,54 @@ async def run(
                 status, failure_reason = "failed", e.failure_reason
             except Exception:
                 logger.exception("audio upload errored on replay %s", replay_id)
-                status, failure_reason = "failed", "runtime_error"
+                status, failure_reason = "failed", "driver_aborted"
+
+        # 5b. Kick off server-side VAD/turn analysis if we uploaded audio.
+        # Best-effort: a 4xx / 5xx here (e.g. server in dev mode, endpoint not
+        # yet deployed, or replay state mismatch) demotes us to the legacy
+        # path — the assertions below still get the old per-turn enrichment
+        # view without VAD-derived turn boundaries.
+        analysis_kicked = False
+        if (
+            status == "completed"
+            and runtime_result is not None
+            and runtime_result.full_audio_path is not None
+        ):
+            try:
+                r = await client.post(f"/v1/replays/{replay_id}/analyze")
+                if r.is_success:
+                    analysis_kicked = True
+                else:
+                    logger.warning(
+                        "POST /v1/replays/%s/analyze returned %s; skipping VAD wait",
+                        replay_id,
+                        r.status_code,
+                    )
+            except Exception:
+                logger.warning("could not start analysis for replay %s", replay_id, exc_info=True)
+
+        # 5c. Wait for analysis to terminate via SSE. Also best-effort.
+        # If the server stamped the row `failed` (e.g. bunqueue exhausted
+        # retries → onFailed → markReplayFailed), we must flip the SDK-side
+        # status to match: the server's `updateReplay` blocks
+        # terminal→different-terminal PATCHes with 409, so PATCHing
+        # `lifecycle_state='completed'` on a row already `failed` would
+        # raise. Don't override `failure_reason` — the server already wrote
+        # `max_attempts_exceeded`, and our PATCH omits the field so the
+        # server's value is preserved.
+        if analysis_kicked:
+            try:
+                terminal = await _wait_for_analysis(client, replay_id)
+            except Exception:
+                logger.warning("SSE wait failed for replay %s", replay_id, exc_info=True)
+            else:
+                if terminal == "failed" and status == "completed":
+                    logger.warning(
+                        "server marked replay %s `failed` during analysis; "
+                        "demoting SDK status to match",
+                        replay_id,
+                    )
+                    status = "failed"
 
         # 6. Fetch the rich per-turn view and merge into each agent
         # response so assertions see tool_calls / model_usage / stage
@@ -263,9 +308,7 @@ async def run(
             judge_outcome = await _evaluate_judge(conversation.judge, replay_result)
 
         # 9. PATCH.
-        patch_body = _build_patch_body(
-            status=status, failure_reason=failure_reason, judge=judge_outcome
-        )
+        patch_body = _build_patch_body(status=status, failure_reason=failure_reason)
         r = await client.patch(f"/v1/replays/{replay_id}", json=patch_body)
         r.raise_for_status()
 
@@ -294,25 +337,79 @@ def _build_patch_body(
     *,
     status: ReplayStatus,
     failure_reason: FailureReason | None,
-    judge: JudgeOutcome | None,
 ) -> ReplayPatchBody:
-    body: ReplayPatchBody = {"status": status}
+    body: ReplayPatchBody = {"lifecycle_state": status}
     if failure_reason is not None:
         body["failure_reason"] = failure_reason
-    if judge is not None:
-        body["judge"] = _judge_to_wire(judge)
     return body
 
 
-def _judge_to_wire(judge: JudgeOutcome) -> JudgePatchBody:
-    body: JudgePatchBody = {"status": judge.status}
-    if judge.score is not None:
-        body["score"] = judge.score
-    if judge.reason is not None:
-        body["reason"] = judge.reason
-    if judge.error is not None:
-        body["error"] = judge.error
-    return body
+class _SseStateData(BaseModel):
+    """Inbound shape for the SSE `state` event's JSON body."""
+
+    lifecycle_state: str | None = None
+
+
+def _terminal_state_from_payload(raw: str) -> Literal["completed", "failed"] | None:
+    """Best-effort parse of the SSE `state` event's JSON body. Returns the
+    terminal lifecycle if the payload's `lifecycle_state` is `completed` or
+    `failed`, ``None`` otherwise (including on parse failure).
+    """
+    try:
+        decoded = _SseStateData.model_validate_json(raw)
+    except (ValueError, ValidationError):
+        return None
+    if decoded.lifecycle_state == "completed":
+        return "completed"
+    if decoded.lifecycle_state == "failed":
+        return "failed"
+    return None
+
+
+async def _wait_for_analysis(
+    client: httpx.AsyncClient,
+    replay_id: str,
+    *,
+    timeout_s: float = 300.0,
+) -> Literal["completed", "failed"] | None:
+    """Stream `GET /v1/replays/:id/events` and return the terminal lifecycle
+    the server reached (`"completed"` or `"failed"`). Returns ``None`` if the
+    stream closed without ever emitting a terminal `state` event.
+
+    The caller uses the return value to keep the SDK-side `status` consistent
+    with the server's row: if VAD failed, the server has already stamped
+    `lifecycle_state='failed'` + `failure_reason='max_attempts_exceeded'` via
+    `markReplayFailed`, and the subsequent PATCH must echo `'failed'` —
+    otherwise the server's `ReplayLifecycleTransitionError` guard rejects the
+    PATCH with a 409.
+
+    Pure-stdlib SSE parser — one `event: <type>\\n` line followed by one
+    `data: <json>\\n` line, blank line terminates the message. Heartbeats
+    (`:` prefix) are skipped.
+    """
+    async with client.stream(
+        "GET",
+        f"/v1/replays/{replay_id}/events",
+        timeout=timeout_s,
+        headers={"accept": "text/event-stream"},
+    ) as response:
+        response.raise_for_status()
+        event_type: str | None = None
+        async for raw_line in response.aiter_lines():
+            line = raw_line.rstrip("\r")
+            if line == "":
+                event_type = None
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event_type = line[len("event:") :].strip()
+                continue
+            if line.startswith("data:") and event_type == "state":
+                terminal = _terminal_state_from_payload(line[len("data:") :].strip())
+                if terminal is not None:
+                    return terminal
+        return None
 
 
 async def _upload_replay_audio(
@@ -434,16 +531,39 @@ class _XrayStageAttrs(BaseModel):
 
 async def _fetch_replay_enrichment(client: httpx.AsyncClient, replay_id: str) -> _ReplayEnrichment:
     """``GET /v1/replays/:id`` and bin the tool_calls / model_usage rows
-    by ``turn_idx``. Silent fallback to empty maps on any error — the
-    happy path is best-effort enrichment, not a failure dimension."""
+    by ``turn_idx``. Best-effort: on any failure returns empty maps. Any
+    assertion that depends on tool_calls / model_usage / stage_timings
+    will see the empty view and likely evaluate `False`, so callers should
+    treat a missing-enrichment warning in the log as a possible cause of
+    unexpected assertion failures.
+
+    A 404 is treated as "analysis still in progress / never ran" and
+    logged at info — the row genuinely has no rows yet. Every other
+    exception (network error, schema drift, malformed JSON) is logged at
+    warning with the exception class name so the operator can distinguish
+    "no data yet" from "the fetch broke"."""
     try:
         r = await client.get(f"/v1/replays/{replay_id}")
         r.raise_for_status()
         body = _ReplayEnrichmentBody.model_validate(r.json())
-    except Exception:
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            logger.info(
+                "replay %s has no enrichment yet (404); assertions get thin view", replay_id
+            )
+        else:
+            logger.warning(
+                "GET /v1/replays/%s returned %s; assertions get thin view",
+                replay_id,
+                e.response.status_code,
+            )
+        return _ReplayEnrichment({}, {}, {})
+    except Exception as e:
         logger.warning(
-            "failed to fetch replay enrichment for %s; assertions get thin view",
+            "failed to fetch replay enrichment for %s (%s: %s); assertions get thin view",
             replay_id,
+            type(e).__name__,
+            e,
         )
         return _ReplayEnrichment({}, {}, {})
 
@@ -527,7 +647,6 @@ def _merge_enrichment_into_responses(
 
 
 __all__ = [
-    "JudgePatchBody",
     "MAX_AUDIO_BYTES",
     "ReplayCreateBody",
     "ReplayPatchBody",

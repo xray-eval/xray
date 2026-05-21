@@ -34,9 +34,10 @@ Set `XRAY_OTLP_ENDPOINT` on the agent worker:
 export XRAY_OTLP_ENDPOINT=http://xray:8080
 ```
 
-xray accepts both OTLP/JSON (the SDK's default wire) and
-OTLP/Protobuf (any stock OTEL exporter), so existing OTEL pipelines
-work too — but `xray.attach` ships the JSON pipeline itself.
+xray's OTLP receiver accepts both `application/x-protobuf` (the stock
+OTel HTTP exporter's default) and `application/json`, so existing OTEL
+pipelines work too — `xray.attach` ships an OTLP/JSON exporter
+configured to point at xray.
 
 ---
 
@@ -74,58 +75,29 @@ Notes:
 - Call `xray.attach` **after** `ctx.connect(...)` — before connect,
   `ctx.room.remote_participants` is empty and the bind has nothing
   to scan.
-- The session is also reachable via `ctx.xray` inside the block, so
-  helpers like `ctx.xray.turn(idx)` and `ctx.xray.record_tool_call(...)`
-  work even if you've passed `ctx` around without `session`.
 
 ---
 
-## 3. Emit recognized spans
+## 3. Emit OTEL spans
 
-xray persists spans under three vocabularies — `xray.*`,
-OTel GenAI semconv (`gen_ai.*`), and Langfuse (`langfuse.*`).
-Spans outside those namespaces are stored as raw spans but don't
-extract into structured rows.
+xray's OTLP receiver accepts every span the agent worker emits.
+Recognized vocabularies (`xray.*`, OTel GenAI `gen_ai.*`, Langfuse
+`langfuse.*`) get persisted as raw spans AND extracted into structured
+rows where the vocabulary supports it:
 
-### Per-turn boundaries
+- `gen_ai.tool` → `tool_calls` row.
+- `gen_ai.client.operation` (and Langfuse equivalents) → `model_usage`
+  row.
+- `xray.*` spans land in the raw `spans` table only in v0.2 — no
+  structured extraction (assertion / judge eval moves to the server in
+  a follow-up PR).
 
-Scope each agent turn with `session.turn(idx)`:
+Spans from unrecognized vocabularies are dropped silently — that's the
+"filter, not a gate" design so noisy framework spans don't fill the DB.
 
-```python
-async with session.turn(0):
-    # ... process turn 0 ...
-async with session.turn(1):
-    # ... process turn 1 ...
-```
-
-The CM emits an `xray.turn` span which xray's vocabulary registry
-extracts into a `replay_turns` row.
-
-### Tool calls
-
-```python
-session.record_tool_call(
-    "book_table",
-    args_json='{"time": "7pm", "party_size": 2}',
-    result_json='{"confirmation": "ABC123"}',
-    latency_ms=350,
-)
-```
-
-This emits a `gen_ai.tool` span which xray persists as a `tool_calls`
-row. Useful inside an assertion:
-
-```python
-def confirms_booking(agent):
-    return any(t.name == "book_table" and "ABC" in (t.result_json or "")
-               for t in agent.tool_calls)
-```
-
-### Model usage
-
-If your agent uses an OTel-instrumented LLM client (the
-`opentelemetry-instrumentation-openai-v2` package, Langfuse, etc.),
-the spans land in xray automatically. No xray-specific code required.
+Tool calls / model usage from any OTel-instrumented LLM client (the
+`opentelemetry-instrumentation-openai-v2` package, Langfuse, etc.)
+land in xray automatically. No xray-specific code required.
 
 ---
 
@@ -182,6 +154,25 @@ asyncio.run(main())
 There is no sync `xray.run`; the previous one was a footgun in
 already-running loops (pytest-asyncio, Jupyter, LiveKit Agents).
 
+What `xray.run` does:
+
+1. POST the Conversation (idempotent upsert).
+2. POST the Replay row eagerly (`lifecycle_state='pending'`).
+3. Bind the driver, attach replay baggage, run the driver — playing
+   user audio + capturing agent audio + transcripts.
+4. Assemble a 48kHz int16 **stereo WAV** (L = user, R = agent,
+   wall-clock-aligned) and POST it to `/v1/replays/:id/audio`.
+5. POST `/v1/replays/:id/analyze` — server enqueues the
+   `analyze-replay` bunqueue job which runs VAD per channel + derives
+   turn boundaries.
+6. Stream SSE on `/v1/replays/:id/events` until `lifecycle_state` hits
+   `completed` or `failed`.
+7. Fetch the final replay detail (turns + speech_segments +
+   tool_calls + model_usage + spans).
+8. Evaluate per-turn assertions + per-replay judge locally (SDK-side
+   in v0.2; server-side in a follow-up PR).
+9. PATCH the replay with the final state.
+
 User-turn audio formats:
 
 - `RecordedAudio(path=...)` — 48 kHz mono int16 WAV on disk.
@@ -197,7 +188,7 @@ v0.2 roadmap.
 
 ## 5. Read the result
 
-`AgentResponse` (handed to per-turn assertions) carries the full
+`AgentResponse` (handed to per-turn assertions) carries the
 server-side view:
 
 - `transcript` — published `rtc.Transcription` segments (your agent
@@ -209,6 +200,12 @@ server-side view:
 `ReplayResult` (handed to the per-replay judge) carries the same view
 across all turns plus the full transcript.
 
+The final `RunResult.status` reflects whether the driver-side run
+completed; turn boundaries derived by the server's VAD pipeline are
+available via `GET /v1/replays/:id` (under `turns` + `speech_segments`
+in the response) — the inspector will render these once it's updated
+in a follow-up PR.
+
 ---
 
 ## 6. Run xray itself
@@ -218,44 +215,70 @@ Production-shape compose:
 ```yaml
 services:
   xray:
-    image: ghcr.io/xray-eval/xray:0.1.0
+    image: ghcr.io/xray-eval/xray:0.2.0
     restart: unless-stopped
     ports: ["8080:8080"]
     volumes: ["xray-data:/data"]
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # Optional: move bunqueue's SQLite file out of /data
+    # environment:
+    #   BUNQUEUE_DATA_PATH: /data/bunqueue.db
 
 volumes:
   xray-data:
 ```
 
-xray ships as a single Docker image. SQLite for storage. Inspector
-UI at `http://localhost:8080`.
+xray ships as a single Docker image. Two SQLite files share the
+mounted volume:
+
+- `/data/xray.db` — conversations, replays, replay_turns,
+  speech_segments, tool_calls, model_usage, spans.
+- `/data/bunqueue.db` — bunqueue's job queue + DLQ (the
+  `analyze-replay` worker runs embedded in the same Bun process).
+
+Inspector UI at `http://localhost:8080`. (Note for v0.2: the SPA is
+not yet rebuilt against the new schema; expect rendering glitches
+until the inspector follow-up PR.)
 
 ---
 
 ## What changed from earlier alphas
 
-xray-py is at **v0.1.0** — clean cut from earlier alpha:
+xray-py is at **v0.2.0** — server is now the analyzer:
 
+- The server runs server-side VAD on the driver's uploaded stereo WAV
+  and derives turn boundaries. `replay_turns` rows have
+  `turn_start_ms` / `turn_end_ms` / `voice_start_ms` / `voice_end_ms`
+  instead of the old `started_at` / `ended_at` / `transcript` /
+  `audio_path` shape.
+- Replay row gains `lifecycle_state` (`pending` | `running` |
+  `recording_uploaded` | `analyzing` | `completed` | `failed`),
+  `analysis_step`, and `job_id`.
+- New endpoints: `POST /v1/replays/:id/analyze`, `GET
+  /v1/replays/:id/events` (SSE).
+- Driver writes a wall-clock-aligned stereo WAV (left = user, right =
+  agent), not the turn-sequential mixdown the alpha used. Barge-in /
+  agent latency are now representable in the file.
+- Dropped: `replay_meta` table (judge fields) and `assertions` table.
+  `xray.assertion` + `xray.judge` OTLP spans still land in the raw
+  `spans` table; SDK still evaluates the dev's lambda assertions
+  client-side; structured assertion / judge storage returns in a
+  follow-up PR.
 - `xray.run` is async-only. No more sync `run()` collision with
   running loops.
 - `Turn.user(...)` + `Turn.agent(...)`. `expect_agent_turn` is gone.
-- `LiveKitDriver` replaces `LiveKitRuntime`. The name now reflects
-  what it is (a *user-side test driver*, not a LiveKit Agents
-  runtime).
-- `xray.attach(ctx)` async-CM replaces the `xray.trace.*` module +
-  manual `bind_from_livekit_room` + manual baggage processor +
-  manual exporter. One call.
+- `LiveKitDriver` (not `LiveKitRuntime`) — name reflects user-side
+  test driver, not a LiveKit Agents runtime.
+- `xray.attach(ctx)` async-CM is the single entry point on the agent
+  side.
 - Replay context propagates via the JWT's `xray` attribute
   (LiveKit `participant.attributes` ≥ v1.7), not via participant
-  metadata. No `can_update_own_metadata` grant required.
+  metadata.
 - Wire is snake_case end-to-end. `conversation_id`,
-  `failure_reason`, `started_at`. Both OTLP/JSON and OTLP/Protobuf
-  are accepted on the receiver.
+  `lifecycle_state`, `failure_reason`, `started_at`. Both OTLP/JSON
+  and OTLP/Protobuf are accepted on the receiver.
 - `RunConfig` is a typed dataclass (`model`, `temperature`, `extra`).
-- `AgentResponse` is rich by default — assertions see tool_calls /
-  model_usage / stage_timings without polling the server.
 - Failure classification is typed-error-only. No more substring
   matching on `str(exception)`.

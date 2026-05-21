@@ -39,6 +39,17 @@ allowBuilds:
   # Audited 2026-05-16 against
   # `node_modules/.pnpm/bun@1.3.13/node_modules/bun/install.js`.
   bun: true
+  # msgpackr-extract — pulled in transitively by bunqueue (via msgpackr for
+  # the queue's binary serialization). The install script is
+  # `node-gyp-build-optional-packages`, which looks for a prebuilt binary in
+  # platform-specific subpackages (e.g. `@msgpackr-extract/msgpackr-extract-darwin-arm64`)
+  # already resolved by pnpm under the same cooldown + registry rules as
+  # the parent. Falls back to a local node-gyp build from C++ source if no
+  # platform prebuilt is found. Same trust pattern as esbuild/bun above.
+  # msgpackr also has a pure-JS fallback if msgpackr-extract is absent;
+  # allowing the build just buys the native accelerator. Audited 2026-05-20
+  # against `node_modules/.pnpm/msgpackr-extract@3.0.3/node_modules/msgpackr-extract/package.json`.
+  msgpackr-extract: true
 
 # Reinforce the v11 default in case it ever changes upstream.
 strictDepBuilds: true

@@ -6,7 +6,7 @@
 
 **Voice is the primary investment.** Per-turn audio playback, barge-in indicators, per-stage STT/TTS latency, full-replay mixdown — first-class, not afterthoughts.
 
-**Storage.** Conversations, Replays, recognized OTLP spans, and tool-call / model-usage rows live in a single SQLite file at `/data/xray.db` (mounted volume on the container). Single-writer, embedded, no driver dependency — uses `bun:sqlite`. Why SQLite is the right choice here is the topic of [`.claude/rules/single-image-distribution.md`](./.claude/rules/single-image-distribution.md).
+**Storage.** Conversations, Replays, server-derived `replay_turns` + `speech_segments` (from VAD), recognized OTLP spans, and tool-call / model-usage rows live in a single SQLite file at `/data/xray.db` (mounted volume on the container). bunqueue (the embedded job queue) owns a separate `/data/bunqueue.db` file in the same volume — acknowledged tradeoff vs the strict "one file" reading of the single-image rule (single volume, two files, no second process). Both use single-writer `bun:sqlite`, no network driver. Why SQLite is the right choice here is the topic of [`.claude/rules/single-image-distribution.md`](./.claude/rules/single-image-distribution.md).
 
 ## The two paths data takes into xray
 
@@ -14,13 +14,16 @@ xray has exactly two write surfaces; both are documented and Valibot-validated a
 
 1. **Control plane (the SDK calls these directly).**
    - `POST /v1/conversations` — idempotent upsert of the Conversation spec keyed by `(id, version)`. SDK auto-computes `version` as a fingerprint over the turn structure; the server rejects a same-key upsert with a *different* fingerprint as `VersionFingerprintMismatchError`.
-   - `POST /v1/replays` — eager Replay-row creation. Returns `replay_id` so the SDK can propagate it (LiveKit room metadata → OTEL baggage) BEFORE the dev's agent emits its first span.
-   - `PATCH /v1/replays/:id` — the SDK posts final status + judge result after the runtime completes.
+   - `POST /v1/replays` — eager Replay-row creation (`lifecycle_state='pending'`). Returns `replay_id` so the SDK can propagate it (LiveKit room metadata → OTEL baggage) BEFORE the dev's agent emits its first span.
+   - `POST /v1/replays/:id/audio` — driver uploads the 48kHz int16 **stereo WAV** (L = user, R = agent, wall-clock-aligned). Flips `lifecycle_state` to `recording_uploaded`.
+   - `POST /v1/replays/:id/analyze` — enqueues the bunqueue `analyze-replay` job. The server transitions to `lifecycle_state='analyzing'` with `analysis_step='vad'`. The worker runs VAD per channel + derives turn boundaries + writes `speech_segments` + `replay_turns`. **Server-derived turns are the ground truth**, not anything the driver or agent sends in spans.
+   - `GET /v1/replays/:id/events` — SSE stream of `state` / `progress` / `completed` / `failed` events. SDK consumes this to know when to fetch final detail.
+   - `PATCH /v1/replays/:id` — SDK final state (`lifecycle_state` / `failure_reason` / `finished_at`).
 
 2. **OTLP/HTTP receiver (the dev's agent emits spans).**
-   - `POST /v1/otlp/v1/traces` — OpenTelemetry OTLP/JSON traces. **Filters, not gates**: routes spans by the `xray.replay.id` resource attribute and runs each through a vocabulary registry (`src/server/otlp/vocabularies/`: `xray.*`, OTel GenAI semconv `gen_ai.*`, Langfuse). Unknown vocabularies are dropped silently; unknown replay ids are dropped silently. Extracted fields land in `tool_calls`, `model_usage`, `replay_turns`, `assertions`, and raw spans in `spans`.
+   - `POST /v1/otlp/v1/traces` — OpenTelemetry traces (JSON + protobuf). **Filters, not gates**: routes spans by the `xray.replay.id` resource attribute and runs each through a vocabulary registry (`src/server/otlp/vocabularies/`: `xray.*`, OTel GenAI semconv `gen_ai.*`, Langfuse). Unknown vocabularies are dropped silently; unknown replay ids are dropped silently. Extracted fields land in `tool_calls` and `model_usage`; every accepted span lands in `spans`. `xray.turn` / `xray.judge` / `xray.assertion` are accepted as raw spans only (no structured extraction in v0.2).
 
-The two paths are coupled by trust: the OTLP receiver doesn't create Conversation or Replay rows, ever. The trust boundary is the SDK's POST.
+The two paths are coupled by trust: the OTLP receiver doesn't create Conversation or Replay rows, ever. The trust boundary is the SDK's POST. The audio-ground-truth refactor adds a third "internal" write path — the embedded `analyze-replay` bunqueue worker writing `replay_turns` + `speech_segments` after reading the uploaded WAV.
 
 ## Replay = one execution of one Conversation
 
@@ -35,13 +38,14 @@ The shared `OpenAPIV3.SchemaObject` helper lives in `src/server/core/types.ts` a
 
 ## SDK
 
-The Python SDK lives at [`sdk/python/`](./sdk/python). Three modules:
+The Python SDK lives at [`sdk/python/`](./sdk/python). Public surface:
 
-- `xray.conversation` — test definitions (`Conversation`, `Turn`, `expect_agent_turn`).
-- `xray.trace` — OpenTelemetry decorators (`@stage("stt")` / `@stage("tts")`) + baggage helpers.
-- `xray.runtime` — pluggable runtime ABC; `xray.runtime.livekit.LiveKitRuntime` is the v1 implementation. Pipecat / OpenAI Realtime / Gemini Live / raw WebSocket are on the roadmap as new sub-modules.
+- `xray.conversation` — test definitions (`Conversation`, `Turn.user(...)`, `Turn.agent(...)`).
+- `xray.runtime` — pluggable driver ABC; `xray.runtime.livekit.LiveKitDriver` is the v1 implementation. Pipecat / OpenAI Realtime / Gemini Live / raw WebSocket are on the roadmap as new sub-modules.
+- `xray.attach(ctx)` — async context manager for LiveKit Agents worker entrypoints; reads the JWT's `xray` attribute, installs the OTLP exporter, force-flushes spans on exit.
+- `xray.run(...)` — orchestrator: POST conversation + replay, drive the driver, upload the stereo WAV mixdown, PATCH final state.
 
-`xray.run(...)` is the orchestrator that composes all three for the common case.
+Future SDK module restructure: `xray.init()` + `xray.bind_replay()` + `@xray.observe()` will replace `xray.attach` + `xray.instrument` + `xray.otel`. Tracked separately; not landed in this PR.
 
 ## Distribution
 

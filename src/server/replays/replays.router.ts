@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { streamSSE } from "hono/streaming";
 import { describeRoute } from "hono-openapi";
 import { match, P } from "ts-pattern";
 import * as v from "valibot";
@@ -11,6 +12,7 @@ import {
 	ReplayNotFoundResponseSchema,
 	ValidationErrorResponseSchema,
 } from "@/server/core/types.ts";
+import type { JobRunner } from "@/server/jobs/jobs.bunqueue.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
@@ -21,11 +23,21 @@ import {
 	InvalidReplayRequestError,
 	MalformedReplayBodyError,
 	ReplayBodyTooLargeError,
+	ReplayLifecycleTransitionError,
 	ReplayNotFoundError,
-	ReplayStatusTransitionError,
+	ReplayNotReadyForAnalysisError,
 } from "./replays.errors.ts";
-import { compareReplays, createReplay, getReplay, updateReplay } from "./replays.service.ts";
+import type { ReplayEvents } from "./replays.events.ts";
 import {
+	compareReplays,
+	createReplay,
+	enqueueAnalysis,
+	findReplay,
+	getReplay,
+	updateReplay,
+} from "./replays.service.ts";
+import {
+	AnalyzeReplayResponseSchema,
 	COMPARE_MAX,
 	COMPARE_MIN,
 	CompareReplaysRequestSchema,
@@ -39,7 +51,11 @@ import {
 const MAX_REPLAY_BODY_BYTES = 64 * 1024;
 const MAX_COMPARE_BODY_BYTES = 16 * 1024;
 
-export function createReplaysRouter(store: Store): Hono {
+export function createReplaysRouter(
+	store: Store,
+	jobRunner: JobRunner,
+	events: ReplayEvents,
+): Hono {
 	const router = new Hono();
 
 	router.post(
@@ -219,6 +235,162 @@ export function createReplaysRouter(store: Store): Hono {
 	);
 
 	router.post(
+		"/replays/:id/analyze",
+		describeRoute({
+			tags: ["Replays"],
+			summary: "Kick off server-side analysis",
+			description:
+				"Enqueues the bunqueue `analyze-replay` job. Requires `lifecycle_state='recording_uploaded'` (set automatically when POST /replays/:id/audio succeeds). Flips the row to `lifecycle_state='analyzing'` with `analysis_step='vad'`.",
+			parameters: [
+				{
+					in: "path",
+					name: "id",
+					required: true,
+					schema: openApiSchemaFromValibot(ReplayIdSchema),
+				},
+			],
+			responses: {
+				"202": {
+					description: "Job enqueued.",
+					content: {
+						"application/json": {
+							schema: openApiSchemaFromValibot(AnalyzeReplayResponseSchema),
+						},
+					},
+				},
+				"400": {
+					description: "Id failed validation.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description: "Replay not found.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
+					},
+				},
+				"409": {
+					description:
+						"Replay is not in `recording_uploaded`. Upload the audio first or wait for an in-flight job to finish.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+			},
+		}),
+		async (c) => {
+			const id = parseReplayId(c.req.param("id"));
+			const result = await enqueueAnalysis(store, jobRunner, events, id);
+			return c.json({ job_id: result.jobId, lifecycle_state: result.lifecycleState }, 202);
+		},
+	);
+
+	router.get(
+		"/replays/:id/events",
+		describeRoute({
+			tags: ["Replays"],
+			summary: "Server-sent events for analysis progress",
+			description:
+				"Streams `state`, `progress`, `completed`, and `failed` SSE events for one replay. The handler sends an initial `state` event with the current lifecycle, then forwards every transition until the replay reaches a terminal state. A `: heartbeat\\n\\n` line lands every 15s to keep proxies from idling out the connection.",
+			parameters: [
+				{
+					in: "path",
+					name: "id",
+					required: true,
+					schema: openApiSchemaFromValibot(ReplayIdSchema),
+				},
+			],
+			responses: {
+				"200": {
+					description: "SSE event stream.",
+					content: { "text/event-stream": { schema: { type: "string" } } },
+				},
+				"400": {
+					description: "Id failed validation.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description: "Replay not found.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
+					},
+				},
+			},
+		}),
+		async (c) => {
+			const id = parseReplayId(c.req.param("id"));
+			const replay = findReplay(store, id);
+			if (replay === undefined) throw new ReplayNotFoundError(id);
+			return streamSSE(c, async (stream) => {
+				let heartbeat: ReturnType<typeof setInterval> | undefined;
+
+				const cleanup = () => {
+					if (heartbeat !== undefined) {
+						clearInterval(heartbeat);
+						heartbeat = undefined;
+					}
+				};
+
+				// `done` resolves when either the worker emits a terminal event
+				// (completed / failed) OR the client aborts. Routing the wait
+				// through this single Promise lets us run cleanup + unsubscribe
+				// exactly once on both paths. Hono's `streamSSE` `run()` calls
+				// `stream.close()` in a `finally` after the callback returns —
+				// so we don't close manually inside the listener (which used to
+				// leak the listener because `onAbort` doesn't fire on a
+				// server-initiated close).
+				const done = Promise.withResolvers<void>();
+				const unsubscribe = events.subscribe(id, (event) => {
+					void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).then(() => {
+						if (event.type === "completed" || event.type === "failed") {
+							done.resolve();
+						}
+					});
+				});
+
+				stream.onAbort(() => {
+					done.resolve();
+				});
+
+				// Initial state — clients pick up the row as it stands when they
+				// connect, without having to GET /replays/:id first. Subscribe
+				// fires synchronously before this await so any worker event
+				// emitted during the awaited write is queued behind it
+				// (Hono's stream writer is FIFO). The duplicate `state` event
+				// the listener may produce immediately after is shape-identical
+				// to the initial event — idempotent for the SDK.
+				const initialState: {
+					type: "state";
+					lifecycle_state: string;
+					analysis_step: string | null;
+				} = {
+					type: "state",
+					lifecycle_state: replay.lifecycleState,
+					analysis_step: replay.analysisStep,
+				};
+				await stream.writeSSE({ event: "state", data: JSON.stringify(initialState) });
+
+				if (replay.lifecycleState === "completed" || replay.lifecycleState === "failed") {
+					cleanup();
+					unsubscribe();
+					return;
+				}
+
+				heartbeat = setInterval(() => {
+					void stream.write(": heartbeat\n\n");
+				}, 15_000);
+
+				await done.promise;
+				cleanup();
+				unsubscribe();
+			});
+		},
+	);
+
+	router.post(
 		"/replays/compare",
 		describeRoute({
 			tags: ["Replays"],
@@ -320,13 +492,23 @@ export function createReplaysRouter(store: Store): Hono {
 			.with(P.instanceOf(ReplayNotFoundError), (e) =>
 				c.json({ error: "replay_not_found", replay_id: e.replayId }, 404),
 			)
-			.with(P.instanceOf(ReplayStatusTransitionError), (e) =>
+			.with(P.instanceOf(ReplayLifecycleTransitionError), (e) =>
 				c.json(
 					{
-						error: "invalid_status_transition",
+						error: "invalid_lifecycle_transition",
 						replay_id: e.replayId,
 						from: e.from,
 						to: e.to,
+					},
+					409,
+				),
+			)
+			.with(P.instanceOf(ReplayNotReadyForAnalysisError), (e) =>
+				c.json(
+					{
+						error: "replay_not_ready_for_analysis",
+						replay_id: e.replayId,
+						current_state: e.currentState,
 					},
 					409,
 				),

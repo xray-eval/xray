@@ -133,13 +133,16 @@ async def test_run_creates_conversation_then_replay_then_patches_with_judge():
     assert patch_replay.called
 
     body = _decoded_body(patch_replay)
-    assert '"status":"completed"' in body
-    assert '"judge"' in body
-    assert '"score":99' in body
+    assert '"lifecycle_state":"completed"' in body
+    # ReplayPatchBody mirrors the server's UpdateReplayRequestSchema exactly —
+    # `judge` is not part of the wire contract (server would silently strip).
+    assert '"judge"' not in body
 
     assert result.status == "completed"
     assert len(result.assertions) == 1
     assert result.assertions[0].status == "passed"
+    # Judge outcome still lives on RunResult (SDK-side eval), just not on the
+    # PATCH body.
     assert result.judge is not None
     assert result.judge.score == 99
 
@@ -174,16 +177,16 @@ async def test_run_marks_failed_when_runtime_raises():
     assert result.status == "failed"
     assert patch_replay.called
     body = _decoded_body(patch_replay)
-    assert '"status":"failed"' in body
+    assert '"lifecycle_state":"failed"' in body
     # Typed XrayError surfaces its `failure_reason` directly — no
     # substring matching, no message parsing.
     assert '"failure_reason":"agent_not_joined"' in body
 
 
 @respx.mock
-async def test_run_falls_back_to_runtime_error_for_unmapped_exception():
+async def test_run_falls_back_to_driver_aborted_for_unmapped_exception():
     """A free-form exception message that isn't in the failure_reason picklist
-    is classified as `runtime_error`, not echoed verbatim — otherwise the
+    is classified as `driver_aborted`, not echoed verbatim — otherwise the
     server would reject the PATCH for an invalid failure_reason."""
     conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
 
@@ -207,7 +210,7 @@ async def test_run_falls_back_to_runtime_error_for_unmapped_exception():
 
     await run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
     body = _decoded_body(patch_replay)
-    assert '"failure_reason":"runtime_error"' in body
+    assert '"failure_reason":"driver_aborted"' in body
 
 
 @pytest.mark.parametrize(
@@ -325,7 +328,7 @@ async def test_audio_upload_failure_demotes_replay_to_failed(tmp_path: Path):
     result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
     assert result.status == "failed"
     body = _decoded_body(patch_replay)
-    assert '"status":"failed"' in body
+    assert '"lifecycle_state":"failed"' in body
 
 
 @respx.mock
@@ -362,7 +365,7 @@ async def test_audio_upload_caps_at_50mib_locally(tmp_path: Path):
     assert not audio_upload.called
     assert result.status == "failed"
     body = _decoded_body(patch_replay)
-    assert '"failure_reason":"runtime_error"' in body
+    assert '"failure_reason":"driver_aborted"' in body
     # Sanity: the typed error class is still importable for SDK users
     # who catch it explicitly.
     assert AudioTooLargeError.__name__ == "AudioTooLargeError"
@@ -439,6 +442,114 @@ async def test_run_raises_audio_missing_before_creating_replay(tmp_path: Path):
     assert str(missing) in str(exc_info.value)
     assert post_conv.called
     assert not post_replay.called
+
+
+@respx.mock
+async def test_sse_failed_state_demotes_sdk_status_so_patch_does_not_409(tmp_path: Path):
+    """When the server's analyze worker stamps the row `failed` (markReplayFailed
+    on retry-exhaustion), the SDK must PATCH `lifecycle_state='failed'`. Echoing
+    a stale `completed` would hit the server's terminal-transition guard."""
+    wav = tmp_path / "rep.wav"
+    wav.write_bytes(b"RIFF\0\0\0\0WAVE")
+
+    conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
+    runtime = StubRuntime(
+        responses=[AgentResponse(transcript="")],
+        full_audio_path=str(wav),
+    )
+
+    respx.post("http://xray.local/v1/conversations").mock(
+        return_value=httpx.Response(200, json=conv.to_spec_payload())
+    )
+    respx.post("http://xray.local/v1/replays").mock(
+        return_value=httpx.Response(201, json={"id": "00000000-0000-0000-0000-0000000000fa"})
+    )
+    respx.post("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000fa/audio").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    respx.post("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000fa/analyze").mock(
+        return_value=httpx.Response(202, json={"job_id": "j-1", "lifecycle_state": "analyzing"})
+    )
+    sse_body = (
+        b"event: state\n"
+        b'data: {"type":"state","lifecycle_state":"analyzing","analysis_step":"vad"}\n'
+        b"\n"
+        b"event: failed\n"
+        b'data: {"type":"failed","reason":"max_attempts_exceeded"}\n'
+        b"\n"
+        b"event: state\n"
+        b'data: {"type":"state","lifecycle_state":"failed","analysis_step":null}\n'
+        b"\n"
+    )
+    respx.get("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000fa/events").mock(
+        return_value=httpx.Response(
+            200,
+            content=sse_body,
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+    patch_replay = respx.patch(
+        "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000fa"
+    ).mock(return_value=httpx.Response(200, json={}))
+
+    result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+
+    assert result.status == "failed"
+    assert patch_replay.called
+    body = _decoded_body(patch_replay)
+    assert '"lifecycle_state":"failed"' in body
+    # SDK does NOT override failure_reason — server's `markReplayFailed` already
+    # wrote `max_attempts_exceeded`. Omitting the field on the PATCH preserves
+    # the server's value.
+    assert '"failure_reason"' not in body
+
+
+@respx.mock
+async def test_sse_completed_state_keeps_sdk_status_completed(tmp_path: Path):
+    """SSE shows the worker reached `completed` — SDK retains `completed` and
+    PATCHes accordingly. Symmetry check for the demote path above."""
+    wav = tmp_path / "rep.wav"
+    wav.write_bytes(b"RIFF\0\0\0\0WAVE")
+
+    conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
+    runtime = StubRuntime(
+        responses=[AgentResponse(transcript="")],
+        full_audio_path=str(wav),
+    )
+
+    respx.post("http://xray.local/v1/conversations").mock(
+        return_value=httpx.Response(200, json=conv.to_spec_payload())
+    )
+    respx.post("http://xray.local/v1/replays").mock(
+        return_value=httpx.Response(201, json={"id": "00000000-0000-0000-0000-0000000000fb"})
+    )
+    respx.post("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000fb/audio").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    respx.post("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000fb/analyze").mock(
+        return_value=httpx.Response(202, json={"job_id": "j-2", "lifecycle_state": "analyzing"})
+    )
+    sse_body = (
+        b"event: state\n"
+        b'data: {"type":"state","lifecycle_state":"completed","analysis_step":null}\n'
+        b"\n"
+    )
+    respx.get("http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000fb/events").mock(
+        return_value=httpx.Response(
+            200,
+            content=sse_body,
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+    patch_replay = respx.patch(
+        "http://xray.local/v1/replays/00000000-0000-0000-0000-0000000000fb"
+    ).mock(return_value=httpx.Response(200, json={}))
+
+    result = await run(conversation=conv, runtime=runtime, xray_url="http://xray.local")
+
+    assert result.status == "completed"
+    body = _decoded_body(patch_replay)
+    assert '"lifecycle_state":"completed"' in body
 
 
 @respx.mock

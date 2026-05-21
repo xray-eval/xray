@@ -651,26 +651,66 @@ async def _openai_tts_pcm(
 
 
 def write_stereo_mixdown(*, segments: list[_TurnSegment], out_path: Path) -> None:
-    """Write segments as a stereo WAV: left = user, right = agent. Silence
-    fills whichever channel isn't speaking in a given segment. Public so
-    the test suite can exercise it without spinning up the full runtime."""
+    """Write segments as a wall-clock-aligned stereo WAV: left = user,
+    right = agent. Each segment is placed at its captured `started_at`
+    offset from t0 (the earliest started_at across all segments). Gaps
+    between segments become silence on both channels; if both channels
+    have audio at the same offset (barge-in / overlapping speech), both
+    channels carry their PCM verbatim.
+
+    The legacy turn-sequential layout (silence-pad-the-opposite-channel,
+    concat) is gone — VAD on the server reads the wall-clock-aligned
+    file to derive turn boundaries (`turn_start_ms` / `voice_start_ms`
+    in `replay_turns`).
+    """
+    placed = [s for s in segments if s.pcm and s.started_at is not None]
+    if not placed:
+        # Empty WAV: header + zero data. Keeps callers from special-casing.
+        with wave.open(str(out_path), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(SAMPLE_WIDTH_BYTES)
+            w.setframerate(SAMPLE_RATE)
+        return
+
+    t0 = min(s.started_at for s in placed if s.started_at is not None)
+    total_samples = 0
+    for s in placed:
+        if s.started_at is None:
+            continue
+        offset_samples = max(0, int((s.started_at - t0) * SAMPLE_RATE))
+        seg_samples = len(s.pcm) // SAMPLE_WIDTH_BYTES
+        total_samples = max(total_samples, offset_samples + seg_samples)
+
+    left = bytearray(total_samples * SAMPLE_WIDTH_BYTES)
+    right = bytearray(total_samples * SAMPLE_WIDTH_BYTES)
+
+    for s in placed:
+        if s.started_at is None:
+            continue
+        offset_bytes = max(0, int((s.started_at - t0) * SAMPLE_RATE)) * SAMPLE_WIDTH_BYTES
+        match s.role:
+            case "user":
+                _mix_into(left, offset_bytes, s.pcm)
+            case "agent":
+                _mix_into(right, offset_bytes, s.pcm)
+            case _:
+                assert_never(s.role)
+
     with wave.open(str(out_path), "wb") as w:
         w.setnchannels(2)
         w.setsampwidth(SAMPLE_WIDTH_BYTES)
         w.setframerate(SAMPLE_RATE)
-        for seg in segments:
-            if not seg.pcm:
-                continue
-            num_samples = len(seg.pcm) // SAMPLE_WIDTH_BYTES
-            silence = b"\x00\x00" * num_samples
-            match seg.role:
-                case "user":
-                    left, right = bytes(seg.pcm), silence
-                case "agent":
-                    left, right = silence, bytes(seg.pcm)
-                case _:
-                    assert_never(seg.role)
-            w.writeframes(_interleave_lr(left=left, right=right))
+        w.writeframes(_interleave_lr(left=bytes(left), right=bytes(right)))
+
+
+def _mix_into(dest: bytearray, offset_bytes: int, src: bytearray) -> None:
+    """Copy `src` into `dest` at `offset_bytes`. Truncates if `src` would
+    overrun `dest` (caller has already sized `dest` to accommodate the
+    farthest-reaching segment)."""
+    end = offset_bytes + len(src)
+    if end > len(dest):
+        end = len(dest)
+    dest[offset_bytes:end] = src[: end - offset_bytes]
 
 
 def _interleave_lr(*, left: bytes, right: bytes) -> bytes:

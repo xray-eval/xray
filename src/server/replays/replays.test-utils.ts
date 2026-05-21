@@ -1,4 +1,4 @@
-import { conversations, replayMeta, replays } from "@/server/store/schema.ts";
+import { conversations, replays } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 
 import type { CreateReplayRequest, UpdateReplayRequest } from "./replays.types.ts";
@@ -11,7 +11,6 @@ export function makeCreateReplayRequest(
 	return {
 		conversation_id: "conv-1",
 		conversation_version: "v0001",
-		modality: "voice",
 		...overrides,
 	};
 }
@@ -20,17 +19,11 @@ export function makeUpdateReplayRequest(
 	overrides: Partial<UpdateReplayRequest> = {},
 ): UpdateReplayRequest {
 	return {
-		status: "completed",
-		finished_at: "2026-05-18T12:00:01.000Z",
+		lifecycle_state: "running",
 		...overrides,
 	};
 }
 
-/**
- * Insert a (conversation, replay, replay_meta) trio directly into a test
- * store — useful for tests of the patch / get / compare endpoints that
- * don't care about the create-replay flow.
- */
 export function seedReplay(
 	store: Store,
 	overrides: { conversationId?: string; conversationVersion?: string; id?: string } = {},
@@ -56,24 +49,14 @@ export function seedReplay(
 			id,
 			conversationId,
 			conversationVersion,
-			status: "running",
+			lifecycleState: "pending",
+			analysisStep: null,
 			failureReason: null,
 			startedAt: "2026-05-18T12:00:00.000Z",
 			finishedAt: null,
 			audioPath: null,
-			transcript: null,
-		})
-		.run();
-	store.db
-		.insert(replayMeta)
-		.values({
-			replayId: id,
-			modality: "voice",
 			runConfigJson: null,
-			judgeStatus: null,
-			judgeScore: null,
-			judgeReason: null,
-			judgeError: null,
+			jobId: null,
 		})
 		.run();
 	return id;

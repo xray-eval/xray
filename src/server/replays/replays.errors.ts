@@ -53,10 +53,6 @@ export class ReplayNotFoundError extends ReplayError {
 	}
 }
 
-/**
- * Caller asked to start a replay for a `(conversationId, conversationVersion)`
- * that doesn't exist. The SDK must POST the Conversation first.
- */
 export class ConversationVersionNotFoundError extends ReplayError {
 	readonly conversationId: string;
 	readonly conversationVersion: string;
@@ -69,17 +65,16 @@ export class ConversationVersionNotFoundError extends ReplayError {
 }
 
 /**
- * A PATCH attempted to move the replay out of `failed`. The SDK is the sole
- * writer and a failed run is terminal — a follow-up PATCH that "rescues" a
- * failed row would mask whatever flagged it.
+ * A PATCH attempted to move the replay out of a terminal lifecycle state.
+ * Terminal states (`completed`, `failed`) are write-once.
  */
-export class ReplayStatusTransitionError extends ReplayError {
+export class ReplayLifecycleTransitionError extends ReplayError {
 	readonly replayId: string;
 	readonly from: string;
 	readonly to: string;
 	constructor(replayId: string, from: string, to: string) {
 		super(`Replay "${replayId}" cannot transition from "${from}" to "${to}"`);
-		this.name = "ReplayStatusTransitionError";
+		this.name = "ReplayLifecycleTransitionError";
 		this.replayId = replayId;
 		this.from = from;
 		this.to = to;
@@ -96,10 +91,20 @@ export class ReplayBodyTooLargeError extends ReplayError {
 }
 
 /**
- * The compare endpoint was called with fewer than 2 or more than 8 replay
- * ids. The cap is product-driven (UI grid degrades past 8 columns); the
- * floor is mathematical (comparing 1 replay against itself is a no-op).
+ * Caller invoked POST /analyze on a replay whose lifecycle_state is not
+ * `recording_uploaded`. The driver must POST the audio first.
  */
+export class ReplayNotReadyForAnalysisError extends ReplayError {
+	readonly replayId: string;
+	readonly currentState: string;
+	constructor(replayId: string, currentState: string) {
+		super(`Replay "${replayId}" is in state "${currentState}", not "recording_uploaded"`);
+		this.name = "ReplayNotReadyForAnalysisError";
+		this.replayId = replayId;
+		this.currentState = currentState;
+	}
+}
+
 export class InvalidCompareSelectionError extends ReplayError {
 	readonly count: number;
 	readonly min: number;

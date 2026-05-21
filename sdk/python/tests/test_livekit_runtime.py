@@ -219,7 +219,7 @@ def test_bind_required_before_run():
     conv = Conversation(id="c", turns=[Turn.user("hi")])
     with pytest.raises(RuntimeBindError) as exc:
         asyncio.run(rt.run(conv))
-    assert exc.value.failure_reason == "sdk_aborted"
+    assert exc.value.failure_reason == "driver_aborted"
 
 
 def test_upsample_2x_doubles_sample_count():
@@ -229,7 +229,7 @@ def test_upsample_2x_doubles_sample_count():
 
 
 def test_write_stereo_mixdown_round_trips(tmp_path: Path):
-    seg = _TurnSegment(role="user", idx=0, key="u0")
+    seg = _TurnSegment(role="user", idx=0, key="u0", started_at=0.0)
     seg.pcm.extend(_make_silence_pcm(40))
     out = tmp_path / "out.wav"
     write_stereo_mixdown(segments=[seg], out_path=out)
@@ -237,6 +237,32 @@ def test_write_stereo_mixdown_round_trips(tmp_path: Path):
         assert w.getnchannels() == 2
         assert w.getframerate() == SAMPLE_RATE
         assert w.getsampwidth() == SAMPLE_WIDTH_BYTES
+
+
+def test_write_stereo_mixdown_wall_clock_aligned(tmp_path: Path):
+    """Segments placed at their wall-clock offsets, with silence padding
+    between. Agent starts 0.5s after t0; total span = 1s (agent 0.5–1.0s)."""
+    user = _TurnSegment(role="user", idx=0, key="u0", started_at=10.0)
+    user.pcm.extend(_make_silence_pcm(200))  # 200ms
+    agent = _TurnSegment(role="agent", idx=1, key="a0", started_at=10.5)
+    agent.pcm.extend(_make_silence_pcm(500))  # 500ms
+
+    out = tmp_path / "wall_clock.wav"
+    write_stereo_mixdown(segments=[user, agent], out_path=out)
+
+    with wave.open(str(out), "rb") as w:
+        assert w.getnchannels() == 2
+        # t0 = 10.0, span = max(10.0+0.2, 10.5+0.5) - 10.0 = 1.0s = 48000 frames
+        assert w.getnframes() == SAMPLE_RATE
+
+
+def test_write_stereo_mixdown_handles_empty_segments(tmp_path: Path):
+    """All-silent input: produces a valid empty stereo WAV (header only)."""
+    out = tmp_path / "empty.wav"
+    write_stereo_mixdown(segments=[], out_path=out)
+    with wave.open(str(out), "rb") as w:
+        assert w.getnchannels() == 2
+        assert w.getnframes() == 0
 
 
 def test_runtime_publishes_recorded_user_turn_and_produces_mixdown(tmp_path: Path):
@@ -295,8 +321,15 @@ def test_runtime_captures_agent_turn_via_transcription(tmp_path: Path):
     out = Path(result.full_audio_path)
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2
-        # 40 ms user + 40 ms agent = 80 ms = 3840 frames at 48k.
-        assert w.getnframes() == SAMPLE_RATE * 80 // 1000
+        # Wall-clock-aligned mixdown: file spans from t0 (earliest segment
+        # `started_at`) to the latest `started_at + duration`. In this test
+        # the turns run back-to-back at ~test-machine speed, so the file
+        # length is at least the agent turn (40ms = 1920 frames at 48kHz)
+        # and at most user+agent (80ms = 3840 frames). The legacy
+        # turn-sequential layout was always exactly 80ms; the new layout
+        # depends on real timing.
+        nframes = w.getnframes()
+        assert SAMPLE_RATE * 40 // 1000 <= nframes <= SAMPLE_RATE * 80 // 1000
 
 
 def test_runtime_raises_agent_not_joined_on_timeout(tmp_path: Path):

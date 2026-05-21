@@ -24,54 +24,23 @@ export interface ExtractedModelUsage {
 	latencyMs: number | null;
 }
 
-export interface ExtractedAssertion {
-	turnIdx: number;
-	name: string;
-	status: "passed" | "failed" | "errored";
-	message: string | null;
-	recordedAt: string;
-}
-
-export interface ExtractedJudge {
-	status: "passed" | "failed" | "errored";
-	score: number | null;
-	reason: string | null;
-	error: string | null;
-}
-
-export interface ExtractedTurnUpdate {
-	idx: number;
-	role: "user" | "agent";
-	key: string | null;
-	startedAt: string | null;
-	endedAt: string | null;
-	transcript: string | null;
-	audioPath: string | null;
-}
-
 /**
- * Output of matching a span against a vocabulary. A single span can
- * produce multiple downstream rows — e.g. a tool-call span typically
- * carries one tool_call AND should also be persisted as a raw span.
+ * Output of matching a span against a vocabulary. A single span can produce
+ * one or more downstream extracted rows (tool_calls, model_usage) AND should
+ * be persisted as a raw span.
+ *
+ * xray.turn / xray.judge / xray.assertion / xray.stage spans are accepted
+ * (no rejection) but no longer produce structured rows — turn/judge/assertion
+ * truth lives elsewhere in the audio-ground-truth model.
  */
 export interface VocabularyExtraction {
 	vocabulary: SpanVocabulary;
 	toolCalls?: ExtractedToolCall[];
 	modelUsage?: ExtractedModelUsage[];
-	assertions?: ExtractedAssertion[];
-	judge?: ExtractedJudge;
-	turnUpdates?: ExtractedTurnUpdate[];
 	/** The narrowed attribute bag persisted on `spans.attributes_json`. */
 	attributes: FlatAttributes;
 }
 
-/**
- * A vocabulary recognizes some span shapes and ignores others. Returning
- * `null` means "not for me" — the receiver falls through to the next
- * vocabulary, and finally drops the span if nobody claims it. The
- * vocabulary identity travels on the returned `VocabularyExtraction.vocabulary`
- * field; there's no separate `id` on the matcher itself.
- */
 export type SpanVocabularyMatcher = (
 	span: ProjectedSpan,
 	resource: FlatAttributes,

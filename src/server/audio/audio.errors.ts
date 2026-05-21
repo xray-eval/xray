@@ -7,18 +7,16 @@ export class AudioError extends Error {
 	}
 }
 
-/** Replay id, turn idx, or content-type failed validation at the boundary. */
 export class InvalidAudioPathError extends AudioError {
 	readonly issues: readonly BaseIssue<unknown>[];
 
 	constructor(issues: readonly BaseIssue<unknown>[]) {
-		super("Invalid replay id or turn idx in audio URL");
+		super("Invalid replay id in audio URL");
 		this.name = "InvalidAudioPathError";
 		this.issues = issues;
 	}
 }
 
-/** Upload arrived with a Content-Type we don't store under a known extension. */
 export class UnsupportedAudioContentTypeError extends AudioError {
 	readonly contentType: string | null;
 
@@ -29,7 +27,6 @@ export class UnsupportedAudioContentTypeError extends AudioError {
 	}
 }
 
-/** Upload body exceeded `MAX_AUDIO_BYTES`. */
 export class AudioBodyTooLargeError extends AudioError {
 	readonly maxBytes: number;
 
@@ -40,42 +37,16 @@ export class AudioBodyTooLargeError extends AudioError {
 	}
 }
 
-/** Upload referenced a (replayId, turnIdx) that does not exist in the store. */
-export class AudioTurnNotFoundError extends AudioError {
-	readonly replayId: string;
-	readonly turnIdx: number;
-
-	constructor(replayId: string, turnIdx: number) {
-		super(`No turn with idx ${turnIdx} in replay "${replayId}"`);
-		this.name = "AudioTurnNotFoundError";
-		this.replayId = replayId;
-		this.turnIdx = turnIdx;
-	}
-}
-
-/** GET request landed on a turn/replay with no audio uploaded. */
 export class AudioNotUploadedError extends AudioError {
 	readonly replayId: string;
-	readonly turnIdx: number | null;
 
-	constructor(replayId: string, turnIdx: number | null = null) {
-		super(
-			turnIdx === null
-				? `No full-replay audio uploaded for replay "${replayId}"`
-				: `No audio uploaded for turn ${turnIdx} in replay "${replayId}"`,
-		);
+	constructor(replayId: string) {
+		super(`No audio uploaded for replay "${replayId}"`);
 		this.name = "AudioNotUploadedError";
 		this.replayId = replayId;
-		this.turnIdx = turnIdx;
 	}
 }
 
-/**
- * Resolved on-disk path landed outside the configured `XRAY_AUDIO_ROOT`.
- * The store mints paths server-side, so this fires only on tampered DB
- * rows or a misconfigured root — surface it loudly rather than serve
- * arbitrary filesystem content.
- */
 export class AudioPathOutsideRootError extends AudioError {
 	readonly attemptedPath: string;
 	readonly audioRoot: string;
@@ -88,12 +59,78 @@ export class AudioPathOutsideRootError extends AudioError {
 	}
 }
 
-/** Replay id failed lookup at upload time. */
 export class AudioReplayNotFoundError extends AudioError {
 	readonly replayId: string;
 	constructor(replayId: string) {
 		super(`Replay "${replayId}" not found`);
 		this.name = "AudioReplayNotFoundError";
 		this.replayId = replayId;
+	}
+}
+
+/** Uploaded WAV failed format validation. */
+export class InvalidWavFormatError extends AudioError {
+	readonly reason: string;
+	constructor(reason: string) {
+		super(`Invalid WAV: ${reason}`);
+		this.name = "InvalidWavFormatError";
+		this.reason = reason;
+	}
+}
+
+/**
+ * Caller tried to upload audio for a replay whose `lifecycle_state` doesn't
+ * allow it. Allowed states: `pending`, `running`, `recording_uploaded`. The
+ * forbidden states are:
+ *   - `analyzing` — a worker is mid-run; a fresh WAV would race the VAD pass
+ *     and the worker's transaction.
+ *   - `completed` / `failed` — terminal; we don't unwind, and a re-upload
+ *     would leave stale `replay_turns` + `speech_segments` (the previous
+ *     analysis's output) dangling until somebody invoked /analyze again.
+ *
+ * Maps to HTTP 409. Mirrors the PATCH-side `ReplayLifecycleTransitionError`
+ * guard so both write paths are consistent.
+ */
+export class ReplayUploadStateError extends AudioError {
+	readonly replayId: string;
+	readonly currentState: string;
+	constructor(replayId: string, currentState: string) {
+		super(`Replay "${replayId}" is in state "${currentState}" — upload not allowed`);
+		this.name = "ReplayUploadStateError";
+		this.replayId = replayId;
+		this.currentState = currentState;
+	}
+}
+
+/**
+ * Stored `audio_path` has an extension that doesn't match any known
+ * `AudioExtension`. Caller cannot trigger this on the upload path — the
+ * extension is derived server-side from a validated `AudioContentType`. It
+ * fires only on the read path when the DB row was hand-edited or written by
+ * an older schema. Maps to HTTP 500 alongside `AudioPathOutsideRootError`.
+ */
+export class InvalidAudioExtensionError extends AudioError {
+	readonly relativePath: string;
+	readonly issues: readonly BaseIssue<unknown>[];
+
+	constructor(relativePath: string, issues: readonly BaseIssue<unknown>[]) {
+		super(`Stored audio path "${relativePath}" has an unsupported extension`);
+		this.name = "InvalidAudioExtensionError";
+		this.relativePath = relativePath;
+		this.issues = issues;
+	}
+}
+
+/**
+ * `buildTurn` was called with zero segments, which the caller's loop is meant
+ * to prevent. Thrown only as a type-narrowing guard; never expected at
+ * runtime. Maps to HTTP 500.
+ */
+export class AudioTurnsInvariantError extends AudioError {
+	readonly reason: string;
+	constructor(reason: string) {
+		super(`Audio turns invariant violated: ${reason}`);
+		this.name = "AudioTurnsInvariantError";
+		this.reason = reason;
 	}
 }

@@ -21,6 +21,10 @@ const EnvSchema = v.object({
 	// replay id. Defaults under XRAY_DATA_DIR if unset so a fresh `docker run`
 	// works without operator intervention.
 	XRAY_AUDIO_ROOT: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// bunqueue's own SQLite file (separate from xray.db — bunqueue opens its
+	// own DB; see `.claude/rules/single-image-distribution.md` §4 for the
+	// "one volume, two files" tradeoff). Defaults under XRAY_DATA_DIR.
+	BUNQUEUE_DATA_PATH: v.optional(v.pipe(v.string(), v.nonEmpty())),
 });
 
 export type Env = v.InferOutput<typeof EnvSchema>;

@@ -1,7 +1,5 @@
 import * as v from "valibot";
 
-/** Aliases (`audio/mpeg` ↔ `audio/mp3`, `audio/x-wav` ↔ `audio/wav`)
- *  collapse onto one extension so two headers, same bytes → same file. */
 export const CONTENT_TYPE_TO_EXTENSION = {
 	"audio/opus": "opus",
 	"audio/ogg": "ogg",
@@ -32,8 +30,6 @@ const ALL_EXTENSIONS = [
 export const AudioContentTypeSchema = v.picklist(ALL_CONTENT_TYPES);
 export const AudioExtensionSchema = v.picklist(ALL_EXTENSIONS);
 
-/** `.mp3` could legally be `audio/mp3` or `audio/mpeg` — pick the
- *  IANA-registered one for the response. */
 export const EXTENSION_TO_RESPONSE_CONTENT_TYPE: Record<AudioExtension, string> = {
 	opus: "audio/opus",
 	ogg: "audio/ogg",
@@ -42,21 +38,7 @@ export const EXTENSION_TO_RESPONSE_CONTENT_TYPE: Record<AudioExtension, string> 
 	wav: "audio/wav",
 };
 
-/** Capped so a misbehaving client can't OOM the process with one POST. */
 export const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
-
-const MAX_TURN_IDX = 1_000_000;
-export const TurnIdxParamSchema = v.pipe(
-	v.string(),
-	v.regex(/^[0-9]+$/),
-	v.transform((s) => Number(s)),
-	v.integer(),
-	v.minValue(0),
-	v.maxValue(MAX_TURN_IDX),
-);
-
-/** OpenAPI-shape mirror (no transform) so docs render correctly. */
-export const TurnIdxParamDocSchema = v.pipe(v.string(), v.regex(/^[0-9]+$/));
 
 export const UploadAudioResponseSchema = v.object({
 	ok: v.literal(true),
@@ -68,4 +50,42 @@ export interface AudioStream {
 	readonly stream: ReadableStream<Uint8Array>;
 	readonly contentLength: number;
 	readonly contentType: string;
+}
+
+// Audio processing (WAV + VAD + turns). These types are the boundary between
+// `audio.wav.ts`, `audio.vad.ts`, and `audio.turns.ts`.
+
+export interface StereoWav {
+	readonly sampleRate: number;
+	readonly bitsPerSample: 16;
+	readonly left: Int16Array;
+	readonly right: Int16Array;
+}
+
+export interface VadSegment {
+	readonly startMs: number;
+	readonly endMs: number;
+}
+
+export interface DerivedTurn {
+	readonly idx: number;
+	readonly role: "user" | "agent";
+	readonly turnStartMs: number;
+	readonly turnEndMs: number;
+	readonly voiceStartMs: number;
+	readonly voiceEndMs: number;
+}
+
+export interface VadConfig {
+	/** Frame size in milliseconds. 30ms is the conventional default. */
+	frameDurationMs?: number;
+	/** Voiced if mean squared energy per sample is above this. Tuned per fixture. */
+	energyThreshold?: number;
+	/** Merge adjacent voiced runs if their gap is ≤ this many ms. */
+	mergeGapMs?: number;
+	/** Discard voiced runs shorter than this many ms (cough, breath, noise). */
+	minSegmentMs?: number;
+	/** Zero-crossing-rate gate: voiced frames must have ZCR in [min, max]. */
+	zcrMin?: number;
+	zcrMax?: number;
 }

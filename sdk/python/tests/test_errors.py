@@ -20,13 +20,13 @@ from xray.errors import (
 @pytest.mark.parametrize(
     "ctor,expected",
     [
-        (lambda: RuntimeBindError("bind first"), "sdk_aborted"),
+        (lambda: RuntimeBindError("bind first"), "driver_aborted"),
         (lambda: AgentNotJoinedError("room-1", 5.0), "agent_not_joined"),
         (lambda: AudioMissingError("missing.wav", turn_idx=0), "audio_missing"),
-        (lambda: AudioTooLargeError(byte_size=99, max_bytes=10), "runtime_error"),
-        (lambda: MixdownError("oops"), "runtime_error"),
-        (lambda: LiveKitDependencyError("install [livekit]"), "runtime_error"),
-        (lambda: VersionFingerprintMismatchError("conv-A", "v1"), "sdk_aborted"),
+        (lambda: AudioTooLargeError(byte_size=99, max_bytes=10), "driver_aborted"),
+        (lambda: MixdownError("oops"), "driver_aborted"),
+        (lambda: LiveKitDependencyError("install [livekit]"), "driver_aborted"),
+        (lambda: VersionFingerprintMismatchError("conv-A", "v1"), "driver_aborted"),
     ],
 )
 def test_each_error_carries_its_failure_reason(
