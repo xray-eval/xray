@@ -15,9 +15,11 @@ per-package list is reproducible from the committed lockfile via:
 
 The `Supply-chain audit` GitHub workflow runs
 `actions/dependency-review-action` on every pull request with a
-`deny-licenses` list covering GPL-*, AGPL-*, and SSPL-*. A PR that
-introduces a dependency under any of those licenses fails the check
-before merge.
+`deny-licenses` list. That list — in
+`.github/workflows/supply-chain.yml` — is the single source of truth
+for which licenses are forbidden in production deps; it covers every
+copyleft family. A PR that introduces a dependency under any of
+those licenses fails the check before merge.
 
 ---
 
@@ -62,8 +64,7 @@ when the fonts are redistributed.
   (<https://github.com/RKDronel/Onest>). Packaged as
   `@fontsource-variable/onest`.
 
-### All other categories (MIT / Apache-2.0 / BSD / ISC / 0BSD /
-Unlicense / CC0)
+### All other categories (MIT / Apache-2.0 / BSD / ISC / 0BSD / Unlicense / CC0)
 
 Each individual package preserves its own copyright header inside
 `node_modules/<package>/LICENSE` (or equivalent). Those headers
