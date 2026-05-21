@@ -1,10 +1,11 @@
 """Test-definition primitives.
 
 A ``Conversation`` is the dev-authored spec: an ordered list of ``Turn``\\ s,
-plus per-turn assertion predicates. The SDK computes a content hash over
-the turns (including sha256 of per-turn ``RecordedAudio`` bytes) that
-identifies the conversation server-side — there is no dev-set id. The
-``name`` field is a free-form display label only.
+plus per-turn assertion predicates. The server identifies the conversation
+by a content hash it computes itself — the SDK ships the spec (and any
+``RecordedAudio`` bytes via multipart file parts) and reads the hash back
+from the server's response. The ``name`` field is a free-form display
+label only.
 
 Type safety: ``AudioRef`` is a discriminated union (``RecordedAudio`` vs
 ``TtsAudio``), and wire payloads are ``TypedDict``\\ s. See
@@ -13,18 +14,13 @@ Type safety: ``AudioRef`` is a discriminated union (``RecordedAudio`` vs
 
 from __future__ import annotations
 
-import hashlib
-import json
-import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Literal, TypeAlias, TypedDict
 
 from typing_extensions import NotRequired, assert_never
 
 from ._json import JsonObject
-from .errors import AudioMissingError
 
 Role: TypeAlias = Literal["user", "agent"]
 AssertionStatus: TypeAlias = Literal["passed", "failed", "errored"]
@@ -109,12 +105,13 @@ class Turn:
 class Conversation:
     """The dev-authored test definition.
 
-    Identity is the SHA-256 content hash over the turn array (including
-    sha256 of per-turn ``RecordedAudio`` bytes). ``name`` is a free-form
-    display label only — renaming does NOT change the hash.
+    Server-computed identity: the server hashes the canonical turn JSON
+    (with sha256 of any uploaded ``RecordedAudio`` bytes substituted in)
+    and returns the result on `POST /v1/replays`. ``name`` is a free-form
+    display label — renaming does NOT change identity.
 
-    Frozen so a later field reassignment can't silently invalidate the
-    ``hash`` property's value.
+    Frozen so a stale ``Conversation`` reference can't silently drift after
+    being handed to the orchestrator.
     """
 
     name: str
@@ -127,35 +124,44 @@ class Conversation:
         if len(self.turns) == 0:
             raise ValueError("Conversation must have at least one turn")
 
-    @property
-    def hash(self) -> str:
-        """Content hash. Mirrors the server-side canonicalization — see
-        ``tests/fixtures/hash-parity.json`` for the cross-language wire
-        contract.
-
-        Per-file audio bytes-sha256 is memoized by ``(path, mtime_ns,
-        size)`` in :data:`_AUDIO_SHA256_CACHE` so an unchanged WAV isn't
-        re-read on each access.
-        """
-        return _hash_turns_wire([_turn_to_wire(t) for t in self.turns])
-
-    def to_replay_create_payload(
+    def to_replay_spec_payload(
         self,
         *,
         modality: Literal["voice"] = "voice",
         run_config: JsonObject | None = None,
-    ) -> ReplayCreateBody:
-        """POST body for ``/v1/replays``. The server recomputes the hash
-        from ``turns`` — we do NOT send the SDK-computed hash on the wire
-        (trust boundary)."""
-        body: ReplayCreateBody = {
+    ) -> ReplaySpecBody:
+        """JSON ``spec`` part of the multipart POST to ``/v1/replays``.
+
+        Recorded-audio turns are emitted as ``{kind: "recorded",
+        upload_key: f"audio_<idx>"}`` so the server can match each turn
+        to the corresponding multipart file part. The orchestrator builds
+        the matching file-part dict from :func:`recorded_audio_uploads`.
+        """
+        body: ReplaySpecBody = {
             "name": self.name,
-            "turns": [_turn_to_wire(t) for t in self.turns],
+            "turns": [_turn_to_wire(t, idx) for idx, t in enumerate(self.turns)],
             "modality": modality,
         }
         if run_config is not None:
             body["run_config"] = run_config
         return body
+
+    def recorded_audio_uploads(self) -> list[tuple[str, str]]:
+        """Pairs of (upload_key, file_path) for each RecordedAudio turn.
+
+        The orchestrator opens each file and adds it to the multipart body
+        under the matching ``upload_key``. Order is the turn order so
+        ``upload_key`` is unique per conversation.
+        """
+        return [
+            (_recorded_upload_key(idx), turn.audio.path)
+            for idx, turn in enumerate(self.turns)
+            if isinstance(turn.audio, RecordedAudio)
+        ]
+
+
+def _recorded_upload_key(turn_idx: int) -> str:
+    return f"audio_{turn_idx}"
 
 
 # ─── Wire payloads (TypedDicts) ───────────────────────────────────────
@@ -163,7 +169,7 @@ class Conversation:
 
 class RecordedAudioWirePayload(TypedDict):
     kind: Literal["recorded"]
-    sha256: str
+    upload_key: str
 
 
 class TtsAudioWirePayload(TypedDict):
@@ -181,7 +187,7 @@ class TurnWirePayload(TypedDict):
     audio: NotRequired[AudioWirePayload]
 
 
-class ReplayCreateBody(TypedDict):
+class ReplaySpecBody(TypedDict):
     name: str
     turns: list[TurnWirePayload]
     modality: Literal["voice"]
@@ -191,10 +197,10 @@ class ReplayCreateBody(TypedDict):
 # ─── Wire encoders ────────────────────────────────────────────────────
 
 
-def _audio_to_wire(audio: AudioRef) -> AudioWirePayload:
+def _audio_to_wire(audio: AudioRef, turn_idx: int) -> AudioWirePayload:
     match audio:
-        case RecordedAudio(path=path):
-            return {"kind": "recorded", "sha256": _sha256_file(path)}
+        case RecordedAudio():
+            return {"kind": "recorded", "upload_key": _recorded_upload_key(turn_idx)}
         case TtsAudio(voice_id=voice_id):
             if voice_id is None:
                 return {"kind": "tts"}
@@ -203,108 +209,15 @@ def _audio_to_wire(audio: AudioRef) -> AudioWirePayload:
             assert_never(audio)
 
 
-def _turn_to_wire(turn: Turn) -> TurnWirePayload:
+def _turn_to_wire(turn: Turn, turn_idx: int) -> TurnWirePayload:
     out: TurnWirePayload = {"role": turn.role}
     if turn.text is not None:
         out["text"] = turn.text
     if turn.key is not None:
         out["key"] = turn.key
     if turn.audio is not None:
-        out["audio"] = _audio_to_wire(turn.audio)
+        out["audio"] = _audio_to_wire(turn.audio, turn_idx)
     return out
-
-
-# ─── Canonical encoding + audio bytes sha256 (cached per file) ────────
-
-
-def _canonical_turns_json(turns_wire: list[TurnWirePayload]) -> str:
-    """Canonical JSON encoding of an already-built turn-wire payload list.
-
-    Pinned wire contract shared with the TS server — see
-    ``src/server/conversations/conversations.service.ts::canonicalStringify``
-    and ``tests/fixtures/hash-parity.json`` for the parity vector.
-
-    Numbers are rejected for the same reason as the TS side: ``json.dumps``
-    and ``JSON.stringify`` disagree on float formatting (``1.0`` ↔ ``"1.0"``
-    vs ``"1"``), large-int boundaries, and ``-0``. Until a numeric field is
-    actually needed, locking the canonical input to null/bool/str/dict/list
-    keeps the SDK and server hashes bit-identical by construction.
-    """
-    encoded = json.dumps(turns_wire, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
-    _reject_numeric_tokens(encoded)
-    return encoded
-
-
-def _reject_numeric_tokens(encoded: str) -> None:
-    """Scan a JSON-encoded string and raise if any numeric token sits outside
-    a string literal.
-
-    JSON only allows alphabetic tokens outside strings for ``true`` / ``false``
-    / ``null`` — so any digit (or leading ``-``) outside a string is the start
-    of a number. ``\\uXXXX`` escapes contain hex but live inside strings.
-    Cheaper and less narrow-fighty than a typed tree walk over ``object``.
-    """
-    in_string = False
-    escape = False
-    for ch in encoded:
-        if escape:
-            escape = False
-            continue
-        if in_string:
-            if ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
-            continue
-        if ch == '"':
-            in_string = True
-            continue
-        if ch == "-" or ch.isdigit():
-            raise TypeError(
-                "Cannot canonicalize a number in conversation turns: "
-                "json.dumps and JSON.stringify disagree on numeric "
-                "formatting (floats, large ints, -0). Add a normalized "
-                "encoding to both sides before introducing a numeric field."
-            )
-
-
-def _hash_turns_wire(turns_wire: list[TurnWirePayload]) -> str:
-    """SHA-256 hex over :func:`_canonical_turns_json`."""
-    return hashlib.sha256(_canonical_turns_json(turns_wire).encode("utf-8")).hexdigest()
-
-
-_AUDIO_SHA256_CACHE: dict[tuple[str, int, int], str] = {}
-
-
-def _sha256_file(path: str) -> str:
-    """SHA-256 hex of file bytes, cached by (path, mtime_ns, size).
-
-    Cache key includes mtime + size so editing the file invalidates the
-    entry on the next access. Raises :class:`AudioMissingError` if the
-    file is missing or unreadable.
-    """
-    p = Path(path)
-    try:
-        st = os.stat(p)
-    except OSError as e:
-        raise AudioMissingError(f"recorded audio file not readable: {p}") from e
-    key = (str(p), st.st_mtime_ns, st.st_size)
-    cached = _AUDIO_SHA256_CACHE.get(key)
-    if cached is not None:
-        return cached
-    h = hashlib.sha256()
-    try:
-        with p.open("rb") as f:
-            while True:
-                chunk = f.read(1 << 20)
-                if not chunk:
-                    break
-                h.update(chunk)
-    except OSError as e:
-        raise AudioMissingError(f"recorded audio file not readable: {p}") from e
-    digest = h.hexdigest()
-    _AUDIO_SHA256_CACHE[key] = digest
-    return digest
 
 
 # ─── Runtime-produced records ─────────────────────────────────────────
@@ -398,8 +311,8 @@ __all__ = [
     "ModelUsage",
     "RecordedAudio",
     "RecordedAudioWirePayload",
-    "ReplayCreateBody",
     "ReplayResult",
+    "ReplaySpecBody",
     "Role",
     "StageTimings",
     "ToolCall",

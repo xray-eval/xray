@@ -142,7 +142,7 @@ async function main() {
 }
 
 async function postReplay(idx: number): Promise<{ id: string; conversationHash: string }> {
-	const body = {
+	const spec = {
 		name: CONVERSATION_NAME,
 		turns: TURNS,
 		modality: "voice",
@@ -151,11 +151,9 @@ async function postReplay(idx: number): Promise<{ id: string; conversationHash: 
 			temperature: 0.3 + idx * 0.2,
 		},
 	};
-	const res = await fetch(`${BASE}/v1/replays`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify(body),
-	});
+	const form = new FormData();
+	form.set("spec", JSON.stringify(spec));
+	const res = await fetch(`${BASE}/v1/replays`, { method: "POST", body: form });
 	if (!res.ok) {
 		throw new SeedRequestError("POST", "/v1/replays", res.status, res.statusText, await res.text());
 	}

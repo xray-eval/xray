@@ -5,48 +5,93 @@ import { conversations, replays } from "@/server/store/schema.ts";
 import type { Store, StoreDbOrTx } from "@/server/store/store.ts";
 import type { ConversationRow } from "@/server/store/types.ts";
 
+import { RecordedAudioUploadKeyError } from "./conversations.errors.ts";
 import type {
 	ConversationResponse,
 	ConversationSummary,
 	ConversationTurn,
+	ConversationTurnRequest,
 } from "./conversations.types.ts";
 import { ConversationTurnSchema } from "./conversations.types.ts";
 
 const TurnArraySchema = v.array(ConversationTurnSchema);
 
 /**
- * Compute the canonical encoding of a turn array used as the input to the
- * conversation hash. Both the SDK and server must produce bit-identical
- * bytes here; a parity fixture (`tests/fixtures/hash-parity.json`) pins
- * the contract.
+ * Translate one request-form turn into its canonical/stored form. For a
+ * `RecordedAudio` turn that means: look up the bytes by `upload_key`,
+ * sha256 them, and emit `{kind: "recorded", sha256: <hex>}`. Used by
+ * `materializeRequestTurns` (one walk per replay creation).
+ */
+async function materializeOneTurn(
+	turn: ConversationTurnRequest,
+	audioBytesByKey: ReadonlyMap<string, Uint8Array<ArrayBuffer>>,
+	sha256ByKey: Map<string, string>,
+): Promise<ConversationTurn> {
+	const { audio, ...rest } = turn;
+	if (audio === undefined) return rest;
+	if (audio.kind === "tts") return { ...rest, audio };
+
+	const key = audio.upload_key;
+	const bytes = audioBytesByKey.get(key);
+	if (bytes === undefined) throw new RecordedAudioUploadKeyError(key, "missing");
+
+	const cached = sha256ByKey.get(key);
+	const sha256 = cached ?? (await sha256Hex(bytes));
+	if (cached === undefined) sha256ByKey.set(key, sha256);
+
+	return { ...rest, audio: { kind: "recorded", sha256 } };
+}
+
+/** SHA-256 hex (64-char lowercase) of an arbitrary byte buffer. */
+async function sha256Hex(bytes: BufferSource): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", bytes);
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export interface MaterializeResult {
+	canonicalTurns: ConversationTurn[];
+	/** Map keyed by `upload_key` → sha256 of the uploaded bytes. */
+	audioSha256ByKey: Map<string, string>;
+}
+
+/**
+ * Walk a request turn array, hash each referenced audio part, and produce
+ * the canonical/stored form (with `{kind: "recorded", sha256}` substituted
+ * in for `{kind: "recorded", upload_key}`).
  *
- * Rules: sorted keys, no whitespace, ASCII-safe (any non-ASCII is escaped).
+ * Throws `RecordedAudioUploadKeyMissingError` if a turn references a key
+ * that isn't present in the multipart body. Throws
+ * `RecordedAudioUploadKeyMismatchError` if the body has extra file parts
+ * no turn references — surfaced as a 400 so silent typos don't ghost-upload
+ * orphan audio.
  */
-export function canonicalizeTurns(turns: readonly ConversationTurn[]): string {
-	return canonicalStringify(turns);
+export async function materializeRequestTurns(
+	requestTurns: readonly ConversationTurnRequest[],
+	audioBytesByKey: ReadonlyMap<string, Uint8Array<ArrayBuffer>>,
+): Promise<MaterializeResult> {
+	const sha256ByKey = new Map<string, string>();
+	const canonicalTurns: ConversationTurn[] = [];
+	const referencedKeys = new Set<string>();
+	for (const turn of requestTurns) {
+		canonicalTurns.push(await materializeOneTurn(turn, audioBytesByKey, sha256ByKey));
+		if (turn.audio?.kind === "recorded") referencedKeys.add(turn.audio.upload_key);
+	}
+	for (const key of audioBytesByKey.keys()) {
+		if (!referencedKeys.has(key)) throw new RecordedAudioUploadKeyError(key, "unreferenced");
+	}
+	return { canonicalTurns, audioSha256ByKey: sha256ByKey };
 }
 
 /**
- * SHA-256 hex (64-char lowercase) over `canonicalizeTurns(turns)`. The
- * SDK computes the same hash before POSTing; the server recomputes from
- * the embedded spec on the wire — never trusts an SDK-computed value.
- */
-export async function computeConversationHash(turns: readonly ConversationTurn[]): Promise<string> {
-	return (await canonicalizeAndHashTurns(turns)).hash;
-}
-
-/**
- * Single walk over the turn tree: returns both the canonical JSON and its
- * SHA-256 hex. `createReplay` uses this so the bytes stored in `turns_json`
- * are byte-identical to the bytes that produced the conversation hash —
- * and the tree is walked once, not twice.
+ * Canonical-JSON encode + SHA-256 hex a canonical turn array. The conversation
+ * hash is this value; the bytes stored in `turns_json` are this canonical JSON.
+ * Server-only — the SDK never hashes anything.
  */
 export async function canonicalizeAndHashTurns(
 	turns: readonly ConversationTurn[],
 ): Promise<{ json: string; hash: string }> {
-	const json = canonicalizeTurns(turns);
-	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(json));
-	const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+	const json = canonicalStringify(turns);
+	const hash = await sha256Hex(new TextEncoder().encode(json));
 	return { json, hash };
 }
 
@@ -154,24 +199,24 @@ export function getConversationByHash(store: Store, hash: string): ConversationR
 }
 
 /**
- * Canonical JSON: sorted keys, no whitespace, ASCII-only output. Mirrors
- * Python's `json.dumps(..., separators=(",", ":"), sort_keys=True,
- * ensure_ascii=True)`. Used for the conversation hash; the parity fixture
- * exercises it.
+ * Canonical JSON: sorted keys, no whitespace, ASCII-only output. The
+ * conversation hash is `sha256(canonicalStringify(canonicalTurns))`. This
+ * is now server-only (the SDK no longer hashes), but the encoding is still
+ * pinned because changing it would invalidate every stored conversation
+ * hash retroactively.
  *
  * Numbers are deliberately rejected: `JSON.stringify(1.0)` is `"1"` while
- * Python's `json.dumps(1.0)` is `"1.0"`, and the two encoders disagree on
- * large-int boundaries and `-0`. Until a numeric field is actually needed,
- * locking the input to null/bool/string/object/array keeps the SDK and
- * server hash bit-identical by construction. Mirror in
- * `sdk/python/src/xray/conversation.py::_canonical_turns_json`.
+ * Python's `json.dumps(1.0)` is `"1.0"`, and JS+Python disagree on large-int
+ * boundaries and `-0`. Until a numeric field is actually needed, locking
+ * the input to null/bool/string/object/array forecloses an entire class of
+ * "the encoder picked something surprising for this value" bugs.
  */
 export function canonicalStringify(value: unknown): string {
 	if (value === null) return "null";
 	if (typeof value === "boolean") return value ? "true" : "false";
 	if (typeof value === "number") {
 		throw new TypeError(
-			"Cannot canonicalize a number: JSON.stringify and Python's json.dumps disagree on numeric formatting (floats, large ints, -0). Add a normalized encoding to both sides before introducing a numeric field.",
+			"Cannot canonicalize a number: JS+Python JSON encoders disagree on numeric formatting (floats, large ints, -0). Add a normalized encoding before introducing a numeric field.",
 		);
 	}
 	if (typeof value === "string") return escapeAscii(value);

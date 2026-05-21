@@ -4,8 +4,8 @@ Boots the xray server as a `bun` subprocess against a temp DB, drives one
 replay through `xray.run(...)` with a stub Runtime, and asserts the wire
 contract holds end-to-end:
 
-- POST /v1/replays accepts the SDK's embedded-spec payload.
-- The server's recomputed `conversation_hash` matches the SDK's hash.
+- POST /v1/replays (multipart) accepts the SDK's spec.
+- The server returns a stable 64-char `conversation_hash` it computed.
 - A second run with byte-identical turns reuses the same conversation row
   (validates `ensureConversation` last-write-wins).
 - GET /v1/conversations/:hash returns the row.
@@ -112,7 +112,7 @@ async def xray_server(tmp_path: Path) -> AsyncIterator[str]:
             proc.kill()
 
 
-async def test_run_against_real_server_propagates_hash(xray_server: str):
+async def test_run_against_real_server_returns_conversation_hash(xray_server: str):
     conv = Conversation(
         name="integration test",
         turns=[Turn.user("hello", key="u0"), Turn.agent(key="a0")],
@@ -121,13 +121,12 @@ async def test_run_against_real_server_propagates_hash(xray_server: str):
 
     result = await run(conversation=conv, runtime=runtime, xray_url=xray_server)
 
-    # Server recomputed the same hash the SDK did — wire-contract sanity.
-    assert result.conversation_hash == conv.hash
+    assert len(result.conversation_hash) == 64
     assert result.name == "integration test"
     assert result.status == "completed"
     # Bind kwargs got propagated by the orchestrator.
     assert runtime.bound is not None
-    assert runtime.bound["conversation_hash"] == conv.hash
+    assert runtime.bound["conversation_hash"] == result.conversation_hash
 
 
 async def test_second_run_reuses_conversation_row(xray_server: str):
@@ -139,26 +138,27 @@ async def test_second_run_reuses_conversation_row(xray_server: str):
         name="renamed",  # name differs; hash should NOT
         turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")],
     )
-    assert conv1.hash == conv2.hash
 
     runtime1 = StubRuntime(num_turns=len(conv1.turns))
     runtime2 = StubRuntime(num_turns=len(conv2.turns))
-    await run(conversation=conv1, runtime=runtime1, xray_url=xray_server)
-    await run(conversation=conv2, runtime=runtime2, xray_url=xray_server)
+    result1 = await run(conversation=conv1, runtime=runtime1, xray_url=xray_server)
+    result2 = await run(conversation=conv2, runtime=runtime2, xray_url=xray_server)
 
-    # Server lists one conversation row with two replays; name is last-write-wins.
+    # Same turn structure ⇒ same conversation hash, regardless of name.
+    assert result1.conversation_hash == result2.conversation_hash
+
     async with httpx.AsyncClient(base_url=xray_server, timeout=5.0) as client:
         list_resp = await client.get("/v1/conversations")
         list_resp.raise_for_status()
         items = list_resp.json()["items"]
         assert len(items) == 1
-        assert items[0]["hash"] == conv1.hash
+        assert items[0]["hash"] == result1.conversation_hash
         assert items[0]["name"] == "renamed"
         assert items[0]["replays"] == 2
 
-        detail_resp = await client.get(f"/v1/conversations/{conv1.hash}/replays")
+        detail_resp = await client.get(f"/v1/conversations/{result1.conversation_hash}/replays")
         detail_resp.raise_for_status()
         replays = detail_resp.json()["items"]
         assert len(replays) == 2
         for r in replays:
-            assert r["conversation_hash"] == conv1.hash
+            assert r["conversation_hash"] == result1.conversation_hash

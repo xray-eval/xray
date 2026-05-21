@@ -1,4 +1,4 @@
-import type { ConversationTurn } from "./conversations.types.ts";
+import type { ConversationTurn, ConversationTurnRequest } from "./conversations.types.ts";
 
 export function makeConversationTurn(overrides: Partial<ConversationTurn> = {}): ConversationTurn {
 	// Agent turns carry no text in the canonical wire shape, so don't inherit
@@ -17,5 +17,14 @@ export function makeTurns(opts: MakeTurnsOptions = {}): ConversationTurn[] {
 	return [
 		makeConversationTurn({ role: "user", text: "hi", key: "u0" }),
 		makeConversationTurn({ role: "agent", key: "a0" }),
+	];
+}
+
+/** Request-form analogue of `makeTurns` — same shape, different audio union. */
+export function makeRequestTurns(overrides?: ConversationTurnRequest[]): ConversationTurnRequest[] {
+	if (overrides !== undefined) return overrides;
+	return [
+		{ role: "user", text: "hi", key: "u0" },
+		{ role: "agent", key: "a0" },
 	];
 }

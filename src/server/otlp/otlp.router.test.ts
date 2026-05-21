@@ -2,8 +2,10 @@ import { Hono } from "hono";
 import * as v from "valibot";
 
 import { readJson } from "@/server/core/test-utils.ts";
-import { createReplay } from "@/server/replays/replays.service.ts";
-import { makeCreateReplayRequest } from "@/server/replays/replays.test-utils.ts";
+import {
+	createReplayForTest,
+	makeCreateReplayRequest,
+} from "@/server/replays/replays.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import { createOtlpRouter } from "./otlp.router.ts";
@@ -13,7 +15,7 @@ import { describe, expect, it } from "bun:test";
 
 async function makeApp() {
 	const store = makeTempStore();
-	const replay = await createReplay(store, makeCreateReplayRequest());
+	const replay = await createReplayForTest(store, makeCreateReplayRequest());
 	const app = new Hono().route("/v1", createOtlpRouter(store));
 	return { app, store, replayId: replay.id };
 }

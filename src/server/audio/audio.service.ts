@@ -34,6 +34,41 @@ const UPLOAD_ALLOWED_STATES: readonly ReplayLifecycleState[] = [
 	"recording_uploaded",
 ];
 
+/**
+ * Save a recorded conversation-input audio file under a content-addressed
+ * path (`recorded/<sha256>.wav`). Idempotent: same bytes ⇒ same file ⇒
+ * `EEXIST` on the second write is the success signal, not a failure.
+ *
+ * Returns the relative path under `audioRoot`. The caller is expected to
+ * have already computed the sha256 from the bytes.
+ */
+export async function saveRecordedConversationAudio(
+	audioRoot: string,
+	sha256: string,
+	bytes: Uint8Array<ArrayBuffer>,
+): Promise<string> {
+	const relativePath = recordedRelativePath(sha256);
+	const absolutePath = resolveInsideRoot(audioRoot, relativePath);
+	await mkdir(dirname(absolutePath), { recursive: true });
+	try {
+		await writeFile(absolutePath, bytes, { flag: "wx" });
+	} catch (err) {
+		if (!isEexist(err)) throw err;
+	}
+	return relativePath;
+}
+
+function isEexist(err: unknown): boolean {
+	if (!(err instanceof Error) || !("code" in err)) return false;
+	const code: unknown = err.code;
+	return code === "EEXIST";
+}
+
+function recordedRelativePath(sha256: string): string {
+	return join("recorded", `${sha256}.wav`);
+}
+
+/** Upload the full-replay stereo WAV mixdown. */
 export async function uploadReplayAudio(
 	store: Store,
 	audioRoot: string,

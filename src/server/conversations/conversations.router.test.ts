@@ -2,8 +2,10 @@ import { Hono } from "hono";
 import * as v from "valibot";
 
 import { readJson } from "@/server/core/test-utils.ts";
-import { createReplay } from "@/server/replays/replays.service.ts";
-import { makeCreateReplayRequest } from "@/server/replays/replays.test-utils.ts";
+import {
+	createReplayForTest,
+	makeCreateReplayRequest,
+} from "@/server/replays/replays.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import { createConversationsRouter } from "./conversations.router.ts";
@@ -18,7 +20,7 @@ function makeApp() {
 describe("GET /v1/conversations", () => {
 	it("returns one row per content hash", async () => {
 		const { app, store } = makeApp();
-		await createReplay(
+		await createReplayForTest(
 			store,
 			makeCreateReplayRequest({
 				name: "alpha",
@@ -28,7 +30,7 @@ describe("GET /v1/conversations", () => {
 				],
 			}),
 		);
-		await createReplay(
+		await createReplayForTest(
 			store,
 			makeCreateReplayRequest({
 				name: "beta",
@@ -55,7 +57,7 @@ describe("GET /v1/conversations", () => {
 describe("GET /v1/conversations/:hash", () => {
 	it("returns the conversation row", async () => {
 		const { app, store } = makeApp();
-		const detail = await createReplay(store, makeCreateReplayRequest({ name: "x" }));
+		const detail = await createReplayForTest(store, makeCreateReplayRequest({ name: "x" }));
 		const hash = detail.conversation_hash;
 		const res = await app.request(`/v1/conversations/${hash}`);
 		expect(res.status).toBe(200);
@@ -84,8 +86,8 @@ describe("GET /v1/conversations/:hash/replays", () => {
 			{ role: "user" as const, text: "hi", key: "u0" },
 			{ role: "agent" as const, key: "a0" },
 		];
-		const first = await createReplay(store, makeCreateReplayRequest({ name: "n", turns }));
-		await createReplay(store, makeCreateReplayRequest({ name: "n", turns }));
+		const first = await createReplayForTest(store, makeCreateReplayRequest({ name: "n", turns }));
+		await createReplayForTest(store, makeCreateReplayRequest({ name: "n", turns }));
 		const res = await app.request(`/v1/conversations/${first.conversation_hash}/replays`);
 		expect(res.status).toBe(200);
 		const body = await readJson(res, v.object({ items: v.array(v.unknown()) }));

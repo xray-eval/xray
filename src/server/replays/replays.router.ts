@@ -7,6 +7,7 @@ import * as v from "valibot";
 
 import {
 	BodyTooLargeResponseSchema,
+	ConversationNotFoundResponseSchema,
 	openApiSchemaFromValibot,
 	ReplayNotFoundResponseSchema,
 	ValidationErrorResponseSchema,
@@ -16,6 +17,7 @@ import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
 import {
+	ConversationHashNotFoundError,
 	InvalidCompareSelectionError,
 	InvalidReplayIdError,
 	InvalidReplayRequestError,
@@ -46,10 +48,7 @@ import {
 	UpdateReplayRequestSchema,
 } from "./replays.types.ts";
 
-// Spec-payload limit only: the request embeds the full Conversation spec
-// (turns array). The stereo audio upload uses its own endpoint with its own
-// (much larger) cap. 256 KB matches MAX_CONVERSATION_BODY_BYTES.
-const MAX_REPLAY_BODY_BYTES = 256 * 1024;
+const MAX_REPLAY_BODY_BYTES = 64 * 1024;
 const MAX_COMPARE_BODY_BYTES = 16 * 1024;
 
 export function createReplaysRouter(
@@ -65,7 +64,7 @@ export function createReplaysRouter(
 			tags: ["Replays"],
 			summary: "Start a Replay",
 			description:
-				"Embeds the full Conversation spec (`name` + `turns`). The server computes the content hash from `turns` and upserts the conversation row by hash (last-write-wins on `name`) before creating the Replay row. Returns the detail with `status='running'` so the SDK can propagate `xray.replay.id` to the voice service before any agent spans flow.",
+				"Creates the Replay row eagerly so the SDK can propagate `xray.replay.id` as OTEL baggage on the LiveKit room metadata BEFORE the dev's agent emits its first span. Returns the full detail row with `lifecycle_state='pending'`.",
 			requestBody: {
 				required: true,
 				content: {
@@ -74,7 +73,7 @@ export function createReplaysRouter(
 			},
 			responses: {
 				"201": {
-					description: "Replay row created; status='running'.",
+					description: "Replay row created; lifecycle_state='pending'.",
 					content: {
 						"application/json": {
 							schema: openApiSchemaFromValibot(ReplayDetailResponseSchema),
@@ -85,6 +84,14 @@ export function createReplaysRouter(
 					description: "Body failed validation.",
 					content: {
 						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description: "`conversation_hash` not found — POST /v1/conversations first.",
+					content: {
+						"application/json": {
+							schema: openApiSchemaFromValibot(ConversationNotFoundResponseSchema),
+						},
 					},
 				},
 				"413": {
@@ -110,7 +117,7 @@ export function createReplaysRouter(
 			}
 			const parsed = v.safeParse(CreateReplayRequestSchema, raw);
 			if (!parsed.success) throw new InvalidReplayRequestError(parsed.issues);
-			const detail = await createReplay(store, parsed.output);
+			const detail = createReplay(store, parsed.output);
 			return c.json(detail, 201);
 		},
 	);
@@ -121,7 +128,7 @@ export function createReplaysRouter(
 			tags: ["Replays"],
 			summary: "Update a Replay",
 			description:
-				"Applies a partial update. Used by the SDK during a run to set `status`, `finished_at`, the judge result, the run's audio/transcript, and any updated `run_config`.",
+				"Applies a partial update. Used by the SDK during a run to set `lifecycle_state`, `finished_at`, and `failure_reason`.",
 			parameters: [
 				{
 					in: "path",
@@ -327,14 +334,6 @@ export function createReplaysRouter(
 					}
 				};
 
-				// `done` resolves when either the worker emits a terminal event
-				// (completed / failed) OR the client aborts. Routing the wait
-				// through this single Promise lets us run cleanup + unsubscribe
-				// exactly once on both paths. Hono's `streamSSE` `run()` calls
-				// `stream.close()` in a `finally` after the callback returns —
-				// so we don't close manually inside the listener (which used to
-				// leak the listener because `onAbort` doesn't fire on a
-				// server-initiated close).
 				const done = Promise.withResolvers<void>();
 				const unsubscribe = events.subscribe(id, (event) => {
 					void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).then(() => {
@@ -348,13 +347,6 @@ export function createReplaysRouter(
 					done.resolve();
 				});
 
-				// Initial state — clients pick up the row as it stands when they
-				// connect, without having to GET /replays/:id first. Subscribe
-				// fires synchronously before this await so any worker event
-				// emitted during the awaited write is queued behind it
-				// (Hono's stream writer is FIFO). The duplicate `state` event
-				// the listener may produce immediately after is shape-identical
-				// to the initial event — idempotent for the SDK.
 				const initialState: {
 					type: "state";
 					lifecycle_state: string;
@@ -440,10 +432,6 @@ export function createReplaysRouter(
 			}
 			const parsed = v.safeParse(CompareReplaysRequestSchema, raw);
 			if (!parsed.success) {
-				// Distinguish min/max range failures so the client can render a
-				// targeted "pick 2–8" message instead of a generic 400. We use
-				// a discriminating Valibot schema (object with a replay_ids
-				// array) rather than a cast — the safeParse narrows for free.
 				const rawIdsCheck = v.safeParse(v.object({ replay_ids: v.array(v.unknown()) }), raw);
 				if (rawIdsCheck.success) {
 					const len = rawIdsCheck.output.replay_ids.length;
@@ -471,6 +459,15 @@ export function createReplaysRouter(
 			)
 			.with(P.instanceOf(ReplayBodyTooLargeError), (e) =>
 				c.json({ error: "body_too_large", max_bytes: e.maxBytes }, 413),
+			)
+			.with(P.instanceOf(ConversationHashNotFoundError), (e) =>
+				c.json(
+					{
+						error: "conversation_not_found",
+						conversation_hash: e.conversationHash,
+					},
+					404,
+				),
 			)
 			.with(P.instanceOf(ReplayNotFoundError), (e) =>
 				c.json({ error: "replay_not_found", replay_id: e.replayId }, 404),

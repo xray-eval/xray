@@ -28,3 +28,30 @@ export class ConversationNotFoundError extends ConversationError {
 		this.conversationHash = conversationHash;
 	}
 }
+
+export type RecordedAudioUploadKeyReason = "missing" | "unreferenced";
+
+/**
+ * `POST /v1/replays` multipart body and the `spec` JSON's RecordedAudio
+ * upload_keys don't line up.
+ *
+ * - `missing`: a turn references `upload_key` but no file part with that name.
+ * - `unreferenced`: a file part is present but no turn references it.
+ *
+ * Both are mapped to 400 — silent drops would either lose audio (missing) or
+ * ghost-upload orphans (unreferenced).
+ */
+export class RecordedAudioUploadKeyError extends ConversationError {
+	readonly uploadKey: string;
+	readonly reason: RecordedAudioUploadKeyReason;
+	constructor(uploadKey: string, reason: RecordedAudioUploadKeyReason) {
+		super(
+			reason === "missing"
+				? `RecordedAudio turn references upload_key "${uploadKey}" but no file part with that name was uploaded`
+				: `Multipart file part "${uploadKey}" is not referenced by any RecordedAudio turn`,
+		);
+		this.name = "RecordedAudioUploadKeyError";
+		this.uploadKey = uploadKey;
+		this.reason = reason;
+	}
+}

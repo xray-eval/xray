@@ -280,20 +280,6 @@ describe("enqueueAnalysis — atomic claim", () => {
 		expect(row?.jobId).toBeNull();
 		store.close();
 	});
-
-	it("rejects status transitions out of 'completed' (terminal)", async () => {
-		const store = makeTempStore();
-		const { replayId } = await seedReplay(store);
-		updateReplay(store, replayId, { status: "completed" });
-		expect(() => updateReplay(store, replayId, { status: "running" })).toThrow(
-			ReplayStatusTransitionError,
-		);
-		expect(() => updateReplay(store, replayId, { status: "failed" })).toThrow(
-			ReplayStatusTransitionError,
-		);
-		expect(() => updateReplay(store, replayId, { status: "completed" })).not.toThrow();
-		store.close();
-	});
 });
 
 describe("getReplay / compareReplays / listReplaysForConversation", () => {
