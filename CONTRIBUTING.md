@@ -52,6 +52,48 @@ Every behavior lands red → green → refactor. The failing test goes in *first
 
 `pnpm docker:smoke` is the **single most important** local check — it is exactly what CI runs before publishing. If it passes locally, it passes in CI.
 
+## Parallel worktrees
+
+Working on two branches at once — or reviewing a PR without losing your
+current train of thought? Use a git worktree so each checkout gets its own
+`pnpm dev` container, host port, SQLite file, and `node_modules`:
+
+```bash
+bash scripts/new-worktree.sh feat/foo            # new branch from main
+bash scripts/new-worktree.sh fix/bar develop     # new branch from develop
+bash scripts/new-worktree.sh pr 67               # check out open PR #67 (requires gh)
+```
+
+The script creates `../xray-<slug>` (sibling of this repo), copies your
+`.env` so existing local secrets carry over (verify before committing — see
+[`.claude/rules/public-repo.md`](./.claude/rules/public-repo.md)), picks the
+lowest free port at or above 8081, appends `HOST_PORT` + `COMPOSE_PROJECT_NAME`
+to the new `.env`, and runs `pnpm install --frozen-lockfile`. The same
+summary is also written to `<dir>/.worktree-info` for deterministic lookup
+later.
+
+`compose.dev.yaml` reads `HOST_PORT` and `COMPOSE_PROJECT_NAME`, so each
+worktree's `pnpm dev` binds a distinct host port and gets its own named
+Docker volumes (`xray-<slug>_dev_data`, `xray-<slug>_dev_node_modules`). The
+main checkout keeps its `xray-dev` container and `:8080` port because
+`.env.example` pins `COMPOSE_PROJECT_NAME=xray` and leaves `HOST_PORT`
+commented out.
+
+If the script aborts partway through (e.g. `pnpm install` fails on a stale
+lockfile), it rolls back the partial worktree + branch so re-running starts
+from a clean slate. The required host tooling is `git`, `pnpm`, and (for
+`pr` mode) `gh`; the script checks each before touching anything on disk.
+
+Teardown (the script prints these too):
+
+```bash
+cd ../xray-feat-foo
+docker compose -f compose.dev.yaml down -v     # wipes the worktree's volumes
+cd -
+git worktree remove ../xray-feat-foo
+git branch -D feat/foo                          # name shown in .worktree-info
+```
+
 ## Code layout
 
 - **Vertical slices, not technical layers.** `src/adapters/elevenlabs/`, `src/graph/`, `src/inspector/` — each folder owns its own components, hooks, types, helpers. No top-level `components/`, `hooks/`, `services/`, `utils/` god-folders.

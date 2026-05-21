@@ -14,7 +14,13 @@ services:
       args:
         UID: "${UID:-1000}"
         GID: "${GID:-1000}"
-    container_name: xray-dev
+    # Container name and named volumes below both bind to COMPOSE_PROJECT_NAME
+    # so parallel worktrees don't collide on the Docker engine's global name
+    # table. `.env.example` pins it to `xray` (so the dev container stays
+    # `xray-dev` regardless of how the directory is named); scripts/new-worktree.sh
+    # writes a slug per worktree. Fallback default `xray` is for the rare case
+    # where neither is present.
+    container_name: ${COMPOSE_PROJECT_NAME:-xray}-dev
     # Run as the host user so anything pnpm writes into the bind-mounted repo
     # is owned by the developer, not root. A compromised dev dep can no longer
     # rewrite .git/hooks or stage commits via root-write to /app.
@@ -33,7 +39,15 @@ services:
       - PORT=8080
     env_file:
       - .env
-    command: sh -c "pnpm install --frozen-lockfile && bun --hot src/server/main.ts"
+    # `--ignore-scripts` skips the root project's `prepare` lifecycle script
+    # (which runs `lefthook install`). lefthook is a host-only concern — git
+    # hooks fire on the developer's host git ops, never inside the container.
+    # Also: in a worktree, the bind-mounted `.git` is a pointer file referencing
+    # `<main-repo>/.git/worktrees/<name>` on the host, which isn't mounted here,
+    # so `lefthook install` would crash with "not a git repository". Host-side
+    # `pnpm install` (e.g. via scripts/new-worktree.sh) still runs the prepare
+    # script and wires the hooks where they belong.
+    command: sh -c "pnpm install --frozen-lockfile --ignore-scripts && bun --hot src/server/main.ts"
     volumes:
       - ./:/app
       - dev_node_modules:/app/node_modules
@@ -42,8 +56,10 @@ services:
       # it. The image pre-creates /data with the dev UID's ownership (see
       # Dockerfile.dev.server) so this volume isn't root-owned on first mount.
       - dev_data:/data
+    # Same parallel-worktree reason as container_name above; HOST_PORT lives
+    # in the worktree's .env (scripts/new-worktree.sh picks 8081+).
     ports:
-      - "8080:8080"
+      - "${HOST_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
       interval: 5s
