@@ -59,6 +59,7 @@ export type TurnRole = (typeof TURN_ROLES)[number];
 export const SPAN_VOCABULARIES = ["xray", "gen_ai", "langfuse"] as const;
 export type SpanVocabulary = (typeof SPAN_VOCABULARIES)[number];
 
+/** A row in `conversations`. Primary key is `hash` (SHA-256 of canonicalized turns). */
 export type ConversationRow = InferSelectModel<typeof conversations>;
 export type ConversationInput = InferInsertModel<typeof conversations>;
 

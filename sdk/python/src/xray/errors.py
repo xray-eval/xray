@@ -133,6 +133,25 @@ class XrayServerError(XrayError):
         self.status_code = status_code
 
 
+class XrayServerError(XrayError):
+    """The xray server returned an unexpected HTTP error.
+
+    Wraps :class:`httpx.HTTPStatusError` so the dev sees a typed
+    :class:`XrayError` instead of a raw ``httpx`` exception. The
+    orchestrator raises this for HTTP failures that happen BEFORE the
+    replay row exists — once it exists, failures flow through the typed
+    ``failure_reason`` PATCH path instead.
+    """
+
+    failure_reason: ClassVar[FailureReason] = "runtime_error"
+
+    status_code: int
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 __all__ = [
     "FAILURE_REASONS",
     "AgentNotJoinedError",

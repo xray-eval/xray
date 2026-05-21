@@ -2,7 +2,7 @@ import { count, eq } from "drizzle-orm";
 import * as v from "valibot";
 
 import { conversations, replays } from "@/server/store/schema.ts";
-import type { Store } from "@/server/store/store.ts";
+import type { Store, StoreDbOrTx } from "@/server/store/store.ts";
 import type { ConversationRow } from "@/server/store/types.ts";
 
 import type {
@@ -55,18 +55,21 @@ export async function canonicalizeAndHashTurns(
  * inserts; on subsequent POSTs with the same hash, updates `name`
  * (last-write-wins on display label) and `last_run_at` (denormalized for
  * list ordering).
+ *
+ * Accepts either the top-level `StoreDb` or a transaction handle so a
+ * caller can compose this with sibling inserts atomically — see
+ * `createReplay` in `replays.service.ts`.
  */
 export function ensureConversation(
-	store: Store,
+	db: StoreDbOrTx,
 	hash: string,
 	name: string,
 	turnsJson: string,
 	now: string,
 ): ConversationRow {
-	const existing = store.db.select().from(conversations).where(eq(conversations.hash, hash)).get();
+	const existing = db.select().from(conversations).where(eq(conversations.hash, hash)).get();
 	if (existing !== undefined) {
-		store.db
-			.update(conversations)
+		db.update(conversations)
 			.set({ name, lastRunAt: now })
 			.where(eq(conversations.hash, hash))
 			.run();
@@ -79,7 +82,7 @@ export function ensureConversation(
 		createdAt: now,
 		lastRunAt: now,
 	};
-	store.db.insert(conversations).values(row).run();
+	db.insert(conversations).values(row).run();
 	return row;
 }
 

@@ -25,6 +25,12 @@ const NEW_TABLES = ["conversations", "replays", "replay_turns", "speech_segments
 
 export type StoreSchema = typeof schema;
 export type StoreDb = BunSQLiteDatabase<StoreSchema>;
+/**
+ * Read-/write-helpers that need to run inside a caller-supplied
+ * transaction take this type so the same helper composes from both the
+ * top-level db handle and a `store.db.transaction((tx) => …)` body.
+ */
+export type StoreDbOrTx = StoreDb | Parameters<Parameters<StoreDb["transaction"]>[0]>[0];
 
 export interface Store {
 	readonly db: StoreDb;

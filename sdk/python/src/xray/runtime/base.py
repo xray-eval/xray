@@ -38,15 +38,14 @@ class Runtime(ABC):
     """Pluggable runtime contract.
 
     Subclasses MUST be safe to construct *before* the orchestrator knows the
-    Replay id — the id is plumbed in via :meth:`RuntimeBindable.bind` (or
-    ``xray.trace.set_replay_context``) when the run starts.
+    Replay id — the id is plumbed in via :meth:`RuntimeBindable.bind` when
+    the run starts.
     """
 
     @abstractmethod
     async def run(self, conversation: Conversation) -> RuntimeResult:
         """Execute one Replay of ``conversation`` and return what was
-        observed. Must call ``xray.trace.set_replay_context(...)`` (or
-        equivalent) before any span the agent emits."""
+        observed."""
 
     @abstractmethod
     async def aclose(self) -> None:

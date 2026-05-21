@@ -8,7 +8,7 @@ import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
-import { shortHash } from "@/client/lib/format.ts";
+import { shortHash } from "@/client/format.ts";
 
 import { getConversation, getReplay, replayAudioUrl, turnAudioUrl } from "../api/api.ts";
 import type {

@@ -13,7 +13,6 @@ Type safety: ``AudioRef`` is a discriminated union (``RecordedAudio`` vs
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import json
 import os
@@ -25,6 +24,7 @@ from typing import Literal, TypeAlias, TypedDict
 from typing_extensions import NotRequired, assert_never
 
 from ._json import JsonObject
+from .errors import AudioMissingError
 
 Role: TypeAlias = Literal["user", "agent"]
 AssertionStatus: TypeAlias = Literal["passed", "failed", "errored"]
@@ -105,13 +105,16 @@ class Turn:
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Conversation:
     """The dev-authored test definition.
 
     Identity is the SHA-256 content hash over the turn array (including
     sha256 of per-turn ``RecordedAudio`` bytes). ``name`` is a free-form
     display label only — renaming does NOT change the hash.
+
+    Frozen so a later field reassignment can't silently invalidate the
+    ``hash`` property's value.
     """
 
     name: str
@@ -124,22 +127,17 @@ class Conversation:
         if len(self.turns) == 0:
             raise ValueError("Conversation must have at least one turn")
 
-    @functools.cached_property
+    @property
     def hash(self) -> str:
-        """Content hash. First access reads any ``RecordedAudio`` WAVs from
-        disk to sha256 the bytes; subsequent accesses return the cached value.
+        """Content hash. Mirrors the server-side canonicalization — see
+        ``tests/fixtures/hash-parity.json`` for the cross-language wire
+        contract.
 
-        Canonical JSON over the turn array, with ``RecordedAudio`` referenced
-        by sha256 of file bytes. Mirrors the server-side canonicalization —
-        see ``tests/fixtures/hash-parity.json``.
+        Per-file audio bytes-sha256 is memoized by ``(path, mtime_ns,
+        size)`` in :data:`_AUDIO_SHA256_CACHE` so an unchanged WAV isn't
+        re-read on each access.
         """
-        canonical = json.dumps(
-            [_turn_to_wire(t) for t in self.turns],
-            separators=(",", ":"),
-            sort_keys=True,
-            ensure_ascii=True,
-        )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return _hash_turns_wire([_turn_to_wire(t) for t in self.turns])
 
     def to_replay_create_payload(
         self,
@@ -217,7 +215,22 @@ def _turn_to_wire(turn: Turn) -> TurnWirePayload:
     return out
 
 
-# ─── Audio bytes sha256 (cached per file) ─────────────────────────────
+# ─── Canonical encoding + audio bytes sha256 (cached per file) ────────
+
+
+def _canonical_turns_json(turns_wire: list[TurnWirePayload]) -> str:
+    """Canonical JSON encoding of an already-built turn-wire payload list.
+
+    Pinned wire contract shared with the TS server — see
+    ``src/server/conversations/conversations.service.ts::canonicalStringify``
+    and ``tests/fixtures/hash-parity.json`` for the parity vector.
+    """
+    return json.dumps(turns_wire, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+
+
+def _hash_turns_wire(turns_wire: list[TurnWirePayload]) -> str:
+    """SHA-256 hex over :func:`_canonical_turns_json`."""
+    return hashlib.sha256(_canonical_turns_json(turns_wire).encode("utf-8")).hexdigest()
 
 
 _AUDIO_SHA256_CACHE: dict[tuple[str, int, int], str] = {}
@@ -226,24 +239,29 @@ _AUDIO_SHA256_CACHE: dict[tuple[str, int, int], str] = {}
 def _sha256_file(path: str) -> str:
     """SHA-256 hex of file bytes, cached by (path, mtime_ns, size).
 
-    The cache key includes mtime + size so editing the file (in place or
-    via rewrite) invalidates the entry on the next access. Raises if the
-    file doesn't exist — author-time error, surfaced where the hash is
-    first computed.
+    Cache key includes mtime + size so editing the file invalidates the
+    entry on the next access. Raises :class:`AudioMissingError` if the
+    file is missing or unreadable.
     """
     p = Path(path)
-    st = os.stat(p)
+    try:
+        st = os.stat(p)
+    except OSError as e:
+        raise AudioMissingError(f"recorded audio file not readable: {p}") from e
     key = (str(p), st.st_mtime_ns, st.st_size)
     cached = _AUDIO_SHA256_CACHE.get(key)
     if cached is not None:
         return cached
     h = hashlib.sha256()
-    with p.open("rb") as f:
-        while True:
-            chunk = f.read(1 << 20)
-            if not chunk:
-                break
-            h.update(chunk)
+    try:
+        with p.open("rb") as f:
+            while True:
+                chunk = f.read(1 << 20)
+                if not chunk:
+                    break
+                h.update(chunk)
+    except OSError as e:
+        raise AudioMissingError(f"recorded audio file not readable: {p}") from e
     digest = h.hexdigest()
     _AUDIO_SHA256_CACHE[key] = digest
     return digest

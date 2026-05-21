@@ -16,7 +16,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/client/components/ui/table.tsx";
-import { shortHash } from "@/client/lib/format.ts";
+import { shortHash } from "@/client/format.ts";
 
 import { getConversation, listReplaysForConversation } from "../api/api.ts";
 import type { ReplaySummaryResponse } from "../api/api.types.ts";

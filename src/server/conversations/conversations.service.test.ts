@@ -6,6 +6,7 @@ import * as v from "valibot";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import {
+	canonicalizeAndHashTurns,
 	canonicalizeTurns,
 	computeConversationHash,
 	ensureConversation,
@@ -23,7 +24,7 @@ describe("ensureConversation", () => {
 		const turns = makeTurns();
 		const hash = await computeConversationHash(turns);
 		const row = ensureConversation(
-			store,
+			store.db,
 			hash,
 			"My conversation",
 			canonicalizeTurns(turns),
@@ -40,9 +41,15 @@ describe("ensureConversation", () => {
 		const store = makeTempStore();
 		const turns = makeTurns();
 		const hash = await computeConversationHash(turns);
-		ensureConversation(store, hash, "First", canonicalizeTurns(turns), "2026-05-18T12:00:00.000Z");
+		ensureConversation(
+			store.db,
+			hash,
+			"First",
+			canonicalizeTurns(turns),
+			"2026-05-18T12:00:00.000Z",
+		);
 		const second = ensureConversation(
-			store,
+			store.db,
 			hash,
 			"Second",
 			canonicalizeTurns(turns),
@@ -75,8 +82,8 @@ describe("listConversations", () => {
 		});
 		const hashA = await computeConversationHash(turnsA);
 		const hashB = await computeConversationHash(turnsB);
-		ensureConversation(store, hashA, "A", canonicalizeTurns(turnsA), "2026-05-10T00:00:00.000Z");
-		ensureConversation(store, hashB, "B", canonicalizeTurns(turnsB), "2026-05-12T00:00:00.000Z");
+		ensureConversation(store.db, hashA, "A", canonicalizeTurns(turnsA), "2026-05-10T00:00:00.000Z");
+		ensureConversation(store.db, hashB, "B", canonicalizeTurns(turnsB), "2026-05-12T00:00:00.000Z");
 		const summaries = listConversations(store);
 		expect(summaries.map((s) => s.name)).toEqual(["B", "A"]);
 		expect(summaries.every((s) => s.replays === 0)).toBe(true);
@@ -90,7 +97,7 @@ describe("toConversationResponse", () => {
 		const turns = makeTurns();
 		const hash = await computeConversationHash(turns);
 		const row = ensureConversation(
-			store,
+			store.db,
 			hash,
 			"My conversation",
 			canonicalizeTurns(turns),
@@ -133,11 +140,17 @@ describe("computeConversationHash", () => {
 		expect(a).not.toBe(b);
 	});
 
-	it("matches the cross-language parity fixture", async () => {
-		const ParityFixtureSchema = v.object({
+	it("matches every case in the cross-language parity fixture", async () => {
+		const ParityCaseSchema = v.object({
+			name: v.string(),
+			description: v.string(),
+			turns_wire: v.array(ConversationTurnSchema),
 			canonical_json: v.string(),
-			turns: v.array(ConversationTurnSchema),
 			expected_hash: v.string(),
+		});
+		const ParityFixtureSchema = v.object({
+			description: v.string(),
+			cases: v.array(ParityCaseSchema),
 		});
 		const raw = JSON.parse(
 			readFileSync(
@@ -146,8 +159,11 @@ describe("computeConversationHash", () => {
 			),
 		);
 		const fixture = v.parse(ParityFixtureSchema, raw);
-		expect(canonicalizeTurns(fixture.turns)).toBe(fixture.canonical_json);
-		const hash = await computeConversationHash(fixture.turns);
-		expect(hash).toBe(fixture.expected_hash);
+		expect(fixture.cases.length).toBeGreaterThan(1);
+		for (const c of fixture.cases) {
+			const { json, hash } = await canonicalizeAndHashTurns(c.turns_wire);
+			expect(json, `case ${c.name}: canonical_json`).toBe(c.canonical_json);
+			expect(hash, `case ${c.name}: expected_hash`).toBe(c.expected_hash);
+		}
 	});
 });

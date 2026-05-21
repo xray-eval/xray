@@ -70,26 +70,29 @@ def test_empty_name_rejected():
 
 
 def test_conversation_hash_matches_parity_fixture():
-    """Both Python SDK and TS server must produce the same hash for the
-    canonical fixture. If either side drifts, this fails — single source
-    of truth for the wire contract."""
+    """Both Python SDK and TS server must produce the same canonical JSON
+    and SHA-256 for every case in the parity vector. If either side drifts
+    on any case (ASCII / unicode / control chars / U+2028 / DEL / empty /
+    audio refs), this fails — single source of truth for the wire contract.
+    """
     import json as _json
+
+    from xray.conversation import _canonical_turns_json, _hash_turns_wire
 
     fixture_path = (
         Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "hash-parity.json"
     )
     with fixture_path.open("r", encoding="utf-8") as f:
         fixture = _json.load(f)
-    turns = [
-        Turn(
-            role=t["role"],
-            text=t.get("text"),
-            key=t.get("key"),
+    assert len(fixture["cases"]) > 1, "parity fixture must cover more than one case"
+    for case in fixture["cases"]:
+        name = case["name"]
+        assert _canonical_turns_json(case["turns_wire"]) == case["canonical_json"], (
+            f"case {name}: canonical_json drift"
         )
-        for t in fixture["turns"]
-    ]
-    conv = Conversation(name="parity", turns=turns)
-    assert conv.hash == fixture["expected_hash"]
+        assert _hash_turns_wire(case["turns_wire"]) == case["expected_hash"], (
+            f"case {name}: expected_hash drift"
+        )
 
 
 def test_replay_create_payload_matches_wire_shape():

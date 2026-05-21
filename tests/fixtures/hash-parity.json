@@ -1,9 +1,170 @@
 {
-  "description": "Cross-language parity fixture. Both the Python SDK and the TS server hash `turns` into `expected_hash`. Pins the canonical-JSON wire contract.",
-  "canonical_json": "[{\"key\":\"u0\",\"role\":\"user\",\"text\":\"hello\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
-  "turns": [
-    { "role": "user", "text": "hello", "key": "u0" },
-    { "role": "agent", "key": "a0" }
-  ],
-  "expected_hash": "40a03beafd3bfba706fd71df15824bcb43ba328f6cd1327f8303b6754d6071a8"
+  "description": "Cross-language parity vector. Each case is an already-serialized turns_wire payload; both the Python SDK and the TS server must produce the listed canonical_json and expected_hash from it. Covers ASCII, unicode (incl. surrogate pairs), control chars, U+2028/U+2029, DEL, empty strings, recorded audio refs, and TTS audio refs.",
+  "cases": [
+    {
+      "name": "ascii_user_agent",
+      "description": "Original baseline: ASCII user+agent text turns.",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "hello",
+          "key": "u0"
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"key\":\"u0\",\"role\":\"user\",\"text\":\"hello\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "40a03beafd3bfba706fd71df15824bcb43ba328f6cd1327f8303b6754d6071a8"
+    },
+    {
+      "name": "unicode_text",
+      "description": "Non-ASCII text (accented + emoji surrogate pair). Catches Python ensure_ascii vs TS hand-rolled escapeAscii drift.",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "h\u00e9llo \ud83d\ude80",
+          "key": "u0"
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"key\":\"u0\",\"role\":\"user\",\"text\":\"h\\u00e9llo \\ud83d\\ude80\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "80beb50d378c281c0b0f12902b3ed1bab930ae903ed8a53cad86dabf368892bd"
+    },
+    {
+      "name": "control_chars",
+      "description": "Named-escape control chars: \\b \\t \\n \\r \\f.",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "a\tb\nc\rd\bz\fy",
+          "key": "u0"
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"key\":\"u0\",\"role\":\"user\",\"text\":\"a\\tb\\nc\\rd\\bz\\fy\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "fd85031de0281928ccd411d6e8bd13cb819a361d3b4859e2e9e2df5bf03cf115"
+    },
+    {
+      "name": "line_separator",
+      "description": "U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR; must be \\uXXXX-escaped.",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "a\u2028b\u2029c",
+          "key": "u0"
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"key\":\"u0\",\"role\":\"user\",\"text\":\"a\\u2028b\\u2029c\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "0128f926bfb823c00c682439d653f98a624b716ccd322ee735bc3b31a519e512"
+    },
+    {
+      "name": "del_char",
+      "description": "U+007F DEL; above printable ASCII range, must be \\u007f-escaped.",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "a\u007fb",
+          "key": "u0"
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"key\":\"u0\",\"role\":\"user\",\"text\":\"a\\u007fb\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "1438bee7c893570474e65997b6e15972ed57551c0a5d0d46e15a15da4a4d14b5"
+    },
+    {
+      "name": "empty_text",
+      "description": "Empty user text. Key ordering with explicit empty string.",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "",
+          "key": "u0"
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"key\":\"u0\",\"role\":\"user\",\"text\":\"\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "3b803b4003f732e047d795316a7dfede5995f0b722d884866168b14eda48c506"
+    },
+    {
+      "name": "recorded_audio",
+      "description": "User turn with RecordedAudio wire payload (kind+path+sha256).",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "hi",
+          "key": "u0",
+          "audio": {
+            "kind": "recorded",
+            "path": "/tmp/a.wav",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"audio\":{\"kind\":\"recorded\",\"path\":\"/tmp/a.wav\",\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},\"key\":\"u0\",\"role\":\"user\",\"text\":\"hi\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "3aa042dbef1db6209d0ac2693087c313a136059433edabc0e756f3cb35700399"
+    },
+    {
+      "name": "tts_no_voice",
+      "description": "TtsAudio without voice_id (NotRequired).",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "hi",
+          "key": "u0",
+          "audio": {
+            "kind": "tts"
+          }
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"audio\":{\"kind\":\"tts\"},\"key\":\"u0\",\"role\":\"user\",\"text\":\"hi\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "35ed522cf2488356c3dfa7163b9d95b5ff865c1de8f320f4da99315f752bab7e"
+    },
+    {
+      "name": "tts_with_voice",
+      "description": "TtsAudio with voice_id set.",
+      "turns_wire": [
+        {
+          "role": "user",
+          "text": "hi",
+          "key": "u0",
+          "audio": {
+            "kind": "tts",
+            "voice_id": "alloy"
+          }
+        },
+        {
+          "role": "agent",
+          "key": "a0"
+        }
+      ],
+      "canonical_json": "[{\"audio\":{\"kind\":\"tts\",\"voice_id\":\"alloy\"},\"key\":\"u0\",\"role\":\"user\",\"text\":\"hi\"},{\"key\":\"a0\",\"role\":\"agent\"}]",
+      "expected_hash": "6f646f0b29cfbe1ce50324b056486e79c7f076305a3db9fd6d9dd05b0ca6e28c"
+    }
+  ]
 }

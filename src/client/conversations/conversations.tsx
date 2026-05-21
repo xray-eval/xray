@@ -14,7 +14,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/client/components/ui/table.tsx";
-import { shortHash } from "@/client/lib/format.ts";
+import { shortHash } from "@/client/format.ts";
 
 import { listConversations } from "../api/api.ts";
 import type { ConversationSummary } from "../api/api.types.ts";
