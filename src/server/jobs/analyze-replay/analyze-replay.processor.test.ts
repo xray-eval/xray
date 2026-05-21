@@ -86,9 +86,11 @@ describe("analyze-replay processor", () => {
 		const absPath = join(audio.path, relPath);
 		await mkdir(dirname(absPath), { recursive: true });
 		await writeFile(absPath, wavBytes);
+		// Mirror real production: enqueueAnalysis has already flipped the row
+		// to `analyzing` before the bunqueue worker invokes the processor.
 		store.db
 			.update(replays)
-			.set({ audioPath: relPath, lifecycleState: "recording_uploaded" })
+			.set({ audioPath: relPath, lifecycleState: "analyzing", analysisStep: "vad" })
 			.where(eq(replays.id, replayId))
 			.run();
 
@@ -119,6 +121,38 @@ describe("analyze-replay processor", () => {
 		expect(after?.lifecycleState).toBe("completed");
 		expect(after?.analysisStep).toBeNull();
 		expect(after?.finishedAt).not.toBeNull();
+	});
+
+	it("skips the `completed` write when the row is no longer in `analyzing` (race guard)", async () => {
+		const { replayId } = seedReplayForAudio(store);
+		const wav = makeStereo({
+			userBlocks: [{ durationMs: 100, voiced: true }],
+			agentBlocks: [{ durationMs: 100, voiced: true }],
+		});
+		const wavBytes = writeStereoWav(wav);
+		const relPath = `${replayId}/replay.wav`;
+		const absPath = join(audio.path, relPath);
+		await mkdir(dirname(absPath), { recursive: true });
+		await writeFile(absPath, wavBytes);
+		// Park the row in `failed` (e.g. an out-of-band markReplayFailed
+		// landed first). The processor's tx must not silently overwrite.
+		store.db
+			.update(replays)
+			.set({
+				audioPath: relPath,
+				lifecycleState: "failed",
+				failureReason: "max_attempts_exceeded",
+			})
+			.where(eq(replays.id, replayId))
+			.run();
+
+		const processor = makeAnalyzeProcessor(store, audio.path, makeReplayEvents());
+		const result = await processor({ replayId });
+		expect(result.ok).toBe(true);
+
+		const row = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+		expect(row?.lifecycleState).toBe("failed");
+		expect(row?.failureReason).toBe("max_attempts_exceeded");
 	});
 
 	it("throws when audio_path is null", async () => {

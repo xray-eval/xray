@@ -219,7 +219,7 @@ def test_bind_required_before_run():
     conv = Conversation(id="c", turns=[Turn.user("hi")])
     with pytest.raises(RuntimeBindError) as exc:
         asyncio.run(rt.run(conv))
-    assert exc.value.failure_reason == "sdk_aborted"
+    assert exc.value.failure_reason == "driver_aborted"
 
 
 def test_upsample_2x_doubles_sample_count():

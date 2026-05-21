@@ -42,7 +42,6 @@ from xray.conversation import (
     AgentResponse,
     AssertionOutcome,
     AssertionPredicate,
-    AssertionStatus,
     Conversation,
     JudgeOutcome,
     JudgePredicate,
@@ -92,21 +91,15 @@ class _ReplayCreateResponse(BaseModel):
     id: str
 
 
-class JudgePatchBody(TypedDict):
-    status: AssertionStatus
-    score: NotRequired[int]
-    reason: NotRequired[str]
-    error: NotRequired[str]
-
-
 class ReplayPatchBody(TypedDict):
-    """PATCH /v1/replays/:id body. Server's new schema accepts only
-    `lifecycle_state` / `failure_reason` / `finished_at`; unknown keys
-    (e.g. `judge`) are silently stripped server-side and have no effect."""
+    """PATCH /v1/replays/:id body. Mirrors the server's
+    ``UpdateReplayRequestSchema`` exactly (per
+    ``sdk/python/.claude/rules/typed-boundaries.md`` §1) — no fields the
+    server doesn't accept."""
 
     lifecycle_state: ReplayLifecycleState
     failure_reason: NotRequired[FailureReason]
-    judge: NotRequired[JudgePatchBody]
+    finished_at: NotRequired[str]
 
 
 # ─── Orchestrator result ──────────────────────────────────────────────
@@ -187,7 +180,7 @@ async def run(
 
         # 4. Run the runtime. Typed errors surface their own
         # `failure_reason`; everything else falls through to a generic
-        # `runtime_error` PATCH — no substring matching, per the
+        # `driver_aborted` PATCH — no substring matching, per the
         # restructure contract.
         status: ReplayStatus = "completed"
         failure_reason: FailureReason | None = None
@@ -199,7 +192,7 @@ async def run(
             status, failure_reason = "failed", e.failure_reason
         except Exception:
             logger.exception("unclassified runtime failure on replay %s", replay_id)
-            status, failure_reason = "failed", "runtime_error"
+            status, failure_reason = "failed", "driver_aborted"
         finally:
             await runtime.aclose()
             # Flush driver-side spans + detach baggage before we proceed
@@ -225,7 +218,7 @@ async def run(
                 status, failure_reason = "failed", e.failure_reason
             except Exception:
                 logger.exception("audio upload errored on replay %s", replay_id)
-                status, failure_reason = "failed", "runtime_error"
+                status, failure_reason = "failed", "driver_aborted"
 
         # 5b. Kick off server-side VAD/turn analysis if we uploaded audio.
         # Best-effort: a 4xx / 5xx here (e.g. server in dev mode, endpoint not
@@ -315,9 +308,7 @@ async def run(
             judge_outcome = await _evaluate_judge(conversation.judge, replay_result)
 
         # 9. PATCH.
-        patch_body = _build_patch_body(
-            status=status, failure_reason=failure_reason, judge=judge_outcome
-        )
+        patch_body = _build_patch_body(status=status, failure_reason=failure_reason)
         r = await client.patch(f"/v1/replays/{replay_id}", json=patch_body)
         r.raise_for_status()
 
@@ -346,24 +337,10 @@ def _build_patch_body(
     *,
     status: ReplayStatus,
     failure_reason: FailureReason | None,
-    judge: JudgeOutcome | None,
 ) -> ReplayPatchBody:
     body: ReplayPatchBody = {"lifecycle_state": status}
     if failure_reason is not None:
         body["failure_reason"] = failure_reason
-    if judge is not None:
-        body["judge"] = _judge_to_wire(judge)
-    return body
-
-
-def _judge_to_wire(judge: JudgeOutcome) -> JudgePatchBody:
-    body: JudgePatchBody = {"status": judge.status}
-    if judge.score is not None:
-        body["score"] = judge.score
-    if judge.reason is not None:
-        body["reason"] = judge.reason
-    if judge.error is not None:
-        body["error"] = judge.error
     return body
 
 
@@ -670,7 +647,6 @@ def _merge_enrichment_into_responses(
 
 
 __all__ = [
-    "JudgePatchBody",
     "MAX_AUDIO_BYTES",
     "ReplayCreateBody",
     "ReplayPatchBody",

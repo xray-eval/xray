@@ -91,6 +91,17 @@ export function updateReplay(
 		) {
 			throw new ReplayLifecycleTransitionError(id, existing.lifecycleState, patch.lifecycle_state);
 		}
+		// The bunqueue worker owns the `analyzing` lifecycle. An API PATCH must
+		// not mutate state out from under it — the worker's terminal `completed`
+		// write is guarded against a stale `analyzing` claim, but blocking the
+		// PATCH at the boundary keeps the invariant crisp + surfaces 409 to the
+		// caller instead of a silent overwrite race.
+		if (
+			existing.lifecycleState === "analyzing" &&
+			patch.lifecycle_state !== existing.lifecycleState
+		) {
+			throw new ReplayLifecycleTransitionError(id, existing.lifecycleState, patch.lifecycle_state);
+		}
 	}
 
 	const updates: Partial<ReplayRow> = {};

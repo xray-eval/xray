@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { deriveTurns } from "@/server/audio/audio.turns.ts";
 import { runVadOnChannel } from "@/server/audio/audio.vad.ts";
@@ -64,7 +64,12 @@ export function makeAnalyzeProcessor(
 
 		const turns = deriveTurns(userSegments, agentSegments);
 
-		store.db.transaction((tx) => {
+		// Worker holds the `analyzing` claim from enqueueAnalysis. If anything
+		// (operator PATCH, future second-failure path) stamps `failed` before
+		// we commit, the conditional UPDATE below short-circuits and we leave
+		// the row in whatever terminal state landed first. Skip the
+		// `completed` SSE emits in that case — they'd lie about the state.
+		const committed = store.db.transaction((tx) => {
 			tx.delete(speechSegments).where(eq(speechSegments.replayId, replayId)).run();
 			tx.delete(replayTurns).where(eq(replayTurns.replayId, replayId)).run();
 
@@ -108,9 +113,23 @@ export function makeAnalyzeProcessor(
 					analysisStep: null,
 					finishedAt: new Date().toISOString(),
 				})
-				.where(eq(replays.id, replayId))
+				.where(and(eq(replays.id, replayId), eq(replays.lifecycleState, "analyzing")))
 				.run();
+
+			const after = tx.select().from(replays).where(eq(replays.id, replayId)).get();
+			return after?.lifecycleState === "completed";
 		});
+
+		if (!committed) {
+			console.warn(
+				`analyze-replay worker for ${replayId} found the row no longer in 'analyzing' — skipping completed SSE emit`,
+			);
+			return {
+				ok: true,
+				turnsWritten: turns.length,
+				segmentsWritten: userSegments.length + agentSegments.length,
+			};
+		}
 
 		events.emit(replayId, { type: "state", lifecycle_state: "completed", analysis_step: null });
 		events.emit(replayId, {

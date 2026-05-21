@@ -28,7 +28,13 @@ export function readStereoWav(buf: Uint8Array): StereoWav {
 	let bitsPerSample = 0;
 	let dataStart = -1;
 	let dataLen = 0;
+	let fmtSeen = false;
 
+	// Walk every chunk to the end of the buffer — DO NOT break out early on
+	// `data`, because some WAVs put `data` before `fmt ` (RIFF permits either
+	// order). Breaking early would leave `sampleRate`/`channelCount`/
+	// `bitsPerSample` at zero and the validation block below would throw
+	// "sample rate 0" instead of the honest "missing fmt chunk".
 	while (cursor + 8 <= buf.byteLength) {
 		const chunkId = view.getUint32(cursor, false);
 		const chunkSize = view.getUint32(cursor + 4, true);
@@ -42,14 +48,15 @@ export function readStereoWav(buf: Uint8Array): StereoWav {
 			channelCount = view.getUint16(cursor + 2, true);
 			sampleRate = view.getUint32(cursor + 4, true);
 			bitsPerSample = view.getUint16(cursor + 14, true);
-		} else if (chunkId === DATA) {
+			fmtSeen = true;
+		} else if (chunkId === DATA && dataStart < 0) {
 			dataStart = cursor;
 			dataLen = chunkSize;
-			break;
 		}
 		cursor += chunkSize + (chunkSize & 1);
 	}
 
+	if (!fmtSeen) throw new InvalidWavFormatError("missing fmt chunk");
 	if (sampleRate !== REQUIRED_SAMPLE_RATE) {
 		throw new InvalidWavFormatError(`sample rate ${sampleRate}, expected ${REQUIRED_SAMPLE_RATE}`);
 	}
@@ -60,6 +67,17 @@ export function readStereoWav(buf: Uint8Array): StereoWav {
 		throw new InvalidWavFormatError(`bits per sample ${bitsPerSample}, expected ${REQUIRED_BITS}`);
 	}
 	if (dataStart < 0) throw new InvalidWavFormatError("missing data chunk");
+
+	// `dataLen` is attacker-controlled (read straight from the WAV header).
+	// Without this check, a 44-byte file declaring dataLen=0xFFFFFFFF would
+	// trigger a ~4GB allocation in the two Int16Array constructors below —
+	// crashing the Bun worker process. The body cap on /audio gates upload
+	// size, but not the declared chunk size inside the file.
+	if (dataStart + dataLen > buf.byteLength) {
+		throw new InvalidWavFormatError(
+			`data chunk overruns buffer (declared ${dataLen} bytes, ${buf.byteLength - dataStart} available)`,
+		);
+	}
 
 	const samplesPerChannel = Math.floor(dataLen / 4);
 	const left = new Int16Array(samplesPerChannel);

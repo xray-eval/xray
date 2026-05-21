@@ -115,6 +115,32 @@ describe("updateReplay", () => {
 		expect(() => updateReplay(store, id, { lifecycle_state: "failed" })).not.toThrow();
 		store.close();
 	});
+
+	it("rejects an API PATCH that mutates `analyzing` (worker owns the lifecycle)", () => {
+		const store = makeTempStore();
+		const id = seedReplay(store);
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "analyzing", analysisStep: "vad", jobId: "j-1" })
+			.where(eq(replays.id, id))
+			.run();
+		// Any out-of-band attempt to flip the lifecycle while the worker is
+		// running gets 409'd — the worker's terminal write is the only path
+		// out of `analyzing`.
+		expect(() => updateReplay(store, id, { lifecycle_state: "failed" })).toThrow(
+			ReplayLifecycleTransitionError,
+		);
+		expect(() => updateReplay(store, id, { lifecycle_state: "completed" })).toThrow(
+			ReplayLifecycleTransitionError,
+		);
+		// Same-state no-op is allowed.
+		expect(() => updateReplay(store, id, { lifecycle_state: "analyzing" })).not.toThrow();
+		// Fields that don't touch lifecycle still apply.
+		expect(() =>
+			updateReplay(store, id, { failure_reason: "max_attempts_exceeded" }),
+		).not.toThrow();
+		store.close();
+	});
 });
 
 describe("markReplayFailed", () => {

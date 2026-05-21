@@ -334,33 +334,34 @@ export function createReplaysRouter(
 					}
 				};
 
-				// Subscribe BEFORE the awaited initial-state write. The initial
-				// `await stream.writeSSE(...)` yields the event loop; if we
-				// subscribed after, any event the worker emitted during that
-				// gap would be dropped (the dispatcher in ReplayEvents has no
-				// buffering — events with zero listeners are lost). Hono's
-				// stream serializes queued writes in FIFO order, so a worker
-				// event that fires between subscribe and the initial write is
-				// queued behind it. The duplicate `state` event the listener
-				// may produce immediately after the initial state is shape-
-				// identical to the initial event — idempotent for the SDK,
-				// harmless for the inspector.
+				// `done` resolves when either the worker emits a terminal event
+				// (completed / failed) OR the client aborts. Routing the wait
+				// through this single Promise lets us run cleanup + unsubscribe
+				// exactly once on both paths. Hono's `streamSSE` `run()` calls
+				// `stream.close()` in a `finally` after the callback returns —
+				// so we don't close manually inside the listener (which used to
+				// leak the listener because `onAbort` doesn't fire on a
+				// server-initiated close).
+				const done = Promise.withResolvers<void>();
 				const unsubscribe = events.subscribe(id, (event) => {
 					void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).then(() => {
 						if (event.type === "completed" || event.type === "failed") {
-							cleanup();
-							stream.close();
+							done.resolve();
 						}
 					});
 				});
 
 				stream.onAbort(() => {
-					cleanup();
-					unsubscribe();
+					done.resolve();
 				});
 
 				// Initial state — clients pick up the row as it stands when they
-				// connect, without having to GET /replays/:id first.
+				// connect, without having to GET /replays/:id first. Subscribe
+				// fires synchronously before this await so any worker event
+				// emitted during the awaited write is queued behind it
+				// (Hono's stream writer is FIFO). The duplicate `state` event
+				// the listener may produce immediately after is shape-identical
+				// to the initial event — idempotent for the SDK.
 				const initialState: {
 					type: "state";
 					lifecycle_state: string;
@@ -382,7 +383,7 @@ export function createReplaysRouter(
 					void stream.write(": heartbeat\n\n");
 				}, 15_000);
 
-				await new Promise<void>((resolve) => stream.onAbort(resolve));
+				await done.promise;
 				cleanup();
 				unsubscribe();
 			});

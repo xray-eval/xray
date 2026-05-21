@@ -134,12 +134,15 @@ async def test_run_creates_conversation_then_replay_then_patches_with_judge():
 
     body = _decoded_body(patch_replay)
     assert '"lifecycle_state":"completed"' in body
-    assert '"judge"' in body
-    assert '"score":99' in body
+    # ReplayPatchBody mirrors the server's UpdateReplayRequestSchema exactly —
+    # `judge` is not part of the wire contract (server would silently strip).
+    assert '"judge"' not in body
 
     assert result.status == "completed"
     assert len(result.assertions) == 1
     assert result.assertions[0].status == "passed"
+    # Judge outcome still lives on RunResult (SDK-side eval), just not on the
+    # PATCH body.
     assert result.judge is not None
     assert result.judge.score == 99
 
@@ -181,9 +184,9 @@ async def test_run_marks_failed_when_runtime_raises():
 
 
 @respx.mock
-async def test_run_falls_back_to_runtime_error_for_unmapped_exception():
+async def test_run_falls_back_to_driver_aborted_for_unmapped_exception():
     """A free-form exception message that isn't in the failure_reason picklist
-    is classified as `runtime_error`, not echoed verbatim — otherwise the
+    is classified as `driver_aborted`, not echoed verbatim — otherwise the
     server would reject the PATCH for an invalid failure_reason."""
     conv = Conversation(id="x", turns=[Turn.user("hi", key="u0")])
 
@@ -207,7 +210,7 @@ async def test_run_falls_back_to_runtime_error_for_unmapped_exception():
 
     await run(conversation=conv, runtime=BoomRuntime(), xray_url="http://xray.local")
     body = _decoded_body(patch_replay)
-    assert '"failure_reason":"runtime_error"' in body
+    assert '"failure_reason":"driver_aborted"' in body
 
 
 @pytest.mark.parametrize(
@@ -362,7 +365,7 @@ async def test_audio_upload_caps_at_50mib_locally(tmp_path: Path):
     assert not audio_upload.called
     assert result.status == "failed"
     body = _decoded_body(patch_replay)
-    assert '"failure_reason":"runtime_error"' in body
+    assert '"failure_reason":"driver_aborted"' in body
     # Sanity: the typed error class is still importable for SDK users
     # who catch it explicitly.
     assert AudioTooLargeError.__name__ == "AudioTooLargeError"

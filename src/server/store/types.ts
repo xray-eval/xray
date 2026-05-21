@@ -25,9 +25,19 @@ export type ReplayLifecycleState = (typeof REPLAY_LIFECYCLE_STATES)[number];
 export const ANALYSIS_STEPS = ["vad", "turns"] as const;
 export type AnalysisStep = (typeof ANALYSIS_STEPS)[number];
 
-// Reasons that explain a `failed` replay. Mostly mirror bunqueue's DLQ reasons
-// (`stalled`, `timeout`, `explicit_fail`, `max_attempts_exceeded`,
-// `worker_lost`) plus driver-side / upload-side failures.
+// Reasons that explain a `failed` replay. Three groups:
+//   1. bunqueue DLQ reasons surfaced by the analyze-replay worker
+//      (`stalled`, `timeout`, `explicit_fail`, `max_attempts_exceeded`,
+//      `worker_lost`).
+//   2. SDK / control-plane failures the driver reports via PATCH
+//      (`driver_aborted` = generic SDK-side failure, `upload_failed`
+//      = audio upload step failed, `agent_not_joined` = LiveKit agent
+//      participant never joined the room, `audio_missing` = a turn
+//      referenced audio bytes the SDK could not produce).
+//
+// The SDK's `xray.errors.FailureReason` literal MUST be a subset of this
+// list — enforced by the contract test at
+// `src/server/replays/replays.failure-reason-contract.test.ts`.
 export const REPLAY_FAILURE_REASONS = [
 	"stalled",
 	"timeout",
@@ -36,6 +46,8 @@ export const REPLAY_FAILURE_REASONS = [
 	"worker_lost",
 	"upload_failed",
 	"driver_aborted",
+	"agent_not_joined",
+	"audio_missing",
 ] as const;
 export type ReplayFailureReason = (typeof REPLAY_FAILURE_REASONS)[number];
 

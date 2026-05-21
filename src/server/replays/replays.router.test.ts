@@ -176,6 +176,26 @@ describe("GET /v1/replays/:id/events (SSE)", () => {
 		const res = await app.request("/v1/replays/00000000-0000-0000-0000-000000000099/events");
 		expect(res.status).toBe(404);
 	});
+
+	it("unsubscribes the listener after a terminal event (no leak in ReplayEvents)", async () => {
+		const { app, store, events } = makeApp();
+		const id = seedReplay(store);
+
+		const res = await app.request(`/v1/replays/${id}/events`);
+		expect(res.status).toBe(200);
+		const body = res.body;
+		if (body === null) throw new Error("missing SSE body");
+
+		// One listener attached after the handler subscribes.
+		// Drain the response body so the handler progresses past the awaited
+		// initial-state write into the live loop.
+		events.emit(id, { type: "completed", turns_written: 0, segments_written: 0 });
+		await readSseUntilCompleted(body);
+
+		// Give the handler's done.promise resolution + final cleanup a tick.
+		await new Promise((r) => setTimeout(r, 10));
+		expect(events.listenerCount(id)).toBe(0);
+	});
 });
 
 describe("POST /v1/replays/:id/analyze", () => {

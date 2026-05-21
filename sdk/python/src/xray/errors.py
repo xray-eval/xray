@@ -1,9 +1,10 @@
 """Typed errors for the xray SDK.
 
-Every error carries a ``failure_reason`` that maps onto the server's
+Every error carries a ``failure_reason`` that is a member of the server's
 ``REPLAY_FAILURE_REASONS`` picklist (see ``src/server/store/types.ts``).
-The orchestrator reads ``failure_reason`` directly from typed exceptions
-instead of string-matching on ``str(e)``.
+A TS contract test at
+``src/server/replays/replays.failure-reason-contract.test.ts`` asserts
+this subset relationship — drifting either side breaks CI.
 
 Callers narrow via ``isinstance`` and read the typed structured fields —
 no message parsing, ever.
@@ -13,21 +14,27 @@ from __future__ import annotations
 
 from typing import ClassVar, Final, Literal
 
-# Mirrors REPLAY_FAILURE_REASONS in src/server/store/types.ts. Kept as a
-# Literal alias so a typo on construction is a static error, not a runtime
-# 422 from the PATCH.
+# Subset of the server's REPLAY_FAILURE_REASONS used by the SDK. Three
+# distinct failure classes the driver can surface:
+#   * `driver_aborted` — generic SDK-side failure (runtime binding errors,
+#     mixdown errors, missing LiveKit extra, version mismatch, unmapped
+#     exception)
+#   * `agent_not_joined` — LiveKit agent participant never joined in time
+#   * `audio_missing` — driver couldn't materialize a turn's audio bytes
+#     (recorded file missing, TTS without OPENAI_API_KEY)
+#
+# Bunqueue DLQ reasons (`stalled`/`timeout`/`worker_lost`/...) and
+# `upload_failed` are server-internal and never written by the SDK.
 FailureReason = Literal[
+    "driver_aborted",
     "agent_not_joined",
-    "runtime_error",
     "audio_missing",
-    "sdk_aborted",
-    "other",
 ]
 
 # Runtime-side mirror of the picklist for membership checks. Frozen so a
 # downstream mutation can't poison the orchestrator's classifier.
 FAILURE_REASONS: Final[frozenset[FailureReason]] = frozenset(
-    {"agent_not_joined", "runtime_error", "audio_missing", "sdk_aborted", "other"}
+    {"driver_aborted", "agent_not_joined", "audio_missing"}
 )
 
 
@@ -35,7 +42,7 @@ class XrayError(Exception):
     """Base class for every error raised by the SDK."""
 
     # ClassVar so subclasses overwrite at class level, not per-instance.
-    failure_reason: ClassVar[FailureReason] = "runtime_error"
+    failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -47,7 +54,7 @@ class XrayError(Exception):
 class RuntimeBindError(XrayError):
     """A runtime was asked to ``run`` before ``bind(replay_id=...)``."""
 
-    failure_reason: ClassVar[FailureReason] = "sdk_aborted"
+    failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
 
 class AgentNotJoinedError(XrayError):
@@ -84,7 +91,7 @@ class AudioMissingError(XrayError):
 class AudioTooLargeError(XrayError):
     """Mixdown WAV exceeds the server's per-upload cap."""
 
-    failure_reason: ClassVar[FailureReason] = "runtime_error"
+    failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
     byte_size: int
     max_bytes: int
@@ -98,13 +105,13 @@ class AudioTooLargeError(XrayError):
 class MixdownError(XrayError):
     """Encoding the per-turn PCM streams into a single WAV failed."""
 
-    failure_reason: ClassVar[FailureReason] = "runtime_error"
+    failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
 
 class LiveKitDependencyError(XrayError):
     """The optional ``[livekit]`` extra is not installed."""
 
-    failure_reason: ClassVar[FailureReason] = "runtime_error"
+    failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
 
 class VersionFingerprintMismatchError(XrayError):
@@ -112,7 +119,7 @@ class VersionFingerprintMismatchError(XrayError):
     forgot to bump ``Conversation.id`` (or pinned an explicit ``version``
     that collided)."""
 
-    failure_reason: ClassVar[FailureReason] = "sdk_aborted"
+    failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
     def __init__(self, conversation_id: str, version: str) -> None:
         super().__init__(
