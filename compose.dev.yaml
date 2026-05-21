@@ -14,12 +14,12 @@ services:
       args:
         UID: "${UID:-1000}"
         GID: "${GID:-1000}"
-    # Container name is parameterized so parallel worktrees don't collide on
-    # the Docker engine's global name table. `pnpm dev` from the main checkout
-    # keeps the default `xray-dev`; a sibling worktree sets COMPOSE_PROJECT_NAME
-    # in its own `.env` (see scripts/new-worktree.sh). The named volumes below
-    # are auto-namespaced by COMPOSE_PROJECT_NAME too, so each worktree gets its
-    # own SQLite + node_modules without any extra config.
+    # Container name and named volumes below both bind to COMPOSE_PROJECT_NAME
+    # so parallel worktrees don't collide on the Docker engine's global name
+    # table. `.env.example` pins it to `xray` (so the dev container stays
+    # `xray-dev` regardless of how the directory is named); scripts/new-worktree.sh
+    # writes a slug per worktree. Fallback default `xray` is for the rare case
+    # where neither is present.
     container_name: ${COMPOSE_PROJECT_NAME:-xray}-dev
     # Run as the host user so anything pnpm writes into the bind-mounted repo
     # is owned by the developer, not root. A compromised dev dep can no longer
@@ -56,9 +56,8 @@ services:
       # it. The image pre-creates /data with the dev UID's ownership (see
       # Dockerfile.dev.server) so this volume isn't root-owned on first mount.
       - dev_data:/data
-    # Host-side port is parameterized for the same parallel-worktree reason as
-    # container_name above. Container's internal port stays 8080 — only the
-    # mapping to the host varies (HOST_PORT in the worktree's .env).
+    # Same parallel-worktree reason as container_name above; HOST_PORT lives
+    # in the worktree's .env (scripts/new-worktree.sh picks 8081+).
     ports:
       - "${HOST_PORT:-8080}:8080"
     healthcheck:
