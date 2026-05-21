@@ -20,6 +20,8 @@
 
 import * as v from "valibot";
 
+import type { UpdateReplayRequest } from "@/server/replays/replays.types.ts";
+
 class SeedError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
@@ -50,12 +52,33 @@ class SeedRequestError extends SeedError {
 	}
 }
 
+class SeedShapeError extends SeedError {
+	readonly path: string;
+	readonly issues: readonly v.BaseIssue<unknown>[];
+	constructor(path: string, issues: readonly v.BaseIssue<unknown>[]) {
+		super(`${path}: schema mismatch — ${issues.map((i) => i.message).join("; ")}`);
+		this.name = "SeedShapeError";
+		this.path = path;
+		this.issues = issues;
+	}
+}
+
+function parseOrThrow<S extends v.GenericSchema>(
+	path: string,
+	schema: S,
+	value: unknown,
+): v.InferOutput<S> {
+	const result = v.safeParse(schema, value);
+	if (!result.success) throw new SeedShapeError(path, result.issues);
+	return result.output;
+}
+
 const EnvSchema = v.object({
 	XRAY_BASE_URL: v.optional(v.string()),
 	OPENAI_API_KEY: v.optional(v.string()),
 	OPENAI_TTS_MODEL: v.optional(v.string()),
 });
-const ENV = v.parse(EnvSchema, process.env);
+const ENV = parseOrThrow("process.env", EnvSchema, process.env);
 const BASE = ENV.XRAY_BASE_URL ?? "http://localhost:8080";
 const TTS_MODEL = ENV.OPENAI_TTS_MODEL ?? "gpt-4o-mini-tts";
 
@@ -167,7 +190,11 @@ async function postConversation(): Promise<string> {
 			await res.text(),
 		);
 	}
-	const parsed = v.parse(v.object({ hash: v.string() }), await res.json());
+	const parsed = parseOrThrow(
+		"POST /v1/conversations response",
+		v.object({ hash: v.string() }),
+		await res.json(),
+	);
 	return parsed.hash;
 }
 
@@ -187,7 +214,11 @@ async function postReplay(conversationHash: string, idx: number): Promise<string
 	if (!res.ok) {
 		throw new SeedRequestError("POST", "/v1/replays", res.status, res.statusText, await res.text());
 	}
-	const parsed = v.parse(v.object({ id: v.string() }), await res.json());
+	const parsed = parseOrThrow(
+		"POST /v1/replays response",
+		v.object({ id: v.string() }),
+		await res.json(),
+	);
 	return parsed.id;
 }
 
@@ -346,7 +377,7 @@ async function analyzeReplay(replayId: string) {
 }
 
 async function patchReplayFailed(replayId: string, idx: number) {
-	const body = {
+	const body: UpdateReplayRequest = {
 		lifecycle_state: "failed",
 		failure_reason: "driver_aborted",
 		finished_at: new Date(Date.UTC(2026, 4, 18 + idx, 12, 0, 15)).toISOString(),

@@ -11,7 +11,6 @@ import { shortHash } from "@/client/format.ts";
 
 import { getConversation, getReplay, replayAudioUrl } from "../api/api.ts";
 import type {
-	ConversationTurn,
 	ModelUsageResponse,
 	ReplayDetailResponse,
 	ReplayTurnResponse,
@@ -90,26 +89,18 @@ export function Inspector() {
 						Failed to load replay.
 					</p>
 				))
-				.with({ status: "success" }, (q) => (
-					<ReplayBody replay={q.data} conversationTurns={conversation.data?.turns ?? null} />
-				))
+				.with({ status: "success" }, (q) => <ReplayBody replay={q.data} />)
 				.exhaustive()}
 		</section>
 	);
 }
 
-function ReplayBody({
-	replay,
-	conversationTurns,
-}: {
-	replay: ReplayDetailResponse;
-	conversationTurns: readonly ConversationTurn[] | null;
-}) {
+function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<div className="grid gap-6 lg:grid-cols-3">
 			<div className="grid gap-6 lg:col-span-2">
 				<HeaderCard replay={replay} />
-				<TurnsCard replay={replay} conversationTurns={conversationTurns} />
+				<TurnsCard replay={replay} />
 				<SpansCard spans={replay.spans} />
 			</div>
 			<aside className="grid gap-6">
@@ -121,13 +112,7 @@ function ReplayBody({
 	);
 }
 
-function TurnsCard({
-	replay,
-	conversationTurns,
-}: {
-	replay: ReplayDetailResponse;
-	conversationTurns: readonly ConversationTurn[] | null;
-}) {
+function TurnsCard({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<Card className="gap-4">
 			<CardHeader>
@@ -145,7 +130,7 @@ function TurnsCard({
 					<ol className="grid gap-3">
 						{replay.turns.map((turn) => (
 							<li key={`${turn.idx}-${turn.role}`}>
-								<TurnBlock turn={turn} script={conversationTurns?.[turn.idx] ?? null} />
+								<TurnBlock turn={turn} />
 							</li>
 						))}
 					</ol>
@@ -155,32 +140,23 @@ function TurnsCard({
 	);
 }
 
-function TurnBlock({
-	turn,
-	script,
-}: {
-	turn: ReplayTurnResponse;
-	script: ConversationTurn | null;
-}) {
+// VAD-derived turn idx is independent of script turn idx — `deriveTurns`
+// merges consecutive same-role VAD segments into one turn, so a silent
+// agent or VAD-merged user utterances drop the script alignment. Show
+// only what the VAD actually measured; the script lives on the
+// conversation page.
+function TurnBlock({ turn }: { turn: ReplayTurnResponse }) {
 	return (
 		<div className="rounded-md border border-border/60 bg-muted/20 p-4">
-			<div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+			<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 				<Badge variant={turn.role === "user" ? "secondary" : "default"} className="font-normal">
 					{turn.role}
 				</Badge>
 				<span className="font-mono">#{turn.idx}</span>
-				{script?.key !== undefined && (
-					<span className="font-mono">
-						<span className="text-muted-foreground/60">key:</span> {script.key}
-					</span>
-				)}
 				<span className="tabular-nums">
 					· {formatMsRange(turn.voice_start_ms, turn.voice_end_ms)}
 				</span>
 			</div>
-			{script?.text !== undefined && (
-				<p className="whitespace-pre-wrap text-sm leading-relaxed">{script.text}</p>
-			)}
 		</div>
 	);
 }

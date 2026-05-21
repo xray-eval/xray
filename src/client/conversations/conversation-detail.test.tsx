@@ -2,6 +2,7 @@ import { HttpResponse, http } from "msw";
 
 import { server } from "@/test-server.ts";
 
+import type { ReplaySummaryResponse } from "../api/api.types.ts";
 import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
@@ -13,34 +14,7 @@ afterEach(() => cleanup());
 
 const CONVERSATION_HASH = "a".repeat(64);
 
-interface ReplaySummary {
-	id: string;
-	conversation_hash: string;
-	lifecycle_state:
-		| "pending"
-		| "running"
-		| "recording_uploaded"
-		| "analyzing"
-		| "completed"
-		| "failed";
-	analysis_step: "vad" | "turns" | null;
-	failure_reason:
-		| "stalled"
-		| "timeout"
-		| "explicit_fail"
-		| "max_attempts_exceeded"
-		| "worker_lost"
-		| "upload_failed"
-		| "driver_aborted"
-		| "agent_not_joined"
-		| "audio_missing"
-		| null;
-	started_at: string;
-	finished_at: string | null;
-	run_config: unknown;
-}
-
-const REPLAY_FIXTURES: ReplaySummary[] = [
+const REPLAY_FIXTURES = [
 	{
 		id: "11111111-1111-1111-1111-111111111111",
 		conversation_hash: CONVERSATION_HASH,
@@ -71,7 +45,7 @@ const REPLAY_FIXTURES: ReplaySummary[] = [
 		finished_at: null,
 		run_config: null,
 	},
-];
+] satisfies ReplaySummaryResponse[];
 
 function mockConversationAndReplays() {
 	server.use(

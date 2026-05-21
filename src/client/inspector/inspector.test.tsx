@@ -2,6 +2,7 @@ import { HttpResponse, http } from "msw";
 
 import { server } from "@/test-server.ts";
 
+import type { ReplayDetailResponse } from "../api/api.types.ts";
 import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
@@ -13,53 +14,7 @@ afterEach(() => cleanup());
 
 const REPLAY_ID = "44444444-4444-4444-4444-444444444444";
 
-interface ReplayDetailFixture {
-	id: string;
-	conversation_hash: string;
-	lifecycle_state:
-		| "pending"
-		| "running"
-		| "recording_uploaded"
-		| "analyzing"
-		| "completed"
-		| "failed";
-	analysis_step: "vad" | "turns" | null;
-	failure_reason:
-		| "stalled"
-		| "timeout"
-		| "explicit_fail"
-		| "max_attempts_exceeded"
-		| "worker_lost"
-		| "upload_failed"
-		| "driver_aborted"
-		| "agent_not_joined"
-		| "audio_missing"
-		| null;
-	started_at: string;
-	finished_at: string | null;
-	audio_path: string | null;
-	job_id: string | null;
-	run_config: unknown;
-	turns: Array<{
-		idx: number;
-		role: "user" | "agent";
-		turn_start_ms: number;
-		turn_end_ms: number;
-		voice_start_ms: number;
-		voice_end_ms: number;
-	}>;
-	speech_segments: Array<{
-		id: number;
-		channel: "user" | "agent";
-		start_ms: number;
-		end_ms: number;
-	}>;
-	tool_calls: never[];
-	model_usage: never[];
-	spans: never[];
-}
-
-function buildReplay(overrides: Partial<ReplayDetailFixture> = {}): ReplayDetailFixture {
+function buildReplay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetailResponse {
 	return {
 		id: REPLAY_ID,
 		conversation_hash: "a".repeat(64),
@@ -97,7 +52,7 @@ function buildReplay(overrides: Partial<ReplayDetailFixture> = {}): ReplayDetail
 	};
 }
 
-function mockReplay(replay: ReplayDetailFixture) {
+function mockReplay(replay: ReplayDetailResponse) {
 	server.use(http.get(`http://localhost/v1/replays/${replay.id}`, () => HttpResponse.json(replay)));
 }
 

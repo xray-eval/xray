@@ -2,6 +2,7 @@ import { HttpResponse, http } from "msw";
 
 import { server } from "@/test-server.ts";
 
+import type { ReplayDetailResponse, ReplayTurnResponse } from "../api/api.types.ts";
 import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
@@ -11,36 +12,11 @@ const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
 
-interface ReplayTurn {
-	idx: number;
-	role: "user" | "agent";
-	turn_start_ms: number;
-	turn_end_ms: number;
-	voice_start_ms: number;
-	voice_end_ms: number;
-}
-
 function buildReplay(
 	id: string,
-	turns: ReplayTurn[],
+	turns: ReplayTurnResponse[],
 	run_config: unknown = null,
-): {
-	id: string;
-	conversation_hash: string;
-	lifecycle_state: "completed";
-	analysis_step: null;
-	failure_reason: null;
-	started_at: string;
-	finished_at: string;
-	audio_path: null;
-	job_id: null;
-	run_config: unknown;
-	turns: ReplayTurn[];
-	speech_segments: never[];
-	tool_calls: never[];
-	model_usage: never[];
-	spans: never[];
-} {
+): ReplayDetailResponse {
 	return {
 		id,
 		conversation_hash: "a".repeat(64),
@@ -60,7 +36,7 @@ function buildReplay(
 	};
 }
 
-const TURN_FIXTURE: ReplayTurn = {
+const TURN_FIXTURE: ReplayTurnResponse = {
 	idx: 0,
 	role: "user",
 	turn_start_ms: 0,
