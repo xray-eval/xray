@@ -4,6 +4,7 @@ import { match } from "ts-pattern";
 
 import { BackLink } from "@/client/components/back-link.tsx";
 import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
+import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import { shortHash } from "@/client/format.ts";
@@ -14,6 +15,8 @@ import { formatTimestamp } from "../format.ts";
 import { RunStatusBadge } from "../replay-status/replay-status.tsx";
 import type { RunConfigDiffCell } from "./run-config-diff.ts";
 import { diffRunConfigs } from "./run-config-diff.ts";
+import type { TurnDiffCell } from "./turn-diff.ts";
+import { diffTurns } from "./turn-diff.ts";
 
 const MIN_COMPARE = 2;
 const MAX_COMPARE = 8;
@@ -78,6 +81,7 @@ function CompareHeader() {
 
 function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 	const runConfigRows = diffRunConfigs(replays.map((r) => r.run_config));
+	const turnRows = diffTurns(replays.map((r) => r.turns));
 	return (
 		<div className="overflow-x-auto">
 			<table className="w-full border-separate border-spacing-3" aria-label="Replay comparison">
@@ -142,6 +146,46 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 							})}
 						</tr>
 					))}
+					{turnRows.length > 0 && (
+						<tr>
+							<td
+								colSpan={replays.length}
+								className="pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+							>
+								Turns
+							</td>
+						</tr>
+					)}
+					{turnRows.map((row) => (
+						<tr key={`turn-${row.idx}`} aria-label={`turn.${row.idx}`}>
+							{row.cells.map((cell, idx) => {
+								const replay = replays[idx];
+								if (replay === undefined) return null;
+								return (
+									<td key={`${replay.id}-turn-${row.idx}`} className={turnCellClass(cell)}>
+										<div className="mb-1 flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+											<span>turn #{row.idx}</span>
+											{cell.turn !== undefined && (
+												<Badge
+													variant={cell.turn.role === "user" ? "secondary" : "default"}
+													className="font-normal"
+												>
+													{cell.turn.role}
+												</Badge>
+											)}
+										</div>
+										{cell.turn !== undefined ? (
+											<div className="tabular-nums text-[11px]">
+												{formatMsRange(cell.turn.voice_start_ms, cell.turn.voice_end_ms)}
+											</div>
+										) : (
+											<p className="text-muted-foreground italic">absent</p>
+										)}
+									</td>
+								);
+							})}
+						</tr>
+					))}
 				</tbody>
 			</table>
 		</div>
@@ -152,6 +196,17 @@ function runConfigCellClass(cell: RunConfigDiffCell): string {
 	const base = "min-w-[240px] rounded border p-2 align-top text-xs";
 	if (cell.differsFromBaseline) return `${base} bg-yellow-50 dark:bg-yellow-950/30`;
 	return base;
+}
+
+function turnCellClass(cell: TurnDiffCell): string {
+	const base = "min-w-[240px] rounded border p-2 align-top text-xs";
+	if (cell.differsFromBaseline) return `${base} bg-yellow-50 dark:bg-yellow-950/30`;
+	return base;
+}
+
+function formatMsRange(startMs: number, endMs: number): string {
+	const fmt = (ms: number) => (ms / 1000).toFixed(2);
+	return `${fmt(startMs)}s → ${fmt(endMs)}s`;
 }
 
 function parseReplayIds(raw: string | undefined): string[] {
