@@ -1,6 +1,5 @@
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { AlertTriangle, Check, X } from "lucide-react";
 import { match } from "ts-pattern";
 
 import { BackLink } from "@/client/components/back-link.tsx";
@@ -10,9 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import { shortHash } from "@/client/format.ts";
 
-import { getConversation, getReplay, replayAudioUrl, turnAudioUrl } from "../api/api.ts";
+import { getConversation, getReplay, replayAudioUrl } from "../api/api.ts";
 import type {
-	AssertionResponse,
 	ModelUsageResponse,
 	ReplayDetailResponse,
 	ReplayTurnResponse,
@@ -21,7 +19,7 @@ import type {
 } from "../api/api.types.ts";
 import { AudioWithCaptions } from "../audio/audio-with-captions.tsx";
 import { formatTimestamp } from "../format.ts";
-import { JudgeStatusBadge, RunStatusBadge } from "../replay-status/replay-status.tsx";
+import { RunStatusBadge } from "../replay-status/replay-status.tsx";
 
 export function Inspector() {
 	const { replayId } = useParams({ from: "/replays/$replayId" });
@@ -102,21 +100,19 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 		<div className="grid gap-6 lg:grid-cols-3">
 			<div className="grid gap-6 lg:col-span-2">
 				<HeaderCard replay={replay} />
-				<TranscriptCard replay={replay} />
+				<TurnsCard replay={replay} />
 				<SpansCard spans={replay.spans} />
 			</div>
 			<aside className="grid gap-6">
-				<JudgeCard replay={replay} />
 				<RunConfigCard replay={replay} />
 				<ToolCallsCard toolCalls={replay.tool_calls} />
 				<ModelUsageCard usage={replay.model_usage} />
-				<AssertionsCard assertions={replay.assertions} />
 			</aside>
 		</div>
 	);
 }
 
-function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
+function TurnsCard({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<Card className="gap-4">
 			<CardHeader>
@@ -126,16 +122,15 @@ function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
 			</CardHeader>
 			<CardContent>
 				{replay.turns.length === 0 ? (
-					<p className="text-sm text-muted-foreground">No per-turn data recorded.</p>
+					<p className="text-sm text-muted-foreground">
+						No turns derived yet. Server-side VAD analysis populates this list after the audio
+						upload completes.
+					</p>
 				) : (
 					<ol className="grid gap-3">
 						{replay.turns.map((turn) => (
 							<li key={`${turn.idx}-${turn.role}`}>
-								<TurnBlock
-									replay={replay}
-									turn={turn}
-									assertions={replay.assertions.filter((a) => a.turn_idx === turn.idx)}
-								/>
+								<TurnBlock turn={turn} />
 							</li>
 						))}
 					</ol>
@@ -145,81 +140,30 @@ function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
 	);
 }
 
-function TurnBlock({
-	replay,
-	turn,
-	assertions,
-}: {
-	replay: ReplayDetailResponse;
-	turn: ReplayTurnResponse;
-	assertions: AssertionResponse[];
-}) {
+// VAD-derived turn idx is independent of script turn idx — `deriveTurns`
+// merges consecutive same-role VAD segments into one turn, so a silent
+// agent or VAD-merged user utterances drop the script alignment. Show
+// only what the VAD actually measured; the script lives on the
+// conversation page.
+function TurnBlock({ turn }: { turn: ReplayTurnResponse }) {
 	return (
 		<div className="rounded-md border border-border/60 bg-muted/20 p-4">
-			<div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+			<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 				<Badge variant={turn.role === "user" ? "secondary" : "default"} className="font-normal">
 					{turn.role}
 				</Badge>
 				<span className="font-mono">#{turn.idx}</span>
-				{turn.key !== null && (
-					<span className="font-mono">
-						<span className="text-muted-foreground/60">key:</span> {turn.key}
-					</span>
-				)}
-				{turn.started_at !== null && (
-					<span className="tabular-nums">· {formatTimestamp(turn.started_at)}</span>
-				)}
+				<span className="tabular-nums">
+					· {formatMsRange(turn.voice_start_ms, turn.voice_end_ms)}
+				</span>
 			</div>
-			{turn.transcript !== null && (
-				<p className="whitespace-pre-wrap text-sm leading-relaxed">{turn.transcript}</p>
-			)}
-			{turn.audio_path !== null && (
-				<div className="mt-3">
-					<AudioWithCaptions
-						src={turnAudioUrl(replay.id, turn.idx)}
-						captionText={turn.transcript}
-						className="w-full"
-						label={`Turn ${turn.idx} audio — ${turn.role}`}
-					/>
-				</div>
-			)}
-			{assertions.length > 0 && (
-				<ul className="mt-3 grid gap-1.5 text-xs" aria-label={`Assertions for turn ${turn.idx}`}>
-					{assertions.map((a) => (
-						<li key={a.id} className="flex items-start gap-2">
-							<AssertionChip status={a.status} />
-							<div className="flex-1">
-								<span className="font-medium">{a.name}</span>
-								{a.message !== null && (
-									<span className="ml-1 text-muted-foreground">— {a.message}</span>
-								)}
-							</div>
-						</li>
-					))}
-				</ul>
-			)}
 		</div>
 	);
 }
 
-function AssertionChip({ status }: { status: AssertionResponse["status"] }) {
-	return match(status)
-		.with("passed", () => (
-			<Badge aria-label="passed" className="bg-success text-success-foreground">
-				<Check className="size-3" strokeWidth={3} aria-hidden />
-			</Badge>
-		))
-		.with("failed", () => (
-			<Badge variant="destructive" aria-label="failed">
-				<X className="size-3" strokeWidth={3} aria-hidden />
-			</Badge>
-		))
-		.with("errored", () => (
-			<Badge aria-label="errored" className="bg-warning text-warning-foreground">
-				<AlertTriangle className="size-3" strokeWidth={2.5} aria-hidden />
-			</Badge>
-		))
-		.exhaustive();
+function formatMsRange(startMs: number, endMs: number): string {
+	const fmt = (ms: number) => (ms / 1000).toFixed(2);
+	return `${fmt(startMs)}s → ${fmt(endMs)}s`;
 }
 
 function SpansCard({ spans }: { spans: SpanResponse[] }) {
@@ -264,28 +208,6 @@ function SpansCard({ spans }: { spans: SpanResponse[] }) {
 	);
 }
 
-function JudgeCard({ replay }: { replay: ReplayDetailResponse }) {
-	if (replay.judge.status === null) return null;
-	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-					Judge
-				</CardTitle>
-			</CardHeader>
-			<CardContent className="grid gap-2.5 text-sm">
-				<JudgeStatusBadge status={replay.judge.status} score={replay.judge.score} />
-				{replay.judge.reason !== null && (
-					<p className="text-sm leading-relaxed text-muted-foreground">{replay.judge.reason}</p>
-				)}
-				{replay.judge.error !== null && (
-					<p className="text-sm text-destructive">errored: {replay.judge.error}</p>
-				)}
-			</CardContent>
-		</Card>
-	);
-}
-
 function RunConfigCard({ replay }: { replay: ReplayDetailResponse }) {
 	if (replay.run_config === null || replay.run_config === undefined) return null;
 	return (
@@ -296,7 +218,7 @@ function RunConfigCard({ replay }: { replay: ReplayDetailResponse }) {
 				</CardTitle>
 			</CardHeader>
 			<CardContent>
-				<pre className="overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-3 font-mono text-xs leading-relaxed">
+				<pre className="overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/60 bg-muted/20 p-3 font-mono text-xs leading-relaxed">
 					{JSON.stringify(replay.run_config, null, 2)}
 				</pre>
 			</CardContent>
@@ -369,41 +291,6 @@ function ModelUsageCard({ usage }: { usage: ModelUsageResponse[] }) {
 	);
 }
 
-function AssertionsCard({ assertions }: { assertions: AssertionResponse[] }) {
-	if (assertions.length === 0) return null;
-	const passed = assertions.filter((a) => a.status === "passed").length;
-	const failed = assertions.filter((a) => a.status === "failed").length;
-	const errored = assertions.filter((a) => a.status === "errored").length;
-	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-					Assertions
-				</CardTitle>
-			</CardHeader>
-			<CardContent>
-				<div className="flex flex-wrap items-center gap-2 text-xs">
-					<Badge
-						aria-label={`${passed} passed`}
-						className="bg-success tabular-nums text-success-foreground"
-					>
-						<Check className="size-3" strokeWidth={3} aria-hidden /> {passed}
-					</Badge>
-					<Badge variant="destructive" aria-label={`${failed} failed`} className="tabular-nums">
-						<X className="size-3" strokeWidth={3} aria-hidden /> {failed}
-					</Badge>
-					<Badge
-						aria-label={`${errored} errored`}
-						className="bg-warning tabular-nums text-warning-foreground"
-					>
-						<AlertTriangle className="size-3" strokeWidth={2.5} aria-hidden /> {errored}
-					</Badge>
-				</div>
-			</CardContent>
-		</Card>
-	);
-}
-
 function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<Card className="gap-4">
@@ -420,7 +307,7 @@ function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
 					<div className="mt-4">
 						<AudioWithCaptions
 							src={replayAudioUrl(replay.id)}
-							captionText={replay.transcript}
+							captionText={null}
 							className="w-full"
 							label="Full replay audio"
 						/>

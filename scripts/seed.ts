@@ -1,12 +1,15 @@
 // Seed the running xray dev server so the UI has something to render
 // without a real LiveKit-Python agent loop.
 //
-// Creates one Conversation, then N Replays via POST /v1/replays. For each
-// Replay it pushes a small synthetic OTLP/JSON batch with a mix of
-// vocabularies (xray.assertion, xray.judge, xray.turn, gen_ai.chat,
-// gen_ai.execute_tool, langfuse generation) so the inspector exercises
-// every panel, then uploads a single full-replay WAV that the client
-// segments by per-turn timestamps.
+// Posts one Conversation via POST /v1/conversations (multipart with the
+// canonical `spec` JSON), then N Replays via POST /v1/replays referencing
+// the returned conversation hash. For each Replay it pushes a small
+// synthetic OTLP/JSON batch with a mix of vocabularies (xray.assertion,
+// xray.judge, xray.turn, gen_ai.chat, gen_ai.execute_tool, langfuse
+// generation), uploads a 48kHz int16 stereo WAV (user on left, agent on
+// right) so the analyze worker can derive `replay_turns` +
+// `speech_segments`, and either kicks off the analyze job (→ completed)
+// or PATCHes the row to `failed`.
 //
 // Usage:
 //   pnpm dev                              # in one terminal
@@ -16,6 +19,8 @@
 // Override target via env: XRAY_BASE_URL=http://otherhost:9000 pnpm seed
 
 import * as v from "valibot";
+
+import type { UpdateReplayRequest } from "@/server/replays/replays.types.ts";
 
 class SeedError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
@@ -47,18 +52,39 @@ class SeedRequestError extends SeedError {
 	}
 }
 
+class SeedShapeError extends SeedError {
+	readonly path: string;
+	readonly issues: readonly v.BaseIssue<unknown>[];
+	constructor(path: string, issues: readonly v.BaseIssue<unknown>[]) {
+		super(`${path}: schema mismatch — ${issues.map((i) => i.message).join("; ")}`);
+		this.name = "SeedShapeError";
+		this.path = path;
+		this.issues = issues;
+	}
+}
+
+function parseOrThrow<S extends v.GenericSchema>(
+	path: string,
+	schema: S,
+	value: unknown,
+): v.InferOutput<S> {
+	const result = v.safeParse(schema, value);
+	if (!result.success) throw new SeedShapeError(path, result.issues);
+	return result.output;
+}
+
 const EnvSchema = v.object({
 	XRAY_BASE_URL: v.optional(v.string()),
 	OPENAI_API_KEY: v.optional(v.string()),
 	OPENAI_TTS_MODEL: v.optional(v.string()),
 });
-const ENV = v.parse(EnvSchema, process.env);
+const ENV = parseOrThrow("process.env", EnvSchema, process.env);
 const BASE = ENV.XRAY_BASE_URL ?? "http://localhost:8080";
 const TTS_MODEL = ENV.OPENAI_TTS_MODEL ?? "gpt-4o-mini-tts";
 
 interface SeedTurn {
 	role: "user" | "agent";
-	text?: string;
+	text: string;
 	key: string;
 }
 
@@ -78,9 +104,13 @@ const REPLAY_COUNT = 3;
 
 const TURNS: SeedTurn[] = [
 	{ role: "user", text: "Hi, I'd like to book a table for two at 7pm.", key: "u0" },
-	{ role: "agent", key: "a0" },
+	{ role: "agent", text: "Confirmed — two at 7pm. Anything else I can help with?", key: "a0" },
 	{ role: "user", text: "Anything else I should know?", key: "u1" },
-	{ role: "agent", key: "a1" },
+	{
+		role: "agent",
+		text: "We hold reservations for 15 minutes past your time — see you then.",
+		key: "a1",
+	},
 ];
 
 // Shared source of truth for what the spans say AND what the TTS synthesizes.
@@ -130,10 +160,14 @@ const TTS_VOICE_FOR_ROLE: Record<"user" | "agent", string> = {
 async function main() {
 	const conversationHash = await postConversation();
 	for (let i = 0; i < REPLAY_COUNT; i++) {
-		const created = await postReplay(conversationHash, i);
-		await pushOtlp(created.id, i, conversationHash);
-		await uploadReplayAudio(created.id, i);
-		await patchReplay(created.id, i);
+		const replayId = await postReplay(conversationHash, i);
+		await pushOtlp(replayId, i);
+		await uploadReplayAudio(replayId, i);
+		if (i === REPLAY_COUNT - 1) {
+			await patchReplayFailed(replayId, i);
+		} else {
+			await analyzeReplay(replayId);
+		}
 	}
 	console.info(
 		`seeded ${REPLAY_COUNT} replays under conversation ${conversationHash.slice(0, 12)}…`,
@@ -143,6 +177,8 @@ async function main() {
 async function postConversation(): Promise<string> {
 	const spec = { name: CONVERSATION_NAME, turns: TURNS };
 	const form = new FormData();
+	// `spec` is a string form field (server reads it via `typeof value === "string"`).
+	// Passing a Blob would land it as a File part and the server would drop it.
 	form.set("spec", JSON.stringify(spec));
 	const res = await fetch(`${BASE}/v1/conversations`, { method: "POST", body: form });
 	if (!res.ok) {
@@ -154,11 +190,15 @@ async function postConversation(): Promise<string> {
 			await res.text(),
 		);
 	}
-	const parsed = v.parse(v.object({ hash: v.string() }), await res.json());
+	const parsed = parseOrThrow(
+		"POST /v1/conversations response",
+		v.object({ hash: v.string() }),
+		await res.json(),
+	);
 	return parsed.hash;
 }
 
-async function postReplay(conversationHash: string, idx: number): Promise<{ id: string }> {
+async function postReplay(conversationHash: string, idx: number): Promise<string> {
 	const body = {
 		conversation_hash: conversationHash,
 		run_config: {
@@ -174,11 +214,15 @@ async function postReplay(conversationHash: string, idx: number): Promise<{ id: 
 	if (!res.ok) {
 		throw new SeedRequestError("POST", "/v1/replays", res.status, res.statusText, await res.text());
 	}
-	const parsed = v.parse(v.object({ id: v.string() }), await res.json());
-	return { id: parsed.id };
+	const parsed = parseOrThrow(
+		"POST /v1/replays response",
+		v.object({ id: v.string() }),
+		await res.json(),
+	);
+	return parsed.id;
 }
 
-async function pushOtlp(replayId: string, idx: number, conversationHash: string) {
+async function pushOtlp(replayId: string, idx: number) {
 	const replayStartMs = Date.UTC(2026, 4, 18 + idx, 12, 0, 0);
 	const lastEnd = PLAYED.at(-1)?.endMs ?? 0;
 	const judgeStart = lastEnd + 100;
@@ -186,18 +230,16 @@ async function pushOtlp(replayId: string, idx: number, conversationHash: string)
 		resourceSpans: [
 			{
 				resource: {
-					attributes: [
-						kv("xray.replay.id", replayId),
-						kv("xray.conversation.hash", conversationHash),
-						kv("xray.modality", "voice"),
-					],
+					attributes: [kv("xray.replay.id", replayId), kv("xray.modality", "voice")],
 				},
 				scopeSpans: [
 					{
 						scope: { name: "seed", attributes: [] },
 						spans: [
-							// xray.turn spans — one per played segment. These are what
-							// the inspector slices the full-replay WAV by.
+							// xray.turn spans — one per played segment. Server-derived
+							// `replay_turns` (from VAD) are the ground truth; these spans
+							// are still recognized as the `xray` vocabulary and surface in
+							// the raw-spans table.
 							...PLAYED.map((p) =>
 								span({
 									name: "xray.turn",
@@ -296,15 +338,11 @@ async function pushOtlp(replayId: string, idx: number, conversationHash: string)
 	}
 }
 
-// One audio file per replay (the full mixdown). The UI slices it by
-// `replay_turns.started_at`/`ended_at` from the xray.turn spans pushed
-// above, so this single WAV plays back per-turn segments in the inspector.
-//
-// When OPENAI_API_KEY is set, each segment's `transcript` is synthesized
-// via OpenAI's `/v1/audio/speech` (PCM, 24 kHz mono) and the segments are
-// concatenated with silence padding so the playhead lines up with the
-// span timings. Without a key, falls back to a per-turn sine tone — still
-// audibly turn-shaped but not speech.
+// 48kHz int16 stereo WAV per replay — user voice on left channel, agent on
+// right, silence on the other channel during the opposing role's turn. The
+// analyze worker VADs each channel independently to derive `replay_turns`
+// and `speech_segments`; the channel layout is what makes role inference
+// possible without any side-channel.
 async function uploadReplayAudio(replayId: string, replayIdx: number) {
 	const wav = ENV.OPENAI_API_KEY
 		? await synthesizeReplayWavViaOpenAI(ENV.OPENAI_API_KEY)
@@ -325,10 +363,23 @@ async function uploadReplayAudio(replayId: string, replayIdx: number) {
 	}
 }
 
-async function patchReplay(replayId: string, idx: number) {
-	const body = {
-		lifecycle_state: idx === 2 ? "failed" : "completed",
-		failure_reason: idx === 2 ? "driver_aborted" : null,
+async function analyzeReplay(replayId: string) {
+	const res = await fetch(`${BASE}/v1/replays/${replayId}/analyze`, { method: "POST" });
+	if (!res.ok) {
+		throw new SeedRequestError(
+			"POST",
+			`/v1/replays/${replayId}/analyze`,
+			res.status,
+			res.statusText,
+			await res.text(),
+		);
+	}
+}
+
+async function patchReplayFailed(replayId: string, idx: number) {
+	const body: UpdateReplayRequest = {
+		lifecycle_state: "failed",
+		failure_reason: "driver_aborted",
 		finished_at: new Date(Date.UTC(2026, 4, 18 + idx, 12, 0, 15)).toISOString(),
 	};
 	const res = await fetch(`${BASE}/v1/replays/${replayId}`, {
@@ -349,34 +400,33 @@ async function patchReplay(replayId: string, idx: number) {
 
 // --- audio helpers ---
 
+const WAV_SAMPLE_RATE = 48_000; // server requires 48kHz int16 stereo.
 const TTS_SAMPLE_RATE = 24_000; // OpenAI TTS PCM is fixed at 24 kHz mono.
-const SINE_SAMPLE_RATE = 16_000;
 
 /**
- * TTS each segment, drop the bytes at the right offset of a single
- * 24 kHz mono PCM buffer, render to WAV.
+ * TTS each segment, drop it on the matching stereo channel (user→left,
+ * agent→right) of a single 48 kHz int16 mixdown.
  *
- * Each clip is trimmed to its span's slot length so the on-disk
- * playhead matches the span timestamps the inspector seeks by. If TTS
- * runs longer than the slot the tail is dropped; if shorter, the slot
- * pads with silence. Trimming (rather than expanding the buffer) keeps
- * playback aligned with `replay_turns.started_at`/`ended_at` — that
- * alignment is the whole reason this script uploads one mixdown
- * instead of N per-turn clips.
+ * The OpenAI endpoint returns 24 kHz mono PCM; we upsample 2× by linear
+ * interpolation. Each clip is trimmed to its span's slot length so the
+ * on-disk playhead matches the span timestamps the inspector seeks by.
  */
 async function synthesizeReplayWavViaOpenAI(apiKey: string): Promise<ArrayBuffer> {
-	const sampleRate = TTS_SAMPLE_RATE;
-	const totalSamples = Math.round(((PLAYED.at(-1)?.endMs ?? 0) / 1000) * sampleRate);
-	const mix = new Int16Array(totalSamples);
+	const totalSamples = Math.round(((PLAYED.at(-1)?.endMs ?? 0) / 1000) * WAV_SAMPLE_RATE);
+	const left = new Int16Array(totalSamples);
+	const right = new Int16Array(totalSamples);
 	for (const seg of PLAYED) {
-		const samples = await ttsToPcm(apiKey, seg.transcript, TTS_VOICE_FOR_ROLE[seg.role]);
-		const startSamples = Math.round((seg.startMs / 1000) * sampleRate);
-		const endSamples = Math.round((seg.endMs / 1000) * sampleRate);
+		const ttsPcm = await ttsToPcm(apiKey, seg.transcript, TTS_VOICE_FOR_ROLE[seg.role]);
+		const samples = upsamplePcm(ttsPcm, TTS_SAMPLE_RATE, WAV_SAMPLE_RATE);
+		const startSamples = Math.round((seg.startMs / 1000) * WAV_SAMPLE_RATE);
+		const endSamples = Math.round((seg.endMs / 1000) * WAV_SAMPLE_RATE);
 		const slotLength = Math.max(0, endSamples - startSamples);
 		const clipLength = Math.min(samples.length, slotLength, totalSamples - startSamples);
-		if (clipLength > 0) mix.set(samples.subarray(0, clipLength), startSamples);
+		if (clipLength <= 0) continue;
+		const channel = seg.role === "user" ? left : right;
+		channel.set(samples.subarray(0, clipLength), startSamples);
 	}
-	return wavFromPcm(mix, sampleRate);
+	return wavFromStereoPcm(left, right, WAV_SAMPLE_RATE);
 }
 
 async function ttsToPcm(apiKey: string, text: string, voice: string): Promise<Int16Array> {
@@ -409,39 +459,71 @@ async function ttsToPcm(apiKey: string, text: string, voice: string): Promise<In
 }
 
 /**
- * Fallback when no OpenAI key is configured. Different sine frequency
- * per replay so the three runs sound different, with a per-segment
- * envelope so turn boundaries are audible.
+ * Fallback when no OpenAI key is configured. Stereo: user tone rides the
+ * left channel during user turns, agent tone rides the right channel
+ * during agent turns. Different base frequency per replay so the three
+ * runs sound different. The opposing channel stays silent during a turn
+ * so the analyze worker's per-channel VAD sees clean alternating energy.
  */
 function synthesizeReplayWavViaSine(replayIdx: number): ArrayBuffer {
-	const sampleRate = SINE_SAMPLE_RATE;
+	const sampleRate = WAV_SAMPLE_RATE;
 	const totalSamples = Math.round(((PLAYED.at(-1)?.endMs ?? 0) / 1000) * sampleRate);
-	const mix = new Int16Array(totalSamples);
+	const left = new Int16Array(totalSamples);
+	const right = new Int16Array(totalSamples);
 	const baseFreq = 220 + replayIdx * 110;
 	for (const seg of PLAYED) {
 		const start = Math.round((seg.startMs / 1000) * sampleRate);
 		const end = Math.round((seg.endMs / 1000) * sampleRate);
-		// User turns ride at baseFreq, agent turns up a fifth.
 		const freq = seg.role === "user" ? baseFreq : baseFreq * 1.5;
 		const amplitude = 0.25 * 0x7fff;
+		const channel = seg.role === "user" ? left : right;
 		for (let i = start; i < end && i < totalSamples; i++) {
 			const sample = Math.round(
 				amplitude * Math.sin((2 * Math.PI * freq * (i - start)) / sampleRate),
 			);
-			mix[i] = sample;
+			channel[i] = sample;
 		}
 	}
-	return wavFromPcm(mix, sampleRate);
+	return wavFromStereoPcm(left, right, sampleRate);
 }
 
 /**
- * Wrap raw 16-bit signed PCM samples (mono) in a minimal RIFF/WAV
- * container. No external dep — the format is small enough to spell out
- * by hand and the resulting file plays in every browser.
+ * Linear-interpolation upsample from `srcRate` to `dstRate`. Mirrors the
+ * server-side downsampler — fidelity is irrelevant for seed audio; we just
+ * need a 48 kHz buffer the server's stereo WAV reader accepts.
  */
-function wavFromPcm(samples: Int16Array, sampleRate: number): ArrayBuffer {
-	const bytesPerSample = 2;
-	const dataBytes = samples.length * bytesPerSample;
+function upsamplePcm(pcm: Int16Array, srcRate: number, dstRate: number): Int16Array {
+	if (srcRate === dstRate) return pcm;
+	const ratio = srcRate / dstRate;
+	const outLength = Math.floor((pcm.length * dstRate) / srcRate);
+	const out = new Int16Array(outLength);
+	for (let i = 0; i < outLength; i++) {
+		const src = i * ratio;
+		const i0 = Math.floor(src);
+		const i1 = Math.min(i0 + 1, pcm.length - 1);
+		const t = src - i0;
+		const s0 = pcm[i0] ?? 0;
+		const s1 = pcm[i1] ?? 0;
+		out[i] = Math.round(s0 + (s1 - s0) * t);
+	}
+	return out;
+}
+
+/**
+ * Wrap two equal-length int16 channels in a minimal 48 kHz stereo RIFF/WAV
+ * container. Format matches what the server's `readStereoWav` expects:
+ * PCM, 2 channels, 16 bits per sample, 48 kHz.
+ */
+function wavFromStereoPcm(left: Int16Array, right: Int16Array, sampleRate: number): ArrayBuffer {
+	if (left.length !== right.length) {
+		throw new SeedError(
+			`stereo channels must have equal length (left=${left.length} right=${right.length})`,
+		);
+	}
+	const channels = 2;
+	const bitsPerSample = 16;
+	const bytesPerSample = bitsPerSample / 8;
+	const dataBytes = left.length * channels * bytesPerSample;
 	const buffer = new ArrayBuffer(44 + dataBytes);
 	const view = new DataView(buffer);
 
@@ -451,17 +533,18 @@ function wavFromPcm(samples: Int16Array, sampleRate: number): ArrayBuffer {
 	writeAscii(view, 12, "fmt ");
 	view.setUint32(16, 16, true);
 	view.setUint16(20, 1, true); // PCM format
-	view.setUint16(22, 1, true); // mono
+	view.setUint16(22, channels, true);
 	view.setUint32(24, sampleRate, true);
-	view.setUint32(28, sampleRate * bytesPerSample, true);
-	view.setUint16(32, bytesPerSample, true);
-	view.setUint16(34, 16, true);
+	view.setUint32(28, sampleRate * channels * bytesPerSample, true);
+	view.setUint16(32, channels * bytesPerSample, true);
+	view.setUint16(34, bitsPerSample, true);
 	writeAscii(view, 36, "data");
 	view.setUint32(40, dataBytes, true);
 
-	for (let i = 0; i < samples.length; i++) {
-		const sample = samples[i] ?? 0;
-		view.setInt16(44 + i * bytesPerSample, sample, true);
+	for (let i = 0; i < left.length; i++) {
+		const offset = 44 + i * channels * bytesPerSample;
+		view.setInt16(offset, left[i] ?? 0, true);
+		view.setInt16(offset + bytesPerSample, right[i] ?? 0, true);
 	}
 	return buffer;
 }

@@ -8,7 +8,6 @@ export type {
 	ListConversationsResponse,
 } from "@/server/conversations/conversations.types.ts";
 export type {
-	AssertionResponse,
 	CompareReplaysResponse,
 	CreateReplayRequest,
 	ListReplaysResponse,
@@ -17,6 +16,7 @@ export type {
 	ReplaySummaryResponse,
 	ReplayTurnResponse,
 	SpanResponse,
+	SpeechSegmentResponse,
 	ToolCallResponse,
 	UpdateReplayRequest,
 } from "@/server/replays/replays.types.ts";

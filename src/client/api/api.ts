@@ -100,7 +100,3 @@ export function compareReplays(
 export function replayAudioUrl(replayId: string): string {
 	return `/v1/replays/${replayId}/audio`;
 }
-
-export function turnAudioUrl(replayId: string, turnIdx: number): string {
-	return `/v1/replays/${replayId}/turns/${turnIdx}/audio`;
-}

@@ -21,7 +21,7 @@ import { shortHash } from "@/client/format.ts";
 import { getConversation, listReplaysForConversation } from "../api/api.ts";
 import type { ReplaySummaryResponse } from "../api/api.types.ts";
 import { formatTimestamp } from "../format.ts";
-import { JudgeStatusBadge, RunStatusBadge } from "../replay-status/replay-status.tsx";
+import { RunStatusBadge } from "../replay-status/replay-status.tsx";
 
 const MIN_COMPARE = 2;
 const MAX_COMPARE = 8;
@@ -150,9 +150,6 @@ function ReplaysTable({
 							Status
 						</TableHead>
 						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-							Judge
-						</TableHead>
-						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
 							Started
 						</TableHead>
 					</TableRow>
@@ -204,19 +201,11 @@ function ReplayRow({
 			<TableCell className="px-4 py-3">
 				<RunStatusBadge replay={replay} />
 			</TableCell>
-			<TableCell className="px-4 py-3 text-xs text-muted-foreground">
-				<JudgeCell replay={replay} />
-			</TableCell>
 			<TableCell className="px-4 py-3 text-xs text-muted-foreground tabular-nums">
 				{formatTimestamp(replay.started_at)}
 			</TableCell>
 		</ClickableRow>
 	);
-}
-
-function JudgeCell({ replay }: { replay: ReplaySummaryResponse }) {
-	if (replay.judge_status === null) return <span className="text-muted-foreground/60">—</span>;
-	return <JudgeStatusBadge status={replay.judge_status} score={replay.judge_score} />;
 }
 
 const SKELETON_SLOTS = ["a", "b", "c"] as const;

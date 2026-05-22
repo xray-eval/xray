@@ -10,10 +10,13 @@ import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import { shortHash } from "@/client/format.ts";
 
 import { compareReplays } from "../api/api.ts";
-import type { ReplayDetailResponse, ReplayTurnResponse } from "../api/api.types.ts";
+import type { ReplayDetailResponse } from "../api/api.types.ts";
 import { formatTimestamp } from "../format.ts";
+import { RunStatusBadge } from "../replay-status/replay-status.tsx";
 import type { RunConfigDiffCell } from "./run-config-diff.ts";
 import { diffRunConfigs } from "./run-config-diff.ts";
+import type { TurnDiffCell } from "./turn-diff.ts";
+import { diffTurns } from "./turn-diff.ts";
 
 const MIN_COMPARE = 2;
 const MAX_COMPARE = 8;
@@ -77,8 +80,8 @@ function CompareHeader() {
 }
 
 function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
-	const allKeys = collectKeys(replays);
 	const runConfigRows = diffRunConfigs(replays.map((r) => r.run_config));
+	const turnRows = diffTurns(replays.map((r) => r.turns));
 	return (
 		<div className="overflow-x-auto">
 			<table className="w-full border-separate border-spacing-3" aria-label="Replay comparison">
@@ -88,13 +91,19 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 							<th key={r.id} scope="col" className="min-w-[240px] text-left align-top">
 								<Card>
 									<CardHeader>
-										<CardTitle className="text-base">
+										<CardTitle className="flex items-center justify-between gap-2 text-base">
 											<span className="font-mono">{r.id.slice(0, 8)}…</span>
+											<RunStatusBadge replay={r} />
 										</CardTitle>
 									</CardHeader>
 									<CardContent className="text-xs text-muted-foreground">
 										<div className="font-mono">{shortHash(r.conversation_hash)}…</div>
 										<div>{formatTimestamp(r.started_at)}</div>
+										<div className="mt-1 tabular-nums">
+											{r.turns.length} turn{r.turns.length === 1 ? "" : "s"} ·{" "}
+											{r.speech_segments.length} segment
+											{r.speech_segments.length === 1 ? "" : "s"}
+										</div>
 									</CardContent>
 								</Card>
 							</th>
@@ -137,7 +146,7 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 							})}
 						</tr>
 					))}
-					{allKeys.length > 0 && (
+					{turnRows.length > 0 && (
 						<tr>
 							<td
 								colSpan={replays.length}
@@ -147,8 +156,35 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 							</td>
 						</tr>
 					)}
-					{allKeys.map((key) => (
-						<KeyRow key={key} keyName={key} replays={replays} />
+					{turnRows.map((row) => (
+						<tr key={`turn-${row.idx}`} aria-label={`turn.${row.idx}`}>
+							{row.cells.map((cell, idx) => {
+								const replay = replays[idx];
+								if (replay === undefined) return null;
+								return (
+									<td key={`${replay.id}-turn-${row.idx}`} className={turnCellClass(cell)}>
+										<div className="mb-1 flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+											<span>turn #{row.idx}</span>
+											{cell.turn !== undefined && (
+												<Badge
+													variant={cell.turn.role === "user" ? "secondary" : "default"}
+													className="font-normal"
+												>
+													{cell.turn.role}
+												</Badge>
+											)}
+										</div>
+										{cell.turn !== undefined ? (
+											<div className="tabular-nums text-[11px]">
+												{formatMsRange(cell.turn.voice_start_ms, cell.turn.voice_end_ms)}
+											</div>
+										) : (
+											<p className="text-muted-foreground italic">absent</p>
+										)}
+									</td>
+								);
+							})}
+						</tr>
 					))}
 				</tbody>
 			</table>
@@ -162,62 +198,18 @@ function runConfigCellClass(cell: RunConfigDiffCell): string {
 	return base;
 }
 
-function KeyRow({ keyName, replays }: { keyName: string; replays: ReplayDetailResponse[] }) {
-	return (
-		<tr>
-			{replays.map((r) => {
-				// `key` is not unique within a replay, only `(replay_id, idx)` is.
-				// Surface every matching turn so a duplicate-keyed run isn't silently
-				// reduced to its first turn.
-				const matchingTurns = r.turns.filter((t) => t.key === keyName);
-				return (
-					<td
-						key={`${r.id}-${keyName}`}
-						className="min-w-[240px] rounded border p-2 align-top text-xs"
-					>
-						<div className="mb-1 flex items-center justify-between text-muted-foreground">
-							<span>key: {keyName}</span>
-							{matchingTurns.length > 0 && (
-								<Badge variant="outline">{matchingTurns[0]?.role}</Badge>
-							)}
-						</div>
-						{matchingTurns.length === 0 ? (
-							<p className="text-muted-foreground italic">no matching turn</p>
-						) : (
-							<ul className="grid gap-1">
-								{matchingTurns.map((turn) => (
-									<li key={`${r.id}-${keyName}-${turn.idx}`}>
-										<TurnSnippet turn={turn} />
-									</li>
-								))}
-							</ul>
-						)}
-					</td>
-				);
-			})}
-		</tr>
-	);
+function turnCellClass(cell: TurnDiffCell): string {
+	const base = "min-w-[240px] rounded border p-2 align-top text-xs";
+	if (cell.differsFromBaseline) return `${base} bg-yellow-50 dark:bg-yellow-950/30`;
+	return base;
 }
 
-function TurnSnippet({ turn }: { turn: ReplayTurnResponse }) {
-	return (
-		<p className="line-clamp-6 whitespace-pre-wrap text-sm">
-			{turn.transcript ?? "(no transcript)"}
-		</p>
-	);
+function formatMsRange(startMs: number, endMs: number): string {
+	const fmt = (ms: number) => (ms / 1000).toFixed(2);
+	return `${fmt(startMs)}s → ${fmt(endMs)}s`;
 }
 
 function parseReplayIds(raw: string | undefined): string[] {
 	if (raw === undefined || raw.length === 0) return [];
 	return raw.split(",").filter((s) => s.length > 0);
-}
-
-function collectKeys(replays: ReplayDetailResponse[]): string[] {
-	const set = new Set<string>();
-	for (const r of replays) {
-		for (const t of r.turns) {
-			if (t.key !== null) set.add(t.key);
-		}
-	}
-	return [...set];
 }
