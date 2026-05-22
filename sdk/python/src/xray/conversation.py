@@ -1,10 +1,11 @@
 """Test-definition primitives.
 
 A ``Conversation`` is the dev-authored spec: an ordered list of ``Turn``\\ s,
-plus per-turn assertion predicates and a per-replay LLM judge. The SDK
-auto-computes the ``version`` fingerprint over the turn structure so the
-``(id, version)`` upsert against ``POST /v1/conversations`` is rejected when
-the dev edits the spec without bumping ``id``.
+plus per-turn assertion predicates. The server identifies the conversation
+by a content hash it computes itself — the SDK ships the spec (and any
+``RecordedAudio`` bytes via multipart file parts) and reads the hash back
+from the server's response. The ``name`` field is a free-form display
+label only.
 
 Type safety: ``AudioRef`` is a discriminated union (``RecordedAudio`` vs
 ``TtsAudio``), and wire payloads are ``TypedDict``\\ s. See
@@ -13,8 +14,6 @@ Type safety: ``AudioRef`` is a discriminated union (``RecordedAudio`` vs
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal, TypeAlias, TypedDict
@@ -47,7 +46,7 @@ class RecordedAudio:
 @dataclass(frozen=True)
 class TtsAudio:
     """Synthesize from ``Turn.text`` via OpenAI TTS. Cached per
-    conversation at ``~/.cache/xray-py/<conv>/<fingerprint>.wav``."""
+    conversation at ``~/.cache/xray-py/<hash>/<voice_id>.wav``."""
 
     voice_id: str | None = None
     kind: Literal["tts"] = field(default="tts", init=False)
@@ -100,55 +99,74 @@ class Turn:
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Conversation:
-    """The dev-authored test definition."""
+    """The dev-authored test definition.
 
-    id: str
+    Server-computed identity: the server hashes the canonical turn JSON
+    (with sha256 of any uploaded ``RecordedAudio`` bytes substituted in)
+    and returns the result on `POST /v1/replays`. ``name`` is a free-form
+    display label — renaming does NOT change identity.
+
+    Frozen so a stale ``Conversation`` reference can't silently drift after
+    being handed to the orchestrator.
+    """
+
+    name: str
     turns: list[Turn]
-    title: str | None = None
     judge: JudgePredicate | None = None
-    # Overridable so the dev can pin a version even when the structure changes
-    # — but the default is the fingerprint, which is what the docs recommend.
-    version: str = ""
 
     def __post_init__(self) -> None:
-        if not self.version:
-            self.version = self.compute_version()
+        if not self.name:
+            raise ValueError("Conversation.name must be non-empty")
         if len(self.turns) == 0:
             raise ValueError("Conversation must have at least one turn")
 
-    def compute_version(self) -> str:
-        """Stable fingerprint over the turn structure. Matches the
-        server-side canonical encoding (JSON-stringified turn array)."""
-        canonical = json.dumps(
-            [_turn_to_fingerprint(t) for t in self.turns],
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
-        return f"v{digest}"
+    def to_conversation_spec_payload(self) -> ConversationSpecBody:
+        """JSON ``spec`` part of the multipart POST to ``/v1/conversations``.
 
-    def to_spec_payload(self) -> ConversationSpecBody:
-        """POST body for ``/v1/conversations`` — matches the server
-        Valibot schema."""
-        body: ConversationSpecBody = {
-            "id": self.id,
-            "version": self.version,
-            "turns": [_turn_to_wire(t) for t in self.turns],
+        Recorded-audio turns are emitted as ``{kind: "recorded",
+        upload_key: f"audio_<idx>"}`` so the server can match each turn
+        to the corresponding multipart file part. The orchestrator builds
+        the matching file-part dict from :func:`recorded_audio_uploads`.
+        """
+        return {
+            "name": self.name,
+            "turns": [_turn_to_wire(t, idx) for idx, t in enumerate(self.turns)],
         }
-        if self.title is not None:
-            body["title"] = self.title
-        return body
+
+    def recorded_audio_uploads(self) -> list[tuple[str, str]]:
+        """Pairs of (upload_key, file_path) for each RecordedAudio turn.
+
+        The orchestrator opens each file and adds it to the multipart body
+        under the matching ``upload_key``. Order is the turn order so
+        ``upload_key`` is unique per conversation.
+        """
+        return [
+            (_recorded_upload_key(idx), turn.audio.path)
+            for idx, turn in enumerate(self.turns)
+            if isinstance(turn.audio, RecordedAudio)
+        ]
+
+
+def _recorded_upload_key(turn_idx: int) -> str:
+    return f"audio_{turn_idx}"
 
 
 # ─── Wire payloads (TypedDicts) ───────────────────────────────────────
 
 
-class AudioWirePayload(TypedDict):
-    kind: Literal["recorded", "tts"]
-    path: NotRequired[str]
+class RecordedAudioWirePayload(TypedDict):
+    kind: Literal["recorded"]
+    upload_key: str
+
+
+class TtsAudioWirePayload(TypedDict):
+    kind: Literal["tts"]
     voice_id: NotRequired[str]
+
+
+AudioWirePayload: TypeAlias = RecordedAudioWirePayload | TtsAudioWirePayload
 
 
 class TurnWirePayload(TypedDict):
@@ -158,37 +176,19 @@ class TurnWirePayload(TypedDict):
     audio: NotRequired[AudioWirePayload]
 
 
-class TurnFingerprintPayload(TypedDict):
-    """Like ``TurnWirePayload`` but with a presence marker for callable
-    assertions so two functions with identical signatures fingerprint
-    the same. Distinct TypedDict (not a subclass) so the optional marker
-    is statically expressible without widening ``TurnWirePayload``."""
-
-    role: Role
-    text: NotRequired[str]
-    key: NotRequired[str]
-    audio: NotRequired[AudioWirePayload]
-    _has_assertion: NotRequired[bool]
-
-
 class ConversationSpecBody(TypedDict):
-    id: str
-    version: str
+    name: str
     turns: list[TurnWirePayload]
-    title: NotRequired[str]
 
 
 # ─── Wire encoders ────────────────────────────────────────────────────
 
 
-def _audio_to_wire(audio: AudioRef) -> AudioWirePayload:
+def _audio_to_wire(audio: AudioRef, turn_idx: int) -> AudioWirePayload:
     match audio:
-        case RecordedAudio(path=path):
-            return {"kind": "recorded", "path": path}
+        case RecordedAudio():
+            return {"kind": "recorded", "upload_key": _recorded_upload_key(turn_idx)}
         case TtsAudio(voice_id=voice_id):
-            # Narrow inside the arm — pyright doesn't propagate the
-            # voice_id field type through the match pattern, so
-            # destructure-then-guard is what keeps NotRequired[str] honest.
             if voice_id is None:
                 return {"kind": "tts"}
             return {"kind": "tts", "voice_id": voice_id}
@@ -196,27 +196,14 @@ def _audio_to_wire(audio: AudioRef) -> AudioWirePayload:
             assert_never(audio)
 
 
-def _turn_to_wire(turn: Turn) -> TurnWirePayload:
+def _turn_to_wire(turn: Turn, turn_idx: int) -> TurnWirePayload:
     out: TurnWirePayload = {"role": turn.role}
     if turn.text is not None:
         out["text"] = turn.text
     if turn.key is not None:
         out["key"] = turn.key
     if turn.audio is not None:
-        out["audio"] = _audio_to_wire(turn.audio)
-    return out
-
-
-def _turn_to_fingerprint(turn: Turn) -> TurnFingerprintPayload:
-    out: TurnFingerprintPayload = {"role": turn.role}
-    if turn.text is not None:
-        out["text"] = turn.text
-    if turn.key is not None:
-        out["key"] = turn.key
-    if turn.audio is not None:
-        out["audio"] = _audio_to_wire(turn.audio)
-    if turn.assertion is not None:
-        out["_has_assertion"] = True
+        out["audio"] = _audio_to_wire(turn.audio, turn_idx)
     return out
 
 
@@ -253,18 +240,7 @@ StageTimings: TypeAlias = dict[str, float]
 
 @dataclass(frozen=True)
 class AgentResponse:
-    """What the runtime + server observed for one agent-side turn.
-
-    ``transcript`` comes from the runtime (LiveKit transcription
-    publication). ``tool_calls`` / ``model_usage`` / ``stage_timings``
-    come from xray's persisted view of the spans the agent emitted
-    during this turn — the orchestrator fetches ``GET /v1/replays/:id``
-    after the runtime returns and projects per-turn slices into each
-    response.
-
-    No per-turn ``audio_path``: xray ships one WAV per replay (the
-    mixdown) and slices it in the inspector by per-turn timestamps.
-    """
+    """What the runtime + server observed for one agent-side turn."""
 
     transcript: str
     duration_ms: int | None = None
@@ -303,8 +279,8 @@ class JudgeOutcome:
 class ReplayResult:
     """Snapshot of one replay's outcome handed to a judge."""
 
-    conversation_id: str
-    conversation_version: str
+    conversation_hash: str
+    name: str
     turns: list[TurnRecord]
     transcript: str | None = None
 
@@ -317,17 +293,19 @@ __all__ = [
     "AudioRef",
     "AudioWirePayload",
     "Conversation",
-    "ConversationSpecBody",
     "JudgeOutcome",
     "JudgePredicate",
     "ModelUsage",
     "RecordedAudio",
+    "ConversationSpecBody",
+    "RecordedAudioWirePayload",
     "ReplayResult",
     "Role",
     "StageTimings",
     "ToolCall",
+    "TtsAudio",
+    "TtsAudioWirePayload",
     "Turn",
     "TurnRecord",
     "TurnWirePayload",
-    "TtsAudio",
 ]

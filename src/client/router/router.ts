@@ -28,7 +28,7 @@ export const conversationsRoute = createRoute({
 
 export const conversationDetailRoute = createRoute({
 	getParentRoute: () => rootRoute,
-	path: "/conversations/$conversationId",
+	path: "/conversations/$conversationHash",
 	component: ConversationDetail,
 });
 

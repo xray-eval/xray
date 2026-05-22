@@ -40,7 +40,7 @@ afterEach(() => {
 
 describe("POST /v1/replays/:id/audio — happy path", () => {
 	it("accepts an upload and returns the relative path", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const bytes = fakeAudioBytes();
 		const res = await app.request(replayAudioUrl(replayId), {
 			method: "POST",
@@ -53,7 +53,7 @@ describe("POST /v1/replays/:id/audio — happy path", () => {
 	});
 
 	it("upload→retrieve roundtrip preserves bytes exactly", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const bytes = fakeAudioBytes(11);
 		const upRes = await app.request(replayAudioUrl(replayId), {
 			method: "POST",
@@ -71,7 +71,7 @@ describe("POST /v1/replays/:id/audio — happy path", () => {
 
 describe("POST /v1/replays/:id/audio — rejections", () => {
 	it("rejects an unsupported content type with 415", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const res = await app.request(replayAudioUrl(replayId), {
 			method: "POST",
 			headers: { "Content-Type": "application/octet-stream" },
@@ -81,7 +81,7 @@ describe("POST /v1/replays/:id/audio — rejections", () => {
 	});
 
 	it("rejects a missing content type with 415", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const res = await app.request(replayAudioUrl(replayId), {
 			method: "POST",
 			body: fakeAudioBytes(),
@@ -113,7 +113,7 @@ describe("POST /v1/replays/:id/audio — rejections", () => {
 
 describe("POST /v1/replays/:id/audio — lifecycle 409", () => {
 	it("returns 409 when the replay is `analyzing`", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const { replays } = await import("@/server/store/schema.ts");
 		const { eq } = await import("drizzle-orm");
 		store.db
@@ -130,7 +130,7 @@ describe("POST /v1/replays/:id/audio — lifecycle 409", () => {
 	});
 
 	it("returns 409 when the replay is `completed`", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const { replays } = await import("@/server/store/schema.ts");
 		const { eq } = await import("drizzle-orm");
 		store.db
@@ -149,7 +149,7 @@ describe("POST /v1/replays/:id/audio — lifecycle 409", () => {
 
 describe("GET /v1/replays/:id/audio — rejections", () => {
 	it("returns 404 for a replay with no upload yet", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const res = await app.request(replayAudioUrl(replayId));
 		expect(res.status).toBe(404);
 	});

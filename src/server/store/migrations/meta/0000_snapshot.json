@@ -1,21 +1,21 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0b1ddb1e-171f-4106-96fc-007b7f7d3581",
+  "id": "e278793b-256a-42a2-b2fb-be3685c7cce3",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "conversations": {
       "name": "conversations",
       "columns": {
-        "id": {
-          "name": "id",
+        "hash": {
+          "name": "hash",
           "type": "text",
-          "primaryKey": false,
+          "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         },
-        "version": {
-          "name": "version",
+        "name": {
+          "name": "name",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -28,43 +28,39 @@
           "notNull": true,
           "autoincrement": false
         },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "last_run_at": {
+          "name": "last_run_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
-        "idx_conversations_id_created_at": {
-          "name": "idx_conversations_id_created_at",
+        "idx_conversations_last_run_at": {
+          "name": "idx_conversations_last_run_at",
           "columns": [
-            "id",
-            "created_at"
+            "last_run_at"
           ],
           "isUnique": false
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "conversations_pk": {
-          "columns": [
-            "id",
-            "version"
-          ],
-          "name": "conversations_pk"
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "conversations_hash_ck": {
+          "name": "conversations_hash_ck",
+          "value": "length(\"conversations\".\"hash\") = 64"
+        }
+      }
     },
     "model_usage": {
       "name": "model_usage",
@@ -288,15 +284,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "conversation_version": {
-          "name": "conversation_version",
+        "conversation_hash": {
+          "name": "conversation_hash",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -360,11 +349,10 @@
         }
       },
       "indexes": {
-        "idx_replays_conversation": {
-          "name": "idx_replays_conversation",
+        "idx_replays_conversation_hash": {
+          "name": "idx_replays_conversation_hash",
           "columns": [
-            "conversation_id",
-            "conversation_version",
+            "conversation_hash",
             "started_at"
           ],
           "isUnique": false
@@ -377,7 +365,21 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "replays_conversation_hash_conversations_hash_fk": {
+          "name": "replays_conversation_hash_conversations_hash_fk",
+          "tableFrom": "replays",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "conversation_hash"
+          ],
+          "columnsTo": [
+            "hash"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {

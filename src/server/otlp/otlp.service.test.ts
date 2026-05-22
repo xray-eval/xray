@@ -1,9 +1,7 @@
 import { eq } from "drizzle-orm";
 
-import { upsertConversation } from "@/server/conversations/conversations.service.ts";
-import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
+import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import { createReplay } from "@/server/replays/replays.service.ts";
-import { makeCreateReplayRequest } from "@/server/replays/replays.test-utils.ts";
 import { modelUsage, spans, toolCalls } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
@@ -13,19 +11,19 @@ import { makeOtlpRequest } from "./otlp.test-utils.ts";
 import { MAX_SPANS_PER_REPLAY, MAX_SPANS_PER_REQUEST } from "./otlp.types.ts";
 import { describe, expect, it } from "bun:test";
 
-function setupReplay(): { store: ReturnType<typeof makeTempStore>; replayId: string } {
+async function setupReplay(): Promise<{
+	store: ReturnType<typeof makeTempStore>;
+	replayId: string;
+}> {
 	const store = makeTempStore();
-	upsertConversation(store, makeConversationSpec({ id: "c", version: "v1" }));
-	const detail = createReplay(
-		store,
-		makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
-	);
+	const { hash } = await seedConversation(store);
+	const detail = createReplay(store, { conversation_hash: hash });
 	return { store, replayId: detail.id };
 }
 
 describe("ingestOtlpTraces — filter posture", () => {
-	it("drops a span with no xray.replay.id (silent)", () => {
-		const { store } = setupReplay();
+	it("drops a span with no xray.replay.id (silent)", async () => {
+		const { store } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId: null,
 			spans: [{ name: "xray.assertion" }],
@@ -37,8 +35,8 @@ describe("ingestOtlpTraces — filter posture", () => {
 		store.close();
 	});
 
-	it("drops a span whose replay_id doesn't exist (silent)", () => {
-		const { store } = setupReplay();
+	it("drops a span whose replay_id doesn't exist (silent)", async () => {
+		const { store } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId: "00000000-0000-0000-0000-000000000099",
 			spans: [{ name: "xray.assertion" }],
@@ -49,8 +47,8 @@ describe("ingestOtlpTraces — filter posture", () => {
 		store.close();
 	});
 
-	it("drops a span of unrecognized vocabulary (silent)", () => {
-		const { store, replayId } = setupReplay();
+	it("drops a span of unrecognized vocabulary (silent)", async () => {
+		const { store, replayId } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId,
 			spans: [{ name: "random.span", attributes: { "foo.bar": "x" } }],
@@ -63,8 +61,8 @@ describe("ingestOtlpTraces — filter posture", () => {
 });
 
 describe("ingestOtlpTraces — xray vocabulary (raw spans only)", () => {
-	it("persists xray.* spans as raw spans only (no structured extraction in v0.2)", () => {
-		const { store, replayId } = setupReplay();
+	it("persists xray.* spans as raw spans only (no structured extraction in v0.2)", async () => {
+		const { store, replayId } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId,
 			spans: [
@@ -91,8 +89,8 @@ describe("ingestOtlpTraces — xray vocabulary (raw spans only)", () => {
 });
 
 describe("ingestOtlpTraces — gen_ai vocabulary", () => {
-	it("extracts model_usage from a chat span", () => {
-		const { store, replayId } = setupReplay();
+	it("extracts model_usage from a chat span", async () => {
+		const { store, replayId } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId,
 			spans: [
@@ -121,8 +119,8 @@ describe("ingestOtlpTraces — gen_ai vocabulary", () => {
 		store.close();
 	});
 
-	it("extracts tool_calls from an execute_tool span", () => {
-		const { store, replayId } = setupReplay();
+	it("extracts tool_calls from an execute_tool span", async () => {
+		const { store, replayId } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId,
 			spans: [
@@ -145,8 +143,8 @@ describe("ingestOtlpTraces — gen_ai vocabulary", () => {
 });
 
 describe("ingestOtlpTraces — langfuse vocabulary", () => {
-	it("extracts model_usage from a generation observation", () => {
-		const { store, replayId } = setupReplay();
+	it("extracts model_usage from a generation observation", async () => {
+		const { store, replayId } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId,
 			spans: [
@@ -173,8 +171,8 @@ describe("ingestOtlpTraces — langfuse vocabulary", () => {
 });
 
 describe("ingestOtlpTraces — limits", () => {
-	it("throws TooManySpansPerRequestError above the per-request cap", () => {
-		const { store, replayId } = setupReplay();
+	it("throws TooManySpansPerRequestError above the per-request cap", async () => {
+		const { store, replayId } = await setupReplay();
 		const tooMany = Array.from({ length: MAX_SPANS_PER_REQUEST + 1 }, () => ({
 			name: "xray.assertion",
 		}));
@@ -183,8 +181,8 @@ describe("ingestOtlpTraces — limits", () => {
 		store.close();
 	});
 
-	it("counts over-cap spans into partialSuccess.rejectedSpans without rolling back under-cap inserts in the same batch", () => {
-		const { store, replayId } = setupReplay();
+	it("counts over-cap spans into partialSuccess.rejectedSpans without rolling back under-cap inserts in the same batch", async () => {
+		const { store, replayId } = await setupReplay();
 		const bulk: {
 			replayId: string;
 			traceId: string;

@@ -11,30 +11,31 @@ const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
 
+const HASH_A = "a".repeat(64);
+const HASH_B = "b".repeat(64);
+const HASH_C = "c".repeat(64);
+
 const SAMPLE_CONVERSATIONS = {
 	items: [
 		{
-			id: "conv-a",
-			latest_version: "v1",
-			title: "Conversation A",
+			hash: HASH_A,
+			name: "Conversation A",
 			created_at: "2026-05-15T00:00:00.000Z",
-			versions: 1,
+			last_run_at: "2026-05-15T00:00:00.000Z",
 			replays: 2,
 		},
 		{
-			id: "conv-b",
-			latest_version: "v2",
-			title: "Conversation B",
+			hash: HASH_B,
+			name: "Conversation B",
 			created_at: "2026-05-15T00:00:00.000Z",
-			versions: 2,
+			last_run_at: null,
 			replays: 0,
 		},
 		{
-			id: "conv-c",
-			latest_version: "v1",
-			title: "Conversation C",
+			hash: HASH_C,
+			name: "Conversation C",
 			created_at: "2026-05-15T00:00:00.000Z",
-			versions: 1,
+			last_run_at: "2026-05-15T00:00:00.000Z",
 			replays: 1,
 		},
 	],
@@ -64,20 +65,24 @@ describe("ConversationsList", () => {
 		expect(button.hasAttribute("disabled")).toBe(true);
 
 		const checkboxA = await waitFor(() =>
-			screen.getByRole("checkbox", { name: /Select conversation conv-a/ }),
+			screen.getByRole("checkbox", { name: /Select conversation Conversation A/ }),
 		);
 		await act(async () => {
 			fireEvent.click(checkboxA);
 		});
 		expect(button.hasAttribute("disabled")).toBe(true);
 
-		const checkboxB = screen.getByRole("checkbox", { name: /Select conversation conv-b/ });
+		const checkboxB = screen.getByRole("checkbox", {
+			name: /Select conversation Conversation B/,
+		});
 		await act(async () => {
 			fireEvent.click(checkboxB);
 		});
 		await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
 
-		const checkboxC = screen.getByRole("checkbox", { name: /Select conversation conv-c/ });
+		const checkboxC = screen.getByRole("checkbox", {
+			name: /Select conversation Conversation C/,
+		});
 		await act(async () => {
 			fireEvent.click(checkboxC);
 		});
@@ -96,18 +101,20 @@ describe("ConversationsList", () => {
 		expect(hint?.textContent).toMatch(/exactly two/i);
 	});
 
-	it("navigates to /compare/conversations with both ids when Compare clicks with two selected", async () => {
+	it("navigates to /compare/conversations with both hashes when Compare clicks with two selected", async () => {
 		mockConversationsList();
 		const { ui, router } = renderWithRouter({ initialEntries: ["/"] });
 		render(ui);
 
 		const checkboxA = await waitFor(() =>
-			screen.getByRole("checkbox", { name: /Select conversation conv-a/ }),
+			screen.getByRole("checkbox", { name: /Select conversation Conversation A/ }),
 		);
 		await act(async () => {
 			fireEvent.click(checkboxA);
 		});
-		const checkboxB = screen.getByRole("checkbox", { name: /Select conversation conv-b/ });
+		const checkboxB = screen.getByRole("checkbox", {
+			name: /Select conversation Conversation B/,
+		});
 		await act(async () => {
 			fireEvent.click(checkboxB);
 		});
@@ -122,6 +129,6 @@ describe("ConversationsList", () => {
 		});
 
 		await waitFor(() => expect(router.state.location.pathname).toBe("/compare/conversations"));
-		expect(router.state.location.search).toMatchObject({ ids: "conv-a:v1,conv-b:v2" });
+		expect(router.state.location.search).toMatchObject({ ids: `${HASH_A},${HASH_B}` });
 	});
 });

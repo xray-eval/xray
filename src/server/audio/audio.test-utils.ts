@@ -2,36 +2,21 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { upsertConversation } from "@/server/conversations/conversations.service.ts";
-import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
+import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import { createReplay } from "@/server/replays/replays.service.ts";
-import { makeCreateReplayRequest } from "@/server/replays/replays.test-utils.ts";
 import type { Store } from "@/server/store/store.ts";
 
 export interface AudioFixtureReplay {
 	readonly replayId: string;
 }
 
-export function seedReplayForAudio(
+export async function seedReplayForAudio(
 	store: Store,
-	overrides: {
-		conversationId?: string;
-		conversationVersion?: string;
-	} = {},
-): AudioFixtureReplay {
-	const conversationId = overrides.conversationId ?? "conv-audio";
-	const conversationVersion = overrides.conversationVersion ?? "v1";
-	upsertConversation(
-		store,
-		makeConversationSpec({ id: conversationId, version: conversationVersion }),
-	);
-	const detail = createReplay(
-		store,
-		makeCreateReplayRequest({
-			conversation_id: conversationId,
-			conversation_version: conversationVersion,
-		}),
-	);
+	overrides: { conversationHash?: string } = {},
+): Promise<AudioFixtureReplay> {
+	const hash =
+		overrides.conversationHash ?? (await seedConversation(store, { name: "conv-audio" })).hash;
+	const detail = createReplay(store, { conversation_hash: hash });
 	return { replayId: detail.id };
 }
 

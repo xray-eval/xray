@@ -8,6 +8,7 @@ import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
+import { shortHash } from "@/client/format.ts";
 
 import { getConversation, getReplay, replayAudioUrl, turnAudioUrl } from "../api/api.ts";
 import type {
@@ -29,36 +30,37 @@ export function Inspector() {
 		queryFn: ({ signal }) => getReplay(replayId, signal),
 	});
 
-	const conversationId = query.data?.conversation_id;
+	const conversationHash = query.data?.conversation_hash;
 	const conversation = useQuery({
-		queryKey: ["conversations", { id: conversationId }],
+		queryKey: ["conversations", { hash: conversationHash }],
 		queryFn:
-			conversationId === undefined
+			conversationHash === undefined
 				? skipToken
-				: ({ signal }) => getConversation(conversationId, { signal }),
+				: ({ signal }) => getConversation(conversationHash, signal),
 	});
 	const conversationLabel =
-		conversation.data?.title ?? (conversationId !== undefined ? conversationId : null);
+		conversation.data?.name ??
+		(conversationHash !== undefined ? `${shortHash(conversationHash)}…` : null);
 
 	return (
 		<section className="space-y-10">
 			<div className="space-y-5">
 				<div className="flex flex-wrap items-center justify-between gap-3">
-					{conversationId !== undefined ? (
-						<BackLink to="/conversations/$conversationId" params={{ conversationId }}>
+					{conversationHash !== undefined ? (
+						<BackLink to="/conversations/$conversationHash" params={{ conversationHash }}>
 							Replays
 						</BackLink>
 					) : (
 						<BackLink to="/">Conversations</BackLink>
 					)}
-					{conversationId !== undefined && conversationLabel !== null ? (
+					{conversationHash !== undefined && conversationLabel !== null ? (
 						<Breadcrumbs
 							crumbs={[
 								{ label: "Conversations", to: "/" },
 								{
 									label: conversationLabel,
-									to: "/conversations/$conversationId",
-									params: { conversationId },
+									to: "/conversations/$conversationHash",
+									params: { conversationHash },
 								},
 								{ label: `${replayId.slice(0, 8)}…`, current: true },
 							]}

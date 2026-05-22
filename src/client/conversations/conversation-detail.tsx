@@ -16,6 +16,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/client/components/ui/table.tsx";
+import { shortHash } from "@/client/format.ts";
 
 import { getConversation, listReplaysForConversation } from "../api/api.ts";
 import type { ReplaySummaryResponse } from "../api/api.types.ts";
@@ -26,18 +27,18 @@ const MIN_COMPARE = 2;
 const MAX_COMPARE = 8;
 
 export function ConversationDetail() {
-	const { conversationId } = useParams({ from: "/conversations/$conversationId" });
+	const { conversationHash } = useParams({ from: "/conversations/$conversationHash" });
 	const navigate = useNavigate();
 	const [selected, setSelected] = useState<readonly string[]>([]);
 
 	const conversation = useQuery({
-		queryKey: ["conversations", { id: conversationId }],
-		queryFn: ({ signal }) => getConversation(conversationId, { signal }),
+		queryKey: ["conversations", { hash: conversationHash }],
+		queryFn: ({ signal }) => getConversation(conversationHash, signal),
 	});
 
 	const replays = useQuery({
-		queryKey: ["conversations", { id: conversationId }, "replays"],
-		queryFn: ({ signal }) => listReplaysForConversation(conversationId, signal),
+		queryKey: ["conversations", { hash: conversationHash }, "replays"],
+		queryFn: ({ signal }) => listReplaysForConversation(conversationHash, signal),
 	});
 
 	function toggle(replayId: string) {
@@ -48,9 +49,9 @@ export function ConversationDetail() {
 
 	const canCompare = selected.length >= MIN_COMPARE && selected.length <= MAX_COMPARE;
 
-	const conversationTitle = match(conversation)
-		.with({ status: "success" }, (q) => q.data.title ?? q.data.id)
-		.with(P.union({ status: "pending" }, { status: "error" }), () => conversationId)
+	const conversationLabel = match(conversation)
+		.with({ status: "success" }, (q) => q.data.name)
+		.with(P.union({ status: "pending" }, { status: "error" }), () => shortHash(conversationHash))
 		.exhaustive();
 
 	return (
@@ -61,7 +62,7 @@ export function ConversationDetail() {
 					<Breadcrumbs
 						crumbs={[
 							{ label: "Conversations", to: "/" },
-							{ label: conversationTitle, current: true },
+							{ label: conversationLabel, current: true },
 						]}
 					/>
 				</div>
@@ -69,11 +70,11 @@ export function ConversationDetail() {
 					<h2 className="text-2xl font-semibold tracking-tight">
 						{match(conversation)
 							.with({ status: "pending" }, () => <Skeleton className="inline-block h-7 w-48" />)
-							.with({ status: "error" }, () => conversationId)
-							.with({ status: "success" }, (q) => q.data.title ?? q.data.id)
+							.with({ status: "error" }, () => shortHash(conversationHash))
+							.with({ status: "success" }, (q) => q.data.name)
 							.exhaustive()}
 					</h2>
-					<p className="font-mono text-xs text-muted-foreground">{conversationId}</p>
+					<p className="font-mono text-xs text-muted-foreground">{shortHash(conversationHash)}…</p>
 				</div>
 			</div>
 
@@ -152,9 +153,6 @@ function ReplaysTable({
 							Judge
 						</TableHead>
 						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-							Version
-						</TableHead>
-						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
 							Started
 						</TableHead>
 					</TableRow>
@@ -208,9 +206,6 @@ function ReplayRow({
 			</TableCell>
 			<TableCell className="px-4 py-3 text-xs text-muted-foreground">
 				<JudgeCell replay={replay} />
-			</TableCell>
-			<TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">
-				v{replay.conversation_version}
 			</TableCell>
 			<TableCell className="px-4 py-3 text-xs text-muted-foreground tabular-nums">
 				{formatTimestamp(replay.started_at)}

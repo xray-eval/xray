@@ -83,10 +83,11 @@ describe("openStore", () => {
 
 	it("is idempotent: reopening the same file preserves data", () => {
 		const path = tmpDbPath();
+		const persistHash = "a".repeat(64);
 		const first = openStore({ path });
 		first.db
 			.insert(conversations)
-			.values(makeConversationInput({ id: "persist-me" }))
+			.values(makeConversationInput({ hash: persistHash }))
 			.run();
 		first.close();
 
@@ -94,9 +95,9 @@ describe("openStore", () => {
 		const row = second.db
 			.select()
 			.from(conversations)
-			.where(eq(conversations.id, "persist-me"))
+			.where(eq(conversations.hash, persistHash))
 			.get();
-		expect(row?.id).toBe("persist-me");
+		expect(row?.hash).toBe(persistHash);
 		second.close();
 	});
 
@@ -131,11 +132,12 @@ describe("openStore", () => {
 
 	it("cascades replay deletes to all replay-scoped tables", () => {
 		const store = openStore({ path: ":memory:" });
+		const convHash = "c".repeat(64);
 		store.db
 			.insert(conversations)
-			.values(makeConversationInput({ id: "conv-cascade" }))
+			.values(makeConversationInput({ hash: convHash }))
 			.run();
-		const replay = makeReplayInput({ id: "replay-cascade", conversationId: "conv-cascade" });
+		const replay = makeReplayInput({ id: "replay-cascade", conversationHash: convHash });
 		store.db.insert(replays).values(replay).run();
 		store.db
 			.insert(replayTurns)
@@ -180,10 +182,11 @@ describe("openStoreFromEnv", () => {
 
 	it("is idempotent when the dir and db file already exist", () => {
 		const env = makeEnv({ XRAY_DATA_DIR: join(tmpDir, "existing-data-dir") });
+		const persistHash = "b".repeat(64);
 		const first = openStoreFromEnv(env);
 		first.db
 			.insert(conversations)
-			.values(makeConversationInput({ id: "persist-me" }))
+			.values(makeConversationInput({ hash: persistHash }))
 			.run();
 		first.close();
 
@@ -191,9 +194,9 @@ describe("openStoreFromEnv", () => {
 		const row = second.db
 			.select()
 			.from(conversations)
-			.where(eq(conversations.id, "persist-me"))
+			.where(eq(conversations.hash, persistHash))
 			.get();
-		expect(row?.id).toBe("persist-me");
+		expect(row?.hash).toBe(persistHash);
 		second.close();
 	});
 });

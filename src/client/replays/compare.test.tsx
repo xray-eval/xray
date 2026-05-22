@@ -27,8 +27,7 @@ function buildReplay(
 	run_config: unknown = null,
 ): {
 	id: string;
-	conversation_id: string;
-	conversation_version: string;
+	conversation_hash: string;
 	status: "completed";
 	failure_reason: null;
 	modality: "voice";
@@ -46,8 +45,7 @@ function buildReplay(
 } {
 	return {
 		id,
-		conversation_id: "conv-x",
-		conversation_version: "v1",
+		conversation_hash: "a".repeat(64),
 		status: "completed",
 		failure_reason: null,
 		modality: "voice",

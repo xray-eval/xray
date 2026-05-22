@@ -1,9 +1,6 @@
 import * as v from "valibot";
 
-import {
-	ConversationIdSchema,
-	ConversationVersionSchema,
-} from "@/server/conversations/conversations.types.ts";
+import { ConversationHashSchema } from "@/server/conversations/conversations.types.ts";
 import {
 	ANALYSIS_STEPS,
 	REPLAY_FAILURE_REASONS,
@@ -24,9 +21,15 @@ export const ReplayFailureReasonSchema = v.picklist(REPLAY_FAILURE_REASONS);
 export const TurnRoleSchema = v.picklist(TURN_ROLES);
 export const SpanVocabularySchema = v.picklist(SPAN_VOCABULARIES);
 
+/**
+ * Body of `POST /v1/replays` (JSON). The SDK POSTs `/v1/conversations`
+ * first to upsert the conversation row (server hashes the canonical
+ * turn JSON and returns the `conversation_hash`), then references that
+ * hash here. The SDK should propagate the returned `id`
+ * (xray.replay.id) onto the voice service BEFORE its first OTEL span.
+ */
 export const CreateReplayRequestSchema = v.object({
-	conversation_id: ConversationIdSchema,
-	conversation_version: ConversationVersionSchema,
+	conversation_hash: ConversationHashSchema,
 	run_config: v.optional(v.unknown()),
 });
 export type CreateReplayRequest = v.InferOutput<typeof CreateReplayRequestSchema>;
@@ -99,10 +102,10 @@ export const SpanResponseSchema = v.object({
 });
 export type SpanResponse = v.InferOutput<typeof SpanResponseSchema>;
 
+/** Summary fields returned by `GET /v1/conversations/:hash/replays`. */
 export const ReplaySummaryResponseSchema = v.object({
 	id: v.string(),
-	conversation_id: v.string(),
-	conversation_version: v.string(),
+	conversation_hash: ConversationHashSchema,
 	lifecycle_state: ReplayLifecycleStateSchema,
 	analysis_step: v.nullable(AnalysisStepSchema),
 	failure_reason: v.nullable(ReplayFailureReasonSchema),
@@ -114,8 +117,7 @@ export type ReplaySummaryResponse = v.InferOutput<typeof ReplaySummaryResponseSc
 
 export const ReplayDetailResponseSchema = v.object({
 	id: v.string(),
-	conversation_id: v.string(),
-	conversation_version: v.string(),
+	conversation_hash: ConversationHashSchema,
 	lifecycle_state: ReplayLifecycleStateSchema,
 	analysis_step: v.nullable(AnalysisStepSchema),
 	failure_reason: v.nullable(ReplayFailureReasonSchema),

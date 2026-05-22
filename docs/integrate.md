@@ -17,6 +17,55 @@ You'll need:
 The example below is a real-world voice-service worker; the wiring
 is identical for any LiveKit Agents codebase.
 
+## Request flow at a glance
+
+`xray.run(...)` orchestrates the calls below. You don't write any of
+them by hand — but this is the sequence to keep in your head when
+something fails:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SDK as Python SDK
+    participant Xray as xray server
+    participant Agent as Voice agent
+    participant Worker as bunqueue worker
+
+    SDK->>Xray: POST /v1/conversations (multipart spec + audio_N)
+    Note over Xray: hash = sha256(canonical turns), upsert by hash
+    Xray-->>SDK: 200 hash
+
+    SDK->>Xray: POST /v1/replays (JSON conversation_hash)
+    Xray-->>SDK: 201 id, lifecycle_state pending
+
+    SDK->>Agent: runtime.run(conversation)
+    Agent->>Xray: POST /v1/otlp/v1/traces (xray.replay.id)
+    Agent-->>SDK: AgentResponses
+
+    SDK->>Xray: POST /v1/replays/:id/audio (stereo WAV)
+    SDK->>Xray: POST /v1/replays/:id/analyze
+    Xray->>Worker: enqueue
+    Xray-->>SDK: 202 job_id
+
+    SDK->>Xray: GET /v1/replays/:id/events (SSE)
+    Worker->>Xray: VAD, speech_segments, replay_turns
+    Xray-->>SDK: state / progress / completed
+
+    SDK->>Xray: GET /v1/replays/:id
+    Xray-->>SDK: turns + tool_calls + model_usage + spans
+
+    SDK->>Xray: PATCH /v1/replays/:id (lifecycle_state)
+    Xray-->>SDK: 200
+```
+
+Two surfaces, one trust boundary: the **control plane** (the first
+two POSTs + the audio / analyze / events / PATCH calls) is the only
+write path that can create rows. The **OTLP receiver** (the agent's
+`POST /v1/otlp/v1/traces`) is a *filter*: spans tagged with an
+unknown `xray.replay.id` are dropped silently. That's safe precisely
+because the replay row exists before the runtime emits its first
+span.
+
 ---
 
 ## 1. Install the SDK on the agent side
@@ -53,7 +102,7 @@ async def entrypoint(ctx: JobContext) -> None:
     async with xray.attach(ctx, service_name="my-agent") as session:
         # `session` is None when no xray-tagged participant joined.
         # Inside the block, OTEL baggage carries:
-        #   xray.replay.id, xray.conversation.id, xray.conversation.version, xray.modality
+        #   xray.replay.id, xray.conversation.hash, xray.modality
         # The bundled span processor lifts those onto every span at start.
         # On block exit, the tracer provider force-flushes so spans land
         # in xray before the worker shuts down.
@@ -276,7 +325,7 @@ xray-py is at **v0.2.0** — server is now the analyzer:
 - Replay context propagates via the JWT's `xray` attribute
   (LiveKit `participant.attributes` ≥ v1.7), not via participant
   metadata.
-- Wire is snake_case end-to-end. `conversation_id`,
+- Wire is snake_case end-to-end. `conversation_hash`,
   `lifecycle_state`, `failure_reason`, `started_at`. Both OTLP/JSON
   and OTLP/Protobuf are accepted on the receiver.
 - `RunConfig` is a typed dataclass (`model`, `temperature`, `extra`).

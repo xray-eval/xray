@@ -23,6 +23,14 @@ const ALL_CONTENT_TYPES = [
 	"audio/x-wav",
 ] as const satisfies readonly AudioContentType[];
 
+// Guards against forgetting to add a new content type to ALL_CONTENT_TYPES
+// when CONTENT_TYPE_TO_EXTENSION grows — fails to compile if a key is missing.
+type _AllContentTypesCovers = AudioContentType extends (typeof ALL_CONTENT_TYPES)[number]
+	? true
+	: never;
+const _allContentTypesCovers: _AllContentTypesCovers = true;
+void _allContentTypesCovers;
+
 const ALL_EXTENSIONS = [
 	...new Set(Object.values(CONTENT_TYPE_TO_EXTENSION)),
 ] satisfies AudioExtension[];

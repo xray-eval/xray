@@ -1,15 +1,14 @@
 import { Hono } from "hono";
 import * as v from "valibot";
 
-import { createConversationsRouter } from "@/server/conversations/conversations.router.ts";
-import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
+import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import { readJson } from "@/server/core/test-utils.ts";
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import { makeReplayEvents } from "./replays.events.ts";
 import { createReplaysRouter } from "./replays.router.ts";
-import { makeCreateReplayRequest, seedReplay } from "./replays.test-utils.ts";
+import { seedReplay } from "./replays.test-utils.ts";
 import { describe, expect, it } from "bun:test";
 
 async function readSseUntilCompleted(
@@ -38,30 +37,18 @@ function makeApp() {
 	const jobRunner = makeFakeJobRunner();
 	const events = makeReplayEvents();
 	const app = new Hono();
-	app.route("/v1", createConversationsRouter(store));
 	app.route("/v1", createReplaysRouter(store, jobRunner, events));
 	return { app, store, jobRunner, events };
 }
 
-async function postConversation(app: Hono, id: string, version = "v1") {
-	const res = await app.request("/v1/conversations", {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify(makeConversationSpec({ id, version })),
-	});
-	expect(res.status).toBe(200);
-}
-
 describe("POST /v1/replays", () => {
 	it("returns 201 + a pending detail row", async () => {
-		const { app } = makeApp();
-		await postConversation(app, "c");
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
 		const res = await app.request("/v1/replays", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify(
-				makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
-			),
+			body: JSON.stringify({ conversation_hash: hash }),
 		});
 		expect(res.status).toBe(201);
 		const body = await readJson(res, v.object({ lifecycle_state: v.string(), id: v.string() }));
@@ -69,14 +56,12 @@ describe("POST /v1/replays", () => {
 		expect(body.id).toMatch(/[0-9a-f-]{36}/);
 	});
 
-	it("returns 404 when the conversation doesn't exist", async () => {
+	it("returns 404 when the conversation hash doesn't exist", async () => {
 		const { app } = makeApp();
 		const res = await app.request("/v1/replays", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify(
-				makeCreateReplayRequest({ conversation_id: "missing", conversation_version: "v1" }),
-			),
+			body: JSON.stringify({ conversation_hash: "f".repeat(64) }),
 		});
 		expect(res.status).toBe(404);
 	});
@@ -86,7 +71,7 @@ describe("POST /v1/replays", () => {
 		const res = await app.request("/v1/replays", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ conversation_id: "" }),
+			body: JSON.stringify({ conversation_hash: "" }),
 		});
 		expect(res.status).toBe(400);
 	});
@@ -95,8 +80,8 @@ describe("POST /v1/replays", () => {
 describe("PATCH /v1/replays/:id", () => {
 	it("updates lifecycle_state + finished_at", async () => {
 		const { app, store } = makeApp();
-		const id = seedReplay(store);
-		const res = await app.request(`/v1/replays/${id}`, {
+		const { replayId } = await seedReplay(store);
+		const res = await app.request(`/v1/replays/${replayId}`, {
 			method: "PATCH",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
@@ -133,8 +118,8 @@ describe("PATCH /v1/replays/:id", () => {
 describe("GET /v1/replays/:id", () => {
 	it("returns 200 detail for a known id", async () => {
 		const { app, store } = makeApp();
-		const id = seedReplay(store);
-		const res = await app.request(`/v1/replays/${id}`);
+		const { replayId } = await seedReplay(store);
+		const res = await app.request(`/v1/replays/${replayId}`);
 		expect(res.status).toBe(200);
 	});
 
@@ -146,29 +131,25 @@ describe("GET /v1/replays/:id", () => {
 });
 
 describe("GET /v1/replays/:id/events (SSE)", () => {
-	it("delivers an event emitted right after the request opens (subscribe-before-write race fix)", async () => {
+	it("delivers an event emitted right after the request opens", async () => {
 		const { app, store, events } = makeApp();
-		const id = seedReplay(store);
+		const { replayId } = await seedReplay(store);
 
-		const res = await app.request(`/v1/replays/${id}/events`);
+		const res = await app.request(`/v1/replays/${replayId}/events`);
 		expect(res.status).toBe(200);
 		expect(res.body).not.toBeNull();
 		const body = res.body;
 		if (body === null) throw new Error("missing SSE body");
 
-		// `app.request` resolves once the handler's response is shaped (status +
-		// headers); the body stream stays open. By this point the SSE handler
-		// must have already subscribed — otherwise this emit lands with zero
-		// listeners and the test reads only the initial state.
-		events.emit(id, { type: "progress", percent: 10, step: "vad" });
-		events.emit(id, { type: "state", lifecycle_state: "completed", analysis_step: null });
-		events.emit(id, { type: "completed", turns_written: 1, segments_written: 2 });
+		events.emit(replayId, { type: "progress", percent: 10, step: "vad" });
+		events.emit(replayId, { type: "state", lifecycle_state: "completed", analysis_step: null });
+		events.emit(replayId, { type: "completed", turns_written: 1, segments_written: 2 });
 
 		const text = await readSseUntilCompleted(body);
-		expect(text).toContain('"lifecycle_state":"pending"'); // initial
-		expect(text).toContain('"percent":10'); // emitted progress
-		expect(text).toContain('"lifecycle_state":"completed"'); // emitted state
-		expect(text).toContain('"turns_written":1'); // emitted completed
+		expect(text).toContain('"lifecycle_state":"pending"');
+		expect(text).toContain('"percent":10');
+		expect(text).toContain('"lifecycle_state":"completed"');
+		expect(text).toContain('"turns_written":1');
 	});
 
 	it("returns 404 for unknown id", async () => {
@@ -177,53 +158,47 @@ describe("GET /v1/replays/:id/events (SSE)", () => {
 		expect(res.status).toBe(404);
 	});
 
-	it("unsubscribes the listener after a terminal event (no leak in ReplayEvents)", async () => {
+	it("unsubscribes the listener after a terminal event", async () => {
 		const { app, store, events } = makeApp();
-		const id = seedReplay(store);
+		const { replayId } = await seedReplay(store);
 
-		const res = await app.request(`/v1/replays/${id}/events`);
+		const res = await app.request(`/v1/replays/${replayId}/events`);
 		expect(res.status).toBe(200);
 		const body = res.body;
 		if (body === null) throw new Error("missing SSE body");
 
-		// One listener attached after the handler subscribes.
-		// Drain the response body so the handler progresses past the awaited
-		// initial-state write into the live loop.
-		events.emit(id, { type: "completed", turns_written: 0, segments_written: 0 });
+		events.emit(replayId, { type: "completed", turns_written: 0, segments_written: 0 });
 		await readSseUntilCompleted(body);
 
-		// Give the handler's done.promise resolution + final cleanup a tick.
 		await new Promise((r) => setTimeout(r, 10));
-		expect(events.listenerCount(id)).toBe(0);
+		expect(events.listenerCount(replayId)).toBe(0);
 	});
 });
 
 describe("POST /v1/replays/:id/analyze", () => {
 	it("returns 202 + job_id when the replay is in recording_uploaded state", async () => {
 		const { app, store, jobRunner } = makeApp();
-		const id = seedReplay(store);
-		// Flip to recording_uploaded via direct SQL update (audio router does this
-		// in production after POST /audio).
+		const { replayId } = await seedReplay(store);
 		const { replays } = await import("@/server/store/schema.ts");
 		const { eq } = await import("drizzle-orm");
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "recording_uploaded", audioPath: "x/replay.wav" })
-			.where(eq(replays.id, id))
+			.where(eq(replays.id, replayId))
 			.run();
 
-		const res = await app.request(`/v1/replays/${id}/analyze`, { method: "POST" });
+		const res = await app.request(`/v1/replays/${replayId}/analyze`, { method: "POST" });
 		expect(res.status).toBe(202);
 		const body = await readJson(res, v.object({ job_id: v.string(), lifecycle_state: v.string() }));
 		expect(body.lifecycle_state).toBe("analyzing");
 		expect(jobRunner.enqueued).toHaveLength(1);
-		expect(jobRunner.enqueued[0]?.replayId).toBe(id);
+		expect(jobRunner.enqueued[0]?.replayId).toBe(replayId);
 	});
 
 	it("returns 409 when the replay is not in recording_uploaded state", async () => {
 		const { app, store } = makeApp();
-		const id = seedReplay(store);
-		const res = await app.request(`/v1/replays/${id}/analyze`, { method: "POST" });
+		const { replayId } = await seedReplay(store);
+		const res = await app.request(`/v1/replays/${replayId}/analyze`, { method: "POST" });
 		expect(res.status).toBe(409);
 	});
 
@@ -239,8 +214,12 @@ describe("POST /v1/replays/:id/analyze", () => {
 describe("POST /v1/replays/compare", () => {
 	it("returns 200 with replays in request order", async () => {
 		const { app, store } = makeApp();
-		const a = seedReplay(store, { id: "00000000-0000-0000-0000-00000000000a" });
-		const b = seedReplay(store, { id: "00000000-0000-0000-0000-00000000000b" });
+		const { replayId: a } = await seedReplay(store, {
+			id: "00000000-0000-0000-0000-00000000000a",
+		});
+		const { replayId: b } = await seedReplay(store, {
+			id: "00000000-0000-0000-0000-00000000000b",
+		});
 		const res = await app.request("/v1/replays/compare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -253,22 +232,24 @@ describe("POST /v1/replays/compare", () => {
 
 	it("returns 400 when too few ids", async () => {
 		const { app, store } = makeApp();
-		const id = seedReplay(store);
+		const { replayId } = await seedReplay(store);
 		const res = await app.request("/v1/replays/compare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ replay_ids: [id] }),
+			body: JSON.stringify({ replay_ids: [replayId] }),
 		});
 		expect(res.status).toBe(400);
 	});
 
 	it("returns 400 when too many ids", async () => {
 		const { app, store } = makeApp();
-		const ids = Array.from({ length: 9 }, (_, i) =>
-			seedReplay(store, {
+		const ids: string[] = [];
+		for (let i = 0; i < 9; i += 1) {
+			const { replayId } = await seedReplay(store, {
 				id: `00000000-0000-0000-0000-${String(i + 1).padStart(12, "0")}`,
-			}),
-		);
+			});
+			ids.push(replayId);
+		}
 		const res = await app.request("/v1/replays/compare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -279,7 +260,9 @@ describe("POST /v1/replays/compare", () => {
 
 	it("returns 404 when one of the ids does not exist", async () => {
 		const { app, store } = makeApp();
-		const a = seedReplay(store, { id: "00000000-0000-0000-0000-00000000000a" });
+		const { replayId: a } = await seedReplay(store, {
+			id: "00000000-0000-0000-0000-00000000000a",
+		});
 		const res = await app.request("/v1/replays/compare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },

@@ -114,20 +114,23 @@ class LiveKitDependencyError(XrayError):
     failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
 
-class VersionFingerprintMismatchError(XrayError):
-    """``POST /v1/conversations`` returned 409 — the dev edited the spec but
-    forgot to bump ``Conversation.id`` (or pinned an explicit ``version``
-    that collided)."""
+class XrayServerError(XrayError):
+    """The xray server returned an unexpected HTTP error.
+
+    Wraps :class:`httpx.HTTPStatusError` so the dev sees a typed
+    :class:`XrayError` instead of a raw ``httpx`` exception. The
+    orchestrator raises this for HTTP failures that happen BEFORE the
+    replay row exists — once it exists, failures flow through the typed
+    ``failure_reason`` PATCH path instead.
+    """
 
     failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
-    def __init__(self, conversation_id: str, version: str) -> None:
-        super().__init__(
-            f'Conversation "{conversation_id}" version "{version}" already exists '
-            "with a different turn structure"
-        )
-        self.conversation_id = conversation_id
-        self.version = version
+    status_code: int
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 __all__ = [
@@ -139,6 +142,6 @@ __all__ = [
     "LiveKitDependencyError",
     "MixdownError",
     "RuntimeBindError",
-    "VersionFingerprintMismatchError",
     "XrayError",
+    "XrayServerError",
 ]

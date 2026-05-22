@@ -20,7 +20,7 @@ export interface AppConfig {
 export function createApp(store: Store, config: AppConfig): Hono {
 	const app = new Hono();
 	app.route("/healthz", healthz);
-	app.route("/v1", createConversationsRouter(store));
+	app.route("/v1", createConversationsRouter(store, config.audioRoot));
 	app.route("/v1", createReplaysRouter(store, config.jobRunner, config.events));
 	app.route("/v1", createOtlpRouter(store));
 	app.route("/v1", createAudioRouter(store, config.audioRoot));

@@ -40,8 +40,8 @@ describe("OpenAPI doc (/openapi.json)", () => {
 		const paths = Object.keys(doc.paths ?? {});
 		expect(paths).toContain("/healthz");
 		expect(paths).toContain("/v1/conversations");
-		expect(paths).toContain("/v1/conversations/{id}");
-		expect(paths).toContain("/v1/conversations/{id}/replays");
+		expect(paths).toContain("/v1/conversations/{hash}");
+		expect(paths).toContain("/v1/conversations/{hash}/replays");
 		expect(paths).toContain("/v1/replays");
 		expect(paths).toContain("/v1/replays/{id}");
 		expect(paths).toContain("/v1/replays/compare");

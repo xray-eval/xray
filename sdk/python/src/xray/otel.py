@@ -46,8 +46,7 @@ _DEFAULT_HTTP_TIMEOUT_S: Final[float] = 10.0
 
 
 XRAY_REPLAY_ID: Final[str] = "xray.replay.id"
-XRAY_CONVERSATION_ID: Final[str] = "xray.conversation.id"
-XRAY_CONVERSATION_VERSION: Final[str] = "xray.conversation.version"
+XRAY_CONVERSATION_HASH: Final[str] = "xray.conversation.hash"
 XRAY_MODALITY: Final[str] = "xray.modality"
 XRAY_TURN_IDX: Final[str] = "xray.turn.idx"
 XRAY_TURN_KEY: Final[str] = "xray.turn.key"
@@ -55,8 +54,7 @@ XRAY_TURN_KEY: Final[str] = "xray.turn.key"
 
 _XRAY_BAGGAGE_KEYS: Final[tuple[str, ...]] = (
     XRAY_REPLAY_ID,
-    XRAY_CONVERSATION_ID,
-    XRAY_CONVERSATION_VERSION,
+    XRAY_CONVERSATION_HASH,
     XRAY_MODALITY,
     XRAY_TURN_IDX,
     XRAY_TURN_KEY,
@@ -66,13 +64,12 @@ _XRAY_BAGGAGE_KEYS: Final[tuple[str, ...]] = (
 def attach_replay_baggage(
     *,
     replay_id: str,
-    conversation_id: str,
-    conversation_version: str,
+    conversation_hash: str,
     modality: str,
 ) -> contextvars.Token[Context]:
-    """Set the four replay-scope baggage keys on the current OTEL
-    context. The bundled :class:`XrayBaggageSpanProcessor` lifts these
-    onto every span at start so xray's OTLP receiver can route by
+    """Set the replay-scope baggage keys on the current OTEL context.
+    The bundled :class:`XrayBaggageSpanProcessor` lifts these onto
+    every span at start so xray's OTLP receiver can route by
     ``xray.replay.id``.
 
     Both sides of a run call this: the agent worker via
@@ -82,8 +79,7 @@ def attach_replay_baggage(
     """
     ctx = context.get_current()
     ctx = baggage.set_baggage(XRAY_REPLAY_ID, replay_id, context=ctx)
-    ctx = baggage.set_baggage(XRAY_CONVERSATION_ID, conversation_id, context=ctx)
-    ctx = baggage.set_baggage(XRAY_CONVERSATION_VERSION, conversation_version, context=ctx)
+    ctx = baggage.set_baggage(XRAY_CONVERSATION_HASH, conversation_hash, context=ctx)
     ctx = baggage.set_baggage(XRAY_MODALITY, modality, context=ctx)
     return context.attach(ctx)
 

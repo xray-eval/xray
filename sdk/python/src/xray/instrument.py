@@ -16,9 +16,9 @@ The decorator:
 
 1. On invocation, finds the user-side test driver among the room's
    remote participants and parses its ``xray`` token-claim attribute
-   (a JSON blob carrying ``replay_id`` + ``conversation_id`` +
-   ``conversation_version`` + ``modality``). No participant metadata
-   set, no ``can_update_own_metadata`` grant required.
+   (a JSON blob carrying ``replay_id`` + ``conversation_hash`` +
+   ``modality``). No participant metadata set, no
+   ``can_update_own_metadata`` grant required.
 2. Builds an OTEL :class:`~opentelemetry.context.context.Context`
    carrying the xray.* baggage and ``context.attach``-es it in the
    *caller's* task — so spans the agent emits in the entrypoint's
@@ -96,8 +96,7 @@ class ReplayContext:
     """Parsed xray context for the current run."""
 
     replay_id: str
-    conversation_id: str
-    conversation_version: str
+    conversation_hash: str
     modality: str
 
 
@@ -151,12 +150,8 @@ class XraySession:
         return self._context.replay_id
 
     @property
-    def conversation_id(self) -> str:
-        return self._context.conversation_id
-
-    @property
-    def conversation_version(self) -> str:
-        return self._context.conversation_version
+    def conversation_hash(self) -> str:
+        return self._context.conversation_hash
 
     @property
     def modality(self) -> str:
@@ -262,8 +257,7 @@ async def attach(
     if replay_context is not None:
         attach_token = attach_replay_baggage(
             replay_id=replay_context.replay_id,
-            conversation_id=replay_context.conversation_id,
-            conversation_version=replay_context.conversation_version,
+            conversation_hash=replay_context.conversation_hash,
             modality=replay_context.modality,
         )
         if tracer_provider is not None:
@@ -343,8 +337,7 @@ class _ReplayContextPayload(BaseModel):
     typed value."""
 
     replay_id: str = Field(min_length=1)
-    conversation_id: str = Field(min_length=1)
-    conversation_version: str = Field(min_length=1)
+    conversation_hash: str = Field(min_length=1)
     modality: str = "voice"
 
 
@@ -358,18 +351,16 @@ def _parse_xray_attribute(attributes: dict[str, str]) -> ReplayContext | None:
         return None
     return ReplayContext(
         replay_id=parsed.replay_id,
-        conversation_id=parsed.conversation_id,
-        conversation_version=parsed.conversation_version,
+        conversation_hash=parsed.conversation_hash,
         modality=parsed.modality,
     )
 
 
-# Re-exported for the driver side (LiveKitDriver builds the same JSON).
+# Re-exported for the driver side (LiveKitRuntime builds the same JSON).
 def encode_attribute(
     *,
     replay_id: str,
-    conversation_id: str,
-    conversation_version: str,
+    conversation_hash: str,
     modality: str = "voice",
 ) -> dict[str, str]:
     """Build the ``{"xray": "<json>"}`` token-claim attribute the
@@ -377,8 +368,7 @@ def encode_attribute(
     ``participant.attributes``."""
     payload: dict[str, JsonValue] = {
         "replay_id": replay_id,
-        "conversation_id": conversation_id,
-        "conversation_version": conversation_version,
+        "conversation_hash": conversation_hash,
         "modality": modality,
     }
     return {XRAY_ATTRIBUTE_KEY: json.dumps(payload, separators=(",", ":"))}

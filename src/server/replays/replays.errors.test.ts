@@ -1,5 +1,4 @@
 import {
-	ConversationVersionNotFoundError,
 	InvalidCompareSelectionError,
 	InvalidReplayIdError,
 	InvalidReplayRequestError,
@@ -49,11 +48,6 @@ describe("ReplayError subclasses", () => {
 	it("ReplayNotFoundError carries id", () => {
 		const e = new ReplayNotFoundError("r");
 		expect(e.replayId).toBe("r");
-	});
-	it("ConversationVersionNotFoundError carries id+version", () => {
-		const e = new ConversationVersionNotFoundError("c", "v");
-		expect(e.conversationId).toBe("c");
-		expect(e.conversationVersion).toBe("v");
 	});
 	it("ReplayBodyTooLargeError carries maxBytes", () => {
 		const e = new ReplayBodyTooLargeError(1024);

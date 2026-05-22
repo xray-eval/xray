@@ -1,13 +1,12 @@
 import { eq } from "drizzle-orm";
 
-import { upsertConversation } from "@/server/conversations/conversations.service.ts";
-import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
+import { ConversationNotFoundError } from "@/server/conversations/conversations.errors.ts";
+import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { replays } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import {
-	ConversationVersionNotFoundError,
 	ReplayLifecycleTransitionError,
 	ReplayNotFoundError,
 	ReplayNotReadyForAnalysisError,
@@ -23,20 +22,16 @@ import {
 	markReplayFailed,
 	updateReplay,
 } from "./replays.service.ts";
-import { makeCreateReplayRequest, seedReplay } from "./replays.test-utils.ts";
+import { seedReplay } from "./replays.test-utils.ts";
 import { describe, expect, it } from "bun:test";
 
 describe("createReplay", () => {
-	it("creates a row with lifecycle_state='pending'", () => {
+	it("creates a row with lifecycle_state='pending'", async () => {
 		const store = makeTempStore();
-		upsertConversation(
-			store,
-			makeConversationSpec({ id: "c", version: "v1" }),
-			() => "2026-05-18T11:00:00.000Z",
-		);
+		const { hash } = await seedConversation(store);
 		const detail = createReplay(
 			store,
-			makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
+			{ conversation_hash: hash },
 			{ now: () => "2026-05-18T12:00:00.000Z" },
 		);
 		expect(detail.lifecycle_state).toBe("pending");
@@ -47,38 +42,31 @@ describe("createReplay", () => {
 		store.close();
 	});
 
-	it("rejects unknown (conversation_id, conversation_version)", () => {
+	it("rejects unknown conversation_hash", () => {
 		const store = makeTempStore();
-		expect(() =>
-			createReplay(
-				store,
-				makeCreateReplayRequest({ conversation_id: "missing", conversation_version: "v1" }),
-			),
-		).toThrow(ConversationVersionNotFoundError);
+		expect(() => createReplay(store, { conversation_hash: "f".repeat(64) })).toThrow(
+			ConversationNotFoundError,
+		);
 		store.close();
 	});
 
-	it("persists run_config as JSON for later diff", () => {
+	it("persists run_config as JSON for later diff", async () => {
 		const store = makeTempStore();
-		upsertConversation(store, makeConversationSpec({ id: "c", version: "v1" }));
-		const detail = createReplay(
-			store,
-			makeCreateReplayRequest({
-				conversation_id: "c",
-				conversation_version: "v1",
-				run_config: { model: "gpt-4o", temperature: 0.5 },
-			}),
-		);
+		const { hash } = await seedConversation(store);
+		const detail = createReplay(store, {
+			conversation_hash: hash,
+			run_config: { model: "gpt-4o", temperature: 0.5 },
+		});
 		expect(detail.run_config).toEqual({ model: "gpt-4o", temperature: 0.5 });
 		store.close();
 	});
 });
 
 describe("updateReplay", () => {
-	it("applies lifecycle_state + finished_at", () => {
+	it("applies lifecycle_state + finished_at", async () => {
 		const store = makeTempStore();
-		const id = seedReplay(store);
-		const after = updateReplay(store, id, {
+		const { replayId } = await seedReplay(store);
+		const after = updateReplay(store, replayId, {
 			lifecycle_state: "running",
 			finished_at: null,
 		});
@@ -96,73 +84,66 @@ describe("updateReplay", () => {
 		store.close();
 	});
 
-	it("ignores an empty patch", () => {
+	it("ignores an empty patch", async () => {
 		const store = makeTempStore();
-		const id = seedReplay(store);
-		const before = getReplay(store, id);
-		const after = updateReplay(store, id, {});
+		const { replayId } = await seedReplay(store);
+		const before = getReplay(store, replayId);
+		const after = updateReplay(store, replayId, {});
 		expect(after).toEqual(before);
 		store.close();
 	});
 
-	it("rejects transitions out of a terminal state", () => {
+	it("rejects transitions out of a terminal state", async () => {
 		const store = makeTempStore();
-		const id = seedReplay(store);
-		updateReplay(store, id, { lifecycle_state: "failed", failure_reason: "driver_aborted" });
-		expect(() => updateReplay(store, id, { lifecycle_state: "completed" })).toThrow(
+		const { replayId } = await seedReplay(store);
+		updateReplay(store, replayId, { lifecycle_state: "failed", failure_reason: "driver_aborted" });
+		expect(() => updateReplay(store, replayId, { lifecycle_state: "completed" })).toThrow(
 			ReplayLifecycleTransitionError,
 		);
-		expect(() => updateReplay(store, id, { lifecycle_state: "failed" })).not.toThrow();
+		expect(() => updateReplay(store, replayId, { lifecycle_state: "failed" })).not.toThrow();
 		store.close();
 	});
 
-	it("rejects an API PATCH that mutates `analyzing` (worker owns the lifecycle)", () => {
+	it("rejects an API PATCH that mutates `analyzing` (worker owns the lifecycle)", async () => {
 		const store = makeTempStore();
-		const id = seedReplay(store);
+		const { replayId } = await seedReplay(store);
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "analyzing", analysisStep: "vad", jobId: "j-1" })
-			.where(eq(replays.id, id))
+			.where(eq(replays.id, replayId))
 			.run();
-		// Any out-of-band attempt to flip the lifecycle while the worker is
-		// running gets 409'd — the worker's terminal write is the only path
-		// out of `analyzing`.
-		expect(() => updateReplay(store, id, { lifecycle_state: "failed" })).toThrow(
+		expect(() => updateReplay(store, replayId, { lifecycle_state: "failed" })).toThrow(
 			ReplayLifecycleTransitionError,
 		);
-		expect(() => updateReplay(store, id, { lifecycle_state: "completed" })).toThrow(
+		expect(() => updateReplay(store, replayId, { lifecycle_state: "completed" })).toThrow(
 			ReplayLifecycleTransitionError,
 		);
-		// Same-state no-op is allowed.
-		expect(() => updateReplay(store, id, { lifecycle_state: "analyzing" })).not.toThrow();
-		// Fields that don't touch lifecycle still apply.
+		expect(() => updateReplay(store, replayId, { lifecycle_state: "analyzing" })).not.toThrow();
 		expect(() =>
-			updateReplay(store, id, { failure_reason: "max_attempts_exceeded" }),
+			updateReplay(store, replayId, { failure_reason: "max_attempts_exceeded" }),
 		).not.toThrow();
 		store.close();
 	});
 });
 
 describe("markReplayFailed", () => {
-	it("writes lifecycle_state='failed' + reason + finished_at and emits SSE events", () => {
+	it("writes lifecycle_state='failed' + reason + finished_at and emits SSE events", async () => {
 		const store = makeTempStore();
-		const id = seedReplay(store);
-		// Park the row in `analyzing` to mimic a job that started before the
-		// worker exhausted retries.
+		const { replayId } = await seedReplay(store);
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "analyzing", analysisStep: "vad", jobId: "job-1" })
-			.where(eq(replays.id, id))
+			.where(eq(replays.id, replayId))
 			.run();
 		const events = makeReplayEvents();
 		const seen: ReplayEvent[] = [];
-		events.subscribe(id, (e) => seen.push(e));
+		events.subscribe(replayId, (e) => seen.push(e));
 
-		markReplayFailed(store, events, id, "max_attempts_exceeded", {
+		markReplayFailed(store, events, replayId, "max_attempts_exceeded", {
 			now: () => "2026-05-21T12:34:56.000Z",
 		});
 
-		const row = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		const row = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
 		expect(row?.lifecycleState).toBe("failed");
 		expect(row?.failureReason).toBe("max_attempts_exceeded");
 		expect(row?.analysisStep).toBeNull();
@@ -174,42 +155,42 @@ describe("markReplayFailed", () => {
 		store.close();
 	});
 
-	it("is idempotent: second call on a row already in `failed` is a no-op (no SSE, no finished_at clobber)", () => {
+	it("is idempotent: second call on a row already in `failed` is a no-op", async () => {
 		const store = makeTempStore();
-		const id = seedReplay(store);
+		const { replayId } = await seedReplay(store);
 		const events = makeReplayEvents();
-		markReplayFailed(store, events, id, "max_attempts_exceeded", {
+		markReplayFailed(store, events, replayId, "max_attempts_exceeded", {
 			now: () => "2026-05-21T12:00:00.000Z",
 		});
-		const afterFirst = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		const afterFirst = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
 		const seen: ReplayEvent[] = [];
-		events.subscribe(id, (e) => seen.push(e));
+		events.subscribe(replayId, (e) => seen.push(e));
 
-		markReplayFailed(store, events, id, "stalled", {
+		markReplayFailed(store, events, replayId, "stalled", {
 			now: () => "2026-05-21T13:00:00.000Z",
 		});
 
-		const afterSecond = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		const afterSecond = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
 		expect(afterSecond?.finishedAt).toBe(afterFirst?.finishedAt);
 		expect(afterSecond?.failureReason).toBe("max_attempts_exceeded");
 		expect(seen).toEqual([]);
 		store.close();
 	});
 
-	it("refuses to unwind a row already in `completed`", () => {
+	it("refuses to unwind a row already in `completed`", async () => {
 		const store = makeTempStore();
-		const id = seedReplay(store);
-		updateReplay(store, id, {
+		const { replayId } = await seedReplay(store);
+		updateReplay(store, replayId, {
 			lifecycle_state: "completed",
 			finished_at: "2026-05-21T10:00:00.000Z",
 		});
 		const events = makeReplayEvents();
 		const seen: ReplayEvent[] = [];
-		events.subscribe(id, (e) => seen.push(e));
+		events.subscribe(replayId, (e) => seen.push(e));
 
-		markReplayFailed(store, events, id, "max_attempts_exceeded");
+		markReplayFailed(store, events, replayId, "max_attempts_exceeded");
 
-		const row = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		const row = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
 		expect(row?.lifecycleState).toBe("completed");
 		expect(row?.failureReason).toBeNull();
 		expect(seen).toEqual([]);
@@ -219,8 +200,6 @@ describe("markReplayFailed", () => {
 	it("silently returns when the replay id does not exist", () => {
 		const store = makeTempStore();
 		const events = makeReplayEvents();
-		// No throw — the bunqueue onFailed callback should not blow up on a
-		// vanished row (e.g. operator deleted the volume mid-flight).
 		expect(() =>
 			markReplayFailed(store, events, "00000000-0000-0000-0000-0000000000ff", "worker_lost"),
 		).not.toThrow();
@@ -229,25 +208,21 @@ describe("markReplayFailed", () => {
 });
 
 describe("enqueueAnalysis — atomic claim", () => {
-	function seedRecordingUploaded(store: ReturnType<typeof makeTempStore>): string {
-		const id = seedReplay(store);
+	async function seedRecordingUploaded(store: ReturnType<typeof makeTempStore>): Promise<string> {
+		const { replayId } = await seedReplay(store);
 		store.db
 			.update(replays)
-			.set({ lifecycleState: "recording_uploaded", audioPath: `${id}/replay.wav` })
-			.where(eq(replays.id, id))
+			.set({ lifecycleState: "recording_uploaded", audioPath: `${replayId}/replay.wav` })
+			.where(eq(replays.id, replayId))
 			.run();
-		return id;
+		return replayId;
 	}
 
 	it("two concurrent calls: exactly one enqueues, the other throws ReplayNotReadyForAnalysisError", async () => {
 		const store = makeTempStore();
-		const id = seedRecordingUploaded(store);
+		const replayId = await seedRecordingUploaded(store);
 		const events = makeReplayEvents();
 
-		// Gate the FakeJobRunner so both callers can observe the same
-		// `recording_uploaded` pre-state. Without the gate the first call's
-		// synchronous bun:sqlite write closes the race before the second
-		// caller's microtask runs.
 		const gate = Promise.withResolvers<void>();
 		let enqueuedCount = 0;
 		const runner = makeFakeJobRunner();
@@ -260,9 +235,8 @@ describe("enqueueAnalysis — atomic claim", () => {
 			},
 		};
 
-		const a = enqueueAnalysis(store, gatedRunner, events, id);
-		const b = enqueueAnalysis(store, gatedRunner, events, id);
-		// Let both bodies reach the await inside gatedRunner.enqueue.
+		const a = enqueueAnalysis(store, gatedRunner, events, replayId);
+		const b = enqueueAnalysis(store, gatedRunner, events, replayId);
 		await Promise.resolve();
 		await Promise.resolve();
 		gate.resolve();
@@ -275,11 +249,9 @@ describe("enqueueAnalysis — atomic claim", () => {
 		const rejection = rejected[0];
 		if (rejection?.status !== "rejected") throw new Error("expected one rejection");
 		expect(rejection.reason).toBeInstanceOf(ReplayNotReadyForAnalysisError);
-		// Only one bunqueue enqueue call was actually attempted — the loser
-		// short-circuits before reaching the runner.
 		expect(enqueuedCount).toBe(1);
 
-		const row = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		const row = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
 		expect(row?.lifecycleState).toBe("analyzing");
 		expect(row?.analysisStep).toBe("vad");
 		store.close();
@@ -287,7 +259,7 @@ describe("enqueueAnalysis — atomic claim", () => {
 
 	it("rolls back to `recording_uploaded` when the bunqueue enqueue throws", async () => {
 		const store = makeTempStore();
-		const id = seedRecordingUploaded(store);
+		const replayId = await seedRecordingUploaded(store);
 		const events = makeReplayEvents();
 		const throwingRunner = {
 			async enqueue() {
@@ -298,11 +270,11 @@ describe("enqueueAnalysis — atomic claim", () => {
 			},
 		};
 
-		await expect(enqueueAnalysis(store, throwingRunner, events, id)).rejects.toThrow(
+		await expect(enqueueAnalysis(store, throwingRunner, events, replayId)).rejects.toThrow(
 			"bunqueue offline",
 		);
 
-		const row = store.db.select().from(replays).where(eq(replays.id, id)).get();
+		const row = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
 		expect(row?.lifecycleState).toBe("recording_uploaded");
 		expect(row?.analysisStep).toBeNull();
 		expect(row?.jobId).toBeNull();
@@ -319,25 +291,32 @@ describe("getReplay / compareReplays / listReplaysForConversation", () => {
 		store.close();
 	});
 
-	it("compareReplays preserves request order", () => {
+	it("compareReplays preserves request order", async () => {
 		const store = makeTempStore();
-		const a = seedReplay(store, { id: "00000000-0000-0000-0000-00000000000a" });
-		const b = seedReplay(store, { id: "00000000-0000-0000-0000-00000000000b" });
-		const c = seedReplay(store, { id: "00000000-0000-0000-0000-00000000000c" });
+		const { replayId: a } = await seedReplay(store, {
+			id: "00000000-0000-0000-0000-00000000000a",
+		});
+		const { replayId: b } = await seedReplay(store, {
+			id: "00000000-0000-0000-0000-00000000000b",
+		});
+		const { replayId: c } = await seedReplay(store, {
+			id: "00000000-0000-0000-0000-00000000000c",
+		});
 		const res = compareReplays(store, [c, a, b]);
 		expect(res.replays.map((r) => r.id)).toEqual([c, a, b]);
 		store.close();
 	});
 
-	it("listReplaysForConversation returns newest-first summaries", () => {
+	it("listReplaysForConversation returns newest-first summaries", async () => {
 		const store = makeTempStore();
-		seedReplay(store, { conversationId: "c-list" });
-		const id = seedReplay(store, { conversationId: "c-list" });
-		updateReplay(store, id, {
+		const { hash } = await seedConversation(store);
+		await seedReplay(store, { conversationHash: hash });
+		const { replayId } = await seedReplay(store, { conversationHash: hash });
+		updateReplay(store, replayId, {
 			lifecycle_state: "completed",
 			finished_at: "2026-05-18T12:10:00.000Z",
 		});
-		const items = listReplaysForConversation(store, "c-list");
+		const items = listReplaysForConversation(store, hash);
 		expect(items).toHaveLength(2);
 		const first = items[0]?.started_at ?? "";
 		const second = items[1]?.started_at ?? "";

@@ -8,46 +8,39 @@ import { afterEach, describe, expect, it } from "bun:test";
 registerHappyDom();
 const { cleanup, render, screen, waitFor } = await import("@testing-library/react");
 const { renderWithRouter } = await import("../test-utils.tsx");
-const { alignTurnsByKey, parseConversationPairs } = await import("./compare-conversations.tsx");
+const { alignTurnsByKey, parseConversationHashes } = await import("./compare-conversations.tsx");
 
 afterEach(() => cleanup());
 
-function mockConversation(id: string, version: string, turns: object[], title: string | null) {
+const HASH_A = "a".repeat(64);
+const HASH_B = "b".repeat(64);
+
+function mockConversation(hash: string, turns: object[], name: string) {
 	server.use(
-		http.get(`http://localhost/v1/conversations/${id}`, ({ request }) => {
-			const url = new URL(request.url);
-			if (url.searchParams.get("version") !== version) {
-				return HttpResponse.json({ error: "not_found" }, { status: 404 });
-			}
-			return HttpResponse.json({
-				id,
-				version,
-				title,
+		http.get(`http://localhost/v1/conversations/${hash}`, () =>
+			HttpResponse.json({
+				hash,
+				name,
 				created_at: "2026-05-15T00:00:00.000Z",
+				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns,
-			});
-		}),
+			}),
+		),
 	);
 }
 
-describe("parseConversationPairs", () => {
-	it("parses two id:version pairs from a comma-separated query value", () => {
-		expect(parseConversationPairs("a:v1,b:v2")).toEqual([
-			{ conversationId: "a", version: "v1" },
-			{ conversationId: "b", version: "v2" },
-		]);
+describe("parseConversationHashes", () => {
+	it("parses two 64-char hex hashes from a comma-separated query value", () => {
+		expect(parseConversationHashes(`${HASH_A},${HASH_B}`)).toEqual([HASH_A, HASH_B]);
 	});
 
 	it("returns empty for undefined or empty input", () => {
-		expect(parseConversationPairs(undefined)).toEqual([]);
-		expect(parseConversationPairs("")).toEqual([]);
+		expect(parseConversationHashes(undefined)).toEqual([]);
+		expect(parseConversationHashes("")).toEqual([]);
 	});
 
-	it("skips malformed segments without a colon", () => {
-		expect(parseConversationPairs("a:v1,malformed,b:v2")).toEqual([
-			{ conversationId: "a", version: "v1" },
-			{ conversationId: "b", version: "v2" },
-		]);
+	it("skips malformed segments that aren't 64-char hex", () => {
+		expect(parseConversationHashes(`${HASH_A},not-a-hash,${HASH_B}`)).toEqual([HASH_A, HASH_B]);
 	});
 });
 
@@ -55,20 +48,20 @@ describe("alignTurnsByKey", () => {
 	it("aligns turns with matching keys into one row each, marking matched=true", () => {
 		const rows = alignTurnsByKey([
 			{
-				id: "a",
-				version: "v1",
-				title: null,
+				hash: HASH_A,
+				name: "A",
 				created_at: "2026-05-15T00:00:00.000Z",
+				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns: [
 					{ role: "user", key: "greet", text: "hi" },
 					{ role: "agent", key: "respond", text: "hello" },
 				],
 			},
 			{
-				id: "b",
-				version: "v1",
-				title: null,
+				hash: HASH_B,
+				name: "B",
 				created_at: "2026-05-15T00:00:00.000Z",
+				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns: [
 					{ role: "user", key: "greet", text: "yo" },
 					{ role: "agent", key: "respond", text: "hi back" },
@@ -80,23 +73,23 @@ describe("alignTurnsByKey", () => {
 		expect(rows[1]?.matched).toBe(true);
 	});
 
-	it("emits a row for every distinct key; unmatched cells are undefined and matched=false", () => {
+	it("emits a row for every distinct key; unmatched cells are undefined", () => {
 		const rows = alignTurnsByKey([
 			{
-				id: "a",
-				version: "v1",
-				title: null,
+				hash: HASH_A,
+				name: "A",
 				created_at: "2026-05-15T00:00:00.000Z",
+				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns: [
 					{ role: "user", key: "greet", text: "hi" },
 					{ role: "agent", key: "only-a", text: "alone" },
 				],
 			},
 			{
-				id: "b",
-				version: "v1",
-				title: null,
+				hash: HASH_B,
+				name: "B",
 				created_at: "2026-05-15T00:00:00.000Z",
+				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns: [
 					{ role: "user", key: "greet", text: "yo" },
 					{ role: "agent", key: "only-b", text: "alone" },
@@ -118,31 +111,29 @@ describe("alignTurnsByKey", () => {
 describe("CompareConversations route", () => {
 	it("renders both conversations and the alignment ratio when the ids query is valid", async () => {
 		mockConversation(
-			"a",
-			"v1",
+			HASH_A,
 			[
 				{ role: "user", key: "greet", text: "hi" },
 				{ role: "agent", key: "respond", text: "hello" },
 			],
-			"Title A",
+			"Conversation A",
 		);
 		mockConversation(
-			"b",
-			"v1",
+			HASH_B,
 			[
 				{ role: "user", key: "greet", text: "yo" },
 				{ role: "agent", key: "only-b", text: "different" },
 			],
-			"Title B",
+			"Conversation B",
 		);
 
 		const { ui } = renderWithRouter({
-			initialEntries: ["/compare/conversations?ids=a:v1,b:v1"],
+			initialEntries: [`/compare/conversations?ids=${HASH_A},${HASH_B}`],
 		});
 		render(ui);
 
-		await waitFor(() => expect(screen.getByText("Title A")).toBeTruthy());
-		expect(screen.getByText("Title B")).toBeTruthy();
+		await waitFor(() => expect(screen.getByText("Conversation A")).toBeTruthy());
+		expect(screen.getByText("Conversation B")).toBeTruthy();
 
 		const summary = await waitFor(() => screen.getByTestId("match-summary"));
 		expect(summary.textContent).toMatch(/1 of 3 turns matched \(33%\)/);
@@ -150,27 +141,26 @@ describe("CompareConversations route", () => {
 
 	it("renders a 'no matching turn' placeholder cell for unmatched keys", async () => {
 		mockConversation(
-			"a",
-			"v1",
+			HASH_A,
 			[
 				{ role: "user", key: "greet", text: "hi" },
 				{ role: "agent", key: "only-a", text: "alone" },
 			],
-			null,
+			"A",
 		);
-		mockConversation("b", "v1", [{ role: "user", key: "greet", text: "yo" }], null);
+		mockConversation(HASH_B, [{ role: "user", key: "greet", text: "yo" }], "B");
 
 		const { ui } = renderWithRouter({
-			initialEntries: ["/compare/conversations?ids=a:v1,b:v1"],
+			initialEntries: [`/compare/conversations?ids=${HASH_A},${HASH_B}`],
 		});
 		render(ui);
 
 		await waitFor(() => expect(screen.getAllByText(/no matching turn/i).length).toBeGreaterThan(0));
 	});
 
-	it("surfaces an error when the ids query does not contain exactly two pairs", async () => {
+	it("surfaces an error when the ids query does not contain exactly two hashes", async () => {
 		const { ui } = renderWithRouter({
-			initialEntries: ["/compare/conversations?ids=a:v1"],
+			initialEntries: [`/compare/conversations?ids=${HASH_A}`],
 		});
 		render(ui);
 

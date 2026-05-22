@@ -20,16 +20,21 @@ let conversationCounter = 0;
 let replayCounter = 0;
 let spanCounter = 0;
 
+/** 64-char hex hash used in tests. Counter-based so each call differs. */
+export function fakeHash(seed = 0): string {
+	const n = (seed === 0 ? ++conversationCounter : seed).toString(16).padStart(8, "0");
+	return n.repeat(8).slice(0, 64);
+}
+
 export function makeConversationInput(
 	overrides: Partial<ConversationInput> = {},
 ): ConversationInput {
-	conversationCounter += 1;
 	return {
-		id: `conv-${conversationCounter}`,
-		version: "v0001",
+		hash: fakeHash(),
+		name: "conv",
 		turnsJson: JSON.stringify([{ role: "user", text: "hi", key: "u0" }]),
-		title: null,
 		createdAt: "2026-05-16T12:00:00.000Z",
+		lastRunAt: "2026-05-16T12:00:00.000Z",
 		...overrides,
 	};
 }
@@ -38,8 +43,7 @@ export function makeReplayInput(overrides: Partial<ReplayInput> = {}): ReplayInp
 	replayCounter += 1;
 	return {
 		id: `replay-${replayCounter}`,
-		conversationId: "conv-1",
-		conversationVersion: "v0001",
+		conversationHash: fakeHash(1),
 		lifecycleState: "pending",
 		analysisStep: null,
 		failureReason: null,

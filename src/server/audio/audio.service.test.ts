@@ -31,7 +31,7 @@ afterEach(() => {
 
 describe("uploadReplayAudio / readReplayAudio", () => {
 	it("stores bytes under <audioRoot>/<replayId>/replay.<ext> and stamps audio_path", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const bytes = fakeAudioBytes(5);
 		const rel = await uploadReplayAudio(store, audio.path, {
 			replayId,
@@ -45,7 +45,7 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 	});
 
 	it("re-upload with different content-type deletes the old file", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		await uploadReplayAudio(store, audio.path, {
 			replayId,
 			contentType: "audio/wav",
@@ -63,7 +63,7 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 	});
 
 	it("throws AudioNotUploadedError when no audio exists yet", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		await expect(readReplayAudio(store, audio.path, replayId)).rejects.toBeInstanceOf(
 			AudioNotUploadedError,
 		);
@@ -88,7 +88,7 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 
 describe("uploadReplayAudio — lifecycle guard", () => {
 	it("allows upload in `running` state (driver retries before analysis)", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "running" })
@@ -104,7 +104,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 	});
 
 	it("allows re-upload in `recording_uploaded` (overwrite before /analyze)", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		await uploadReplayAudio(store, audio.path, {
 			replayId,
 			contentType: "audio/wav",
@@ -122,7 +122,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 	});
 
 	it("rejects upload while `analyzing` (worker is running, would race)", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "analyzing", analysisStep: "vad", jobId: "j-1" })
@@ -142,7 +142,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 	});
 
 	it("rejects upload from terminal `completed`", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "completed" })
@@ -158,7 +158,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 	});
 
 	it("rejects upload from terminal `failed`", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "failed", failureReason: "max_attempts_exceeded" })
@@ -176,7 +176,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 
 describe("path-traversal defense", () => {
 	it("readReplayAudio throws AudioPathOutsideRootError when a tampered row escapes the root", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		store.db
 			.update(replays)
 			.set({ audioPath: "../escape/secret" })

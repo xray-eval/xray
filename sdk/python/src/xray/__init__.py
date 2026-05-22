@@ -15,7 +15,7 @@ Public surface:
 - ``xray.otel`` — low-level OTEL pipeline helpers if you need to wire
   things manually (``install``, ``XraySpanExporter``,
   ``XrayBaggageSpanProcessor``).
-- ``xray.runtime.livekit.LiveKitDriver`` — user-side driver.
+- ``xray.runtime.livekit.LiveKitRuntime`` — user-side driver.
 """
 
 from xray.config import RunConfig

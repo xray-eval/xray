@@ -55,7 +55,7 @@ describe("createJobRunner", () => {
 	it("onFailed → markReplayFailed: a processor that always throws ends with the row stamped `failed` + `max_attempts_exceeded`", async () => {
 		const store = makeTempStore();
 		const events = makeReplayEvents();
-		const replayId = seedReplay(store);
+		const { replayId } = await seedReplay(store);
 		// Park the row in `analyzing` to mirror the real flow after
 		// enqueueAnalysis. markReplayFailed otherwise short-circuits on
 		// `pending` only because of its non-terminal guard, but `analyzing`

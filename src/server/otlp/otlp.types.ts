@@ -83,8 +83,7 @@ export const MAX_SPANS_PER_REQUEST = 512;
 export const MAX_SPANS_PER_REPLAY = 5_000;
 
 export const XRAY_REPLAY_ID_KEY = "xray.replay.id";
-export const XRAY_CONVERSATION_ID_KEY = "xray.conversation.id";
-export const XRAY_CONVERSATION_VERSION_KEY = "xray.conversation.version";
+export const XRAY_CONVERSATION_HASH_KEY = "xray.conversation.hash";
 export const XRAY_TURN_KEY_KEY = "xray.turn.key";
 export const XRAY_TURN_IDX_KEY = "xray.turn.idx";
 export const XRAY_MODALITY_KEY = "xray.modality";

@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import * as v from "valibot";
 
-import { upsertConversation } from "@/server/conversations/conversations.service.ts";
-import { makeConversationSpec } from "@/server/conversations/conversations.test-utils.ts";
 import { readJson } from "@/server/core/test-utils.ts";
-import { createReplay } from "@/server/replays/replays.service.ts";
-import { makeCreateReplayRequest } from "@/server/replays/replays.test-utils.ts";
+import {
+	createReplayForTest,
+	makeCreateReplayRequest,
+} from "@/server/replays/replays.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import { createOtlpRouter } from "./otlp.router.ts";
@@ -13,20 +13,16 @@ import { makeOtlpRequest } from "./otlp.test-utils.ts";
 import { MAX_OTLP_BODY_BYTES, MAX_SPANS_PER_REQUEST } from "./otlp.types.ts";
 import { describe, expect, it } from "bun:test";
 
-function makeApp() {
+async function makeApp() {
 	const store = makeTempStore();
-	upsertConversation(store, makeConversationSpec({ id: "c", version: "v1" }));
-	const replay = createReplay(
-		store,
-		makeCreateReplayRequest({ conversation_id: "c", conversation_version: "v1" }),
-	);
+	const replay = await createReplayForTest(store, makeCreateReplayRequest());
 	const app = new Hono().route("/v1", createOtlpRouter(store));
 	return { app, store, replayId: replay.id };
 }
 
 describe("POST /v1/otlp/v1/traces", () => {
 	it("returns 200 + partialSuccess body on a valid OTLP/JSON request", async () => {
-		const { app, replayId } = makeApp();
+		const { app, replayId } = await makeApp();
 		const body = makeOtlpRequest({
 			replayId,
 			spans: [
@@ -56,7 +52,7 @@ describe("POST /v1/otlp/v1/traces", () => {
 	});
 
 	it("returns 415 for an unsupported content-type", async () => {
-		const { app, replayId } = makeApp();
+		const { app, replayId } = await makeApp();
 		const body = makeOtlpRequest({ replayId, spans: [{ name: "xray.assertion" }] });
 		const res = await app.request("/v1/otlp/v1/traces", {
 			method: "POST",
@@ -67,7 +63,7 @@ describe("POST /v1/otlp/v1/traces", () => {
 	});
 
 	it("returns 400 for unparseable JSON body", async () => {
-		const { app } = makeApp();
+		const { app } = await makeApp();
 		const res = await app.request("/v1/otlp/v1/traces", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -77,7 +73,7 @@ describe("POST /v1/otlp/v1/traces", () => {
 	});
 
 	it("returns 413 with body_too_large shape when the body exceeds MAX_OTLP_BODY_BYTES", async () => {
-		const { app } = makeApp();
+		const { app } = await makeApp();
 		const oversize = "x".repeat(MAX_OTLP_BODY_BYTES + 1);
 		const res = await app.request("/v1/otlp/v1/traces", {
 			method: "POST",
@@ -93,7 +89,7 @@ describe("POST /v1/otlp/v1/traces", () => {
 	});
 
 	it("returns 400 with too_many_spans_per_request shape when > MAX_SPANS_PER_REQUEST spans are sent", async () => {
-		const { app, replayId } = makeApp();
+		const { app, replayId } = await makeApp();
 		const spans = Array.from({ length: MAX_SPANS_PER_REQUEST + 1 }, (_, i) => ({
 			name: "xray.assertion",
 			attributes: {

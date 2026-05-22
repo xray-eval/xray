@@ -3,7 +3,6 @@
 // and inferred response shapes that the wire is the source of truth for.
 export type {
 	ConversationResponse,
-	ConversationSpec,
 	ConversationSummary,
 	ConversationTurn,
 	ListConversationsResponse,

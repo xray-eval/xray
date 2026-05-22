@@ -1,13 +1,13 @@
 CREATE TABLE `conversations` (
-	`id` text NOT NULL,
-	`version` text NOT NULL,
+	`hash` text PRIMARY KEY NOT NULL,
+	`name` text NOT NULL,
 	`turns_json` text NOT NULL,
-	`title` text,
 	`created_at` text NOT NULL,
-	PRIMARY KEY(`id`, `version`)
+	`last_run_at` text,
+	CONSTRAINT "conversations_hash_ck" CHECK(length("conversations"."hash") = 64)
 );
 --> statement-breakpoint
-CREATE INDEX `idx_conversations_id_created_at` ON `conversations` (`id`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_conversations_last_run_at` ON `conversations` (`last_run_at`);--> statement-breakpoint
 CREATE TABLE `model_usage` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`replay_id` text NOT NULL,
@@ -41,8 +41,7 @@ CREATE TABLE `replay_turns` (
 CREATE INDEX `idx_replay_turns_replay_idx` ON `replay_turns` (`replay_id`,`idx`);--> statement-breakpoint
 CREATE TABLE `replays` (
 	`id` text PRIMARY KEY NOT NULL,
-	`conversation_id` text NOT NULL,
-	`conversation_version` text NOT NULL,
+	`conversation_hash` text NOT NULL,
 	`lifecycle_state` text NOT NULL,
 	`analysis_step` text,
 	`failure_reason` text,
@@ -51,10 +50,11 @@ CREATE TABLE `replays` (
 	`audio_path` text,
 	`run_config_json` text,
 	`job_id` text,
+	FOREIGN KEY (`conversation_hash`) REFERENCES `conversations`(`hash`) ON UPDATE no action ON DELETE restrict,
 	CONSTRAINT "replays_lifecycle_state_ck" CHECK("replays"."lifecycle_state" IN ('pending', 'running', 'recording_uploaded', 'analyzing', 'completed', 'failed'))
 );
 --> statement-breakpoint
-CREATE INDEX `idx_replays_conversation` ON `replays` (`conversation_id`,`conversation_version`,`started_at`);--> statement-breakpoint
+CREATE INDEX `idx_replays_conversation_hash` ON `replays` (`conversation_hash`,`started_at`);--> statement-breakpoint
 CREATE INDEX `idx_replays_started_at` ON `replays` (`started_at`);--> statement-breakpoint
 CREATE TABLE `spans` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,

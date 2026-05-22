@@ -57,8 +57,7 @@ export const ValidationErrorResponseSchema = v.object({
 /** 404 — referenced conversation does not exist. */
 export const ConversationNotFoundResponseSchema = v.object({
 	error: v.string(),
-	conversation_id: v.string(),
-	conversation_version: v.optional(v.string()),
+	conversation_hash: v.string(),
 });
 
 /** 404 — replay does not exist. */
@@ -72,13 +71,6 @@ export const AudioNotFoundResponseSchema = v.object({
 	error: v.string(),
 	replay_id: v.string(),
 	turn_idx: v.optional(v.number()),
-});
-
-/** 409 — `(conversation_id, version)` already exists with a different fingerprint. */
-export const ConversationConflictResponseSchema = v.object({
-	error: v.string(),
-	conversation_id: v.string(),
-	conversation_version: v.string(),
 });
 
 /** 413 — request body exceeded the per-route byte cap. */

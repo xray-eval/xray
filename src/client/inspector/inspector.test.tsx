@@ -15,8 +15,7 @@ const REPLAY_ID = "44444444-4444-4444-4444-444444444444";
 
 interface ReplayDetailFixture {
 	id: string;
-	conversation_id: string;
-	conversation_version: string;
+	conversation_hash: string;
 	status: "running" | "completed" | "failed";
 	failure_reason:
 		| "agent_not_joined"
@@ -62,8 +61,7 @@ interface ReplayDetailFixture {
 function buildReplay(overrides: Partial<ReplayDetailFixture> = {}): ReplayDetailFixture {
 	return {
 		id: REPLAY_ID,
-		conversation_id: "conv-x",
-		conversation_version: "v1",
+		conversation_hash: "a".repeat(64),
 		status: "completed",
 		failure_reason: null,
 		modality: "voice",

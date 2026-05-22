@@ -14,6 +14,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/client/components/ui/table.tsx";
+import { shortHash } from "@/client/format.ts";
 
 import { listConversations } from "../api/api.ts";
 import type { ConversationSummary } from "../api/api.types.ts";
@@ -30,7 +31,9 @@ export function ConversationsList() {
 
 	function toggle(item: ConversationSummary) {
 		setSelected((prev) =>
-			prev.some((p) => p.id === item.id) ? prev.filter((p) => p.id !== item.id) : [...prev, item],
+			prev.some((p) => p.hash === item.hash)
+				? prev.filter((p) => p.hash !== item.hash)
+				: [...prev, item],
 		);
 	}
 
@@ -60,7 +63,7 @@ export function ConversationsList() {
 						onClick={() =>
 							navigate({
 								to: "/compare/conversations",
-								search: { ids: selected.map((s) => `${s.id}:${s.latest_version}`).join(",") },
+								search: { ids: selected.map((s) => s.hash).join(",") },
 							})
 						}
 					>
@@ -105,33 +108,27 @@ function ConversationsTable({
 					<TableRow className="border-border/60 hover:bg-transparent">
 						<TableHead className="w-10 px-4" />
 						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-							Title
-						</TableHead>
-						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-							ID
-						</TableHead>
-						<TableHead className="px-4 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">
-							Versions
+							Name
 						</TableHead>
 						<TableHead className="px-4 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">
 							Replays
 						</TableHead>
 						<TableHead className="px-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-							Latest
+							Last run
 						</TableHead>
 					</TableRow>
 				</TableHeader>
 				<TableBody>
 					{items.map((item) => (
 						<ConversationRow
-							key={item.id}
+							key={item.hash}
 							conversation={item}
-							selected={selected.some((s) => s.id === item.id)}
+							selected={selected.some((s) => s.hash === item.hash)}
 							onToggle={() => onToggle(item)}
 							onOpen={() =>
 								navigate({
-									to: "/conversations/$conversationId",
-									params: { conversationId: item.id },
+									to: "/conversations/$conversationHash",
+									params: { conversationHash: item.hash },
 								})
 							}
 						/>
@@ -158,25 +155,24 @@ function ConversationRow({
 			selected={selected}
 			onToggle={onToggle}
 			onOpen={onOpen}
-			selectLabel={`Select conversation ${conversation.id} to compare`}
+			selectLabel={`Select conversation ${conversation.name} to compare`}
 		>
 			<TableCell className="px-4 py-3 font-medium">
 				<Link
-					to="/conversations/$conversationId"
-					params={{ conversationId: conversation.id }}
+					to="/conversations/$conversationHash"
+					params={{ conversationHash: conversation.hash }}
 					onClick={stopRowNavigation}
 					className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 				>
-					{conversation.title ?? conversation.id}
+					{conversation.name}
 				</Link>
+				<div className="font-mono text-xs text-muted-foreground">
+					{shortHash(conversation.hash)}…
+				</div>
 			</TableCell>
-			<TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">
-				{conversation.id}
-			</TableCell>
-			<TableCell className="px-4 py-3 text-right tabular-nums">{conversation.versions}</TableCell>
 			<TableCell className="px-4 py-3 text-right tabular-nums">{conversation.replays}</TableCell>
 			<TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">
-				{conversation.latest_version}
+				{conversation.last_run_at ?? "—"}
 			</TableCell>
 		</ClickableRow>
 	);

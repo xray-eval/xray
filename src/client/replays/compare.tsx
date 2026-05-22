@@ -7,6 +7,7 @@ import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
+import { shortHash } from "@/client/format.ts";
 
 import { compareReplays } from "../api/api.ts";
 import type { ReplayDetailResponse, ReplayTurnResponse } from "../api/api.types.ts";
@@ -92,7 +93,7 @@ function ReplaysGrid({ replays }: { replays: ReplayDetailResponse[] }) {
 										</CardTitle>
 									</CardHeader>
 									<CardContent className="text-xs text-muted-foreground">
-										<div>v{r.conversation_version}</div>
+										<div className="font-mono">{shortHash(r.conversation_hash)}…</div>
 										<div>{formatTimestamp(r.started_at)}</div>
 									</CardContent>
 								</Card>

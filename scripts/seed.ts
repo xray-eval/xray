@@ -73,8 +73,7 @@ interface PlayedSegment {
 	endMs: number;
 }
 
-const CONVERSATION_ID = "demo-booking-happy-path";
-const CONVERSATION_VERSION = "v0001";
+const CONVERSATION_NAME = "Books a table for two — happy path";
 const REPLAY_COUNT = 3;
 
 const TURNS: SeedTurn[] = [
@@ -129,28 +128,23 @@ const TTS_VOICE_FOR_ROLE: Record<"user" | "agent", string> = {
 };
 
 async function main() {
-	await postConversation();
+	const conversationHash = await postConversation();
 	for (let i = 0; i < REPLAY_COUNT; i++) {
-		const replayId = await postReplay(i);
-		await pushOtlp(replayId, i);
-		await uploadReplayAudio(replayId, i);
-		await patchReplay(replayId, i);
+		const created = await postReplay(conversationHash, i);
+		await pushOtlp(created.id, i, conversationHash);
+		await uploadReplayAudio(created.id, i);
+		await patchReplay(created.id, i);
 	}
-	console.info(`seeded ${REPLAY_COUNT} replays under ${CONVERSATION_ID}`);
+	console.info(
+		`seeded ${REPLAY_COUNT} replays under conversation ${conversationHash.slice(0, 12)}…`,
+	);
 }
 
-async function postConversation() {
-	const body = {
-		id: CONVERSATION_ID,
-		version: CONVERSATION_VERSION,
-		title: "Books a table for two — happy path",
-		turns: TURNS,
-	};
-	const res = await fetch(`${BASE}/v1/conversations`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify(body),
-	});
+async function postConversation(): Promise<string> {
+	const spec = { name: CONVERSATION_NAME, turns: TURNS };
+	const form = new FormData();
+	form.set("spec", JSON.stringify(spec));
+	const res = await fetch(`${BASE}/v1/conversations`, { method: "POST", body: form });
 	if (!res.ok) {
 		throw new SeedRequestError(
 			"POST",
@@ -160,13 +154,13 @@ async function postConversation() {
 			await res.text(),
 		);
 	}
+	const parsed = v.parse(v.object({ hash: v.string() }), await res.json());
+	return parsed.hash;
 }
 
-async function postReplay(idx: number): Promise<string> {
+async function postReplay(conversationHash: string, idx: number): Promise<{ id: string }> {
 	const body = {
-		conversation_id: CONVERSATION_ID,
-		conversation_version: CONVERSATION_VERSION,
-		modality: "voice",
+		conversation_hash: conversationHash,
 		run_config: {
 			model: idx % 2 === 0 ? "gpt-4o" : "gpt-4o-mini",
 			temperature: 0.3 + idx * 0.2,
@@ -181,10 +175,10 @@ async function postReplay(idx: number): Promise<string> {
 		throw new SeedRequestError("POST", "/v1/replays", res.status, res.statusText, await res.text());
 	}
 	const parsed = v.parse(v.object({ id: v.string() }), await res.json());
-	return parsed.id;
+	return { id: parsed.id };
 }
 
-async function pushOtlp(replayId: string, idx: number) {
+async function pushOtlp(replayId: string, idx: number, conversationHash: string) {
 	const replayStartMs = Date.UTC(2026, 4, 18 + idx, 12, 0, 0);
 	const lastEnd = PLAYED.at(-1)?.endMs ?? 0;
 	const judgeStart = lastEnd + 100;
@@ -194,8 +188,7 @@ async function pushOtlp(replayId: string, idx: number) {
 				resource: {
 					attributes: [
 						kv("xray.replay.id", replayId),
-						kv("xray.conversation.id", CONVERSATION_ID),
-						kv("xray.conversation.version", CONVERSATION_VERSION),
+						kv("xray.conversation.hash", conversationHash),
 						kv("xray.modality", "voice"),
 					],
 				},
@@ -334,12 +327,9 @@ async function uploadReplayAudio(replayId: string, replayIdx: number) {
 
 async function patchReplay(replayId: string, idx: number) {
 	const body = {
-		status: idx === 2 ? "failed" : "completed",
-		failure_reason: idx === 2 ? "runtime_error" : null,
+		lifecycle_state: idx === 2 ? "failed" : "completed",
+		failure_reason: idx === 2 ? "driver_aborted" : null,
 		finished_at: new Date(Date.UTC(2026, 4, 18 + idx, 12, 0, 15)).toISOString(),
-		transcript: PLAYED.map((p) => `${p.role === "user" ? "User" : "Agent"}: ${p.transcript}`).join(
-			"\n",
-		),
 	};
 	const res = await fetch(`${BASE}/v1/replays/${replayId}`, {
 		method: "PATCH",

@@ -7,36 +7,32 @@ import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
+import { shortHash } from "@/client/format.ts";
+import { HEX_SHA256_RE } from "@/server/conversations/conversations.types.ts";
 
 import { getConversation } from "../api/api.ts";
 import type { ConversationResponse, ConversationTurn } from "../api/api.types.ts";
 
 const COMPARE_COUNT = 2;
 
-interface ConversationPair {
-	readonly conversationId: string;
-	readonly version: string;
-}
-
 export function CompareConversations() {
 	const { ids } = useSearch({ from: "/compare/conversations" });
-	const pairs = parseConversationPairs(ids);
+	const hashes = parseConversationHashes(ids);
 
 	const queries = useQueries({
-		queries: pairs.map((pair) => ({
-			queryKey: ["conversations", { id: pair.conversationId, version: pair.version }] as const,
-			queryFn: ({ signal }: { signal: AbortSignal }) =>
-				getConversation(pair.conversationId, { version: pair.version, signal }),
-			enabled: pairs.length === COMPARE_COUNT,
+		queries: hashes.map((hash) => ({
+			queryKey: ["conversations", { hash }] as const,
+			queryFn: ({ signal }: { signal: AbortSignal }) => getConversation(hash, signal),
+			enabled: hashes.length === COMPARE_COUNT,
 		})),
 	});
 
-	if (pairs.length !== COMPARE_COUNT) {
+	if (hashes.length !== COMPARE_COUNT) {
 		return (
 			<section>
 				<CompareHeader />
 				<p role="alert" className="text-sm text-destructive">
-					Compare requires exactly {COMPARE_COUNT} Conversation ids.
+					Compare requires exactly {COMPARE_COUNT} Conversation hashes.
 				</p>
 			</section>
 		);
@@ -120,20 +116,15 @@ function ConversationsGrid({ conversations }: { conversations: readonly Conversa
 					<thead>
 						<tr>
 							{conversations.map((c) => (
-								<th
-									key={`${c.id}-${c.version}`}
-									scope="col"
-									className="min-w-[280px] text-left align-top"
-								>
+								<th key={c.hash} scope="col" className="min-w-[280px] text-left align-top">
 									<Card>
 										<CardHeader>
 											<CardTitle className="text-base">
-												<span className="truncate">{c.title ?? c.id}</span>
+												<span className="truncate">{c.name}</span>
 											</CardTitle>
 										</CardHeader>
 										<CardContent className="text-xs text-muted-foreground">
-											<div className="font-mono">{c.id}</div>
-											<div>version {c.version}</div>
+											<div className="font-mono">{shortHash(c.hash)}…</div>
 											<div>{c.turns.length} turns</div>
 										</CardContent>
 									</Card>
@@ -149,7 +140,7 @@ function ConversationsGrid({ conversations }: { conversations: readonly Conversa
 									if (conversation === undefined) return null;
 									return (
 										<td
-											key={`${conversation.id}-${conversation.version}-${row.key}`}
+											key={`${conversation.hash}-${row.key}`}
 											className="min-w-[280px] rounded border p-2 align-top text-xs"
 										>
 											<div className="mb-1 flex items-center justify-between text-muted-foreground">
@@ -173,19 +164,12 @@ function ConversationsGrid({ conversations }: { conversations: readonly Conversa
 	);
 }
 
-export function parseConversationPairs(raw: string | undefined): ConversationPair[] {
+export function parseConversationHashes(raw: string | undefined): string[] {
 	if (raw === undefined || raw.length === 0) return [];
-	const pairs: ConversationPair[] = [];
-	for (const segment of raw.split(",")) {
-		if (segment.length === 0) continue;
-		const colonIdx = segment.indexOf(":");
-		if (colonIdx === -1) continue;
-		const conversationId = segment.slice(0, colonIdx);
-		const version = segment.slice(colonIdx + 1);
-		if (conversationId.length === 0 || version.length === 0) continue;
-		pairs.push({ conversationId, version });
-	}
-	return pairs;
+	return raw
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => HEX_SHA256_RE.test(s));
 }
 
 export function alignTurnsByKey(

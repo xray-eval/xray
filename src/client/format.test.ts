@@ -1,5 +1,21 @@
-import { formatAbsolute, formatDuration } from "./format.ts";
+import { formatAbsolute, formatDuration, HASH_PREFIX_LEN, shortHash } from "./format.ts";
 import { describe, expect, it } from "bun:test";
+
+describe("shortHash", () => {
+	it("returns the first HASH_PREFIX_LEN chars of a 64-char hex", () => {
+		const hash = "a".repeat(40) + "b".repeat(24);
+		expect(shortHash(hash)).toBe("a".repeat(HASH_PREFIX_LEN));
+		expect(shortHash(hash)).toHaveLength(HASH_PREFIX_LEN);
+	});
+
+	it("returns the whole string when shorter than HASH_PREFIX_LEN", () => {
+		expect(shortHash("abc")).toBe("abc");
+	});
+
+	it("returns empty string for empty input", () => {
+		expect(shortHash("")).toBe("");
+	});
+});
 
 describe("formatAbsolute", () => {
 	it("returns a non-empty locale string for a valid ISO timestamp", () => {

@@ -69,7 +69,7 @@ afterEach(() => {
 
 describe("analyze-replay processor", () => {
 	it("populates speech_segments + replay_turns + flips replay to completed", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const wav = makeStereo({
 			userBlocks: [
 				{ durationMs: 200, voiced: false },
@@ -124,7 +124,7 @@ describe("analyze-replay processor", () => {
 	});
 
 	it("skips the `completed` write when the row is no longer in `analyzing` (race guard)", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const wav = makeStereo({
 			userBlocks: [{ durationMs: 100, voiced: true }],
 			agentBlocks: [{ durationMs: 100, voiced: true }],
@@ -156,7 +156,7 @@ describe("analyze-replay processor", () => {
 	});
 
 	it("throws when audio_path is null", async () => {
-		const { replayId } = seedReplayForAudio(store);
+		const { replayId } = await seedReplayForAudio(store);
 		const processor = makeAnalyzeProcessor(store, audio.path, makeReplayEvents());
 		await expect(processor({ replayId })).rejects.toThrow(/audio_path is null/);
 	});

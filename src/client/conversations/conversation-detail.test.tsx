@@ -11,12 +11,11 @@ const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
 
-const CONVERSATION_ID = "conv-x";
+const CONVERSATION_HASH = "a".repeat(64);
 
 interface ReplaySummary {
 	id: string;
-	conversation_id: string;
-	conversation_version: string;
+	conversation_hash: string;
 	status: "running" | "completed" | "failed";
 	failure_reason:
 		| "agent_not_joined"
@@ -36,8 +35,7 @@ interface ReplaySummary {
 const REPLAY_FIXTURES: ReplaySummary[] = [
 	{
 		id: "11111111-1111-1111-1111-111111111111",
-		conversation_id: CONVERSATION_ID,
-		conversation_version: "v1",
+		conversation_hash: CONVERSATION_HASH,
 		status: "completed",
 		failure_reason: null,
 		modality: "voice",
@@ -49,8 +47,7 @@ const REPLAY_FIXTURES: ReplaySummary[] = [
 	},
 	{
 		id: "22222222-2222-2222-2222-222222222222",
-		conversation_id: CONVERSATION_ID,
-		conversation_version: "v1",
+		conversation_hash: CONVERSATION_HASH,
 		status: "failed",
 		failure_reason: "runtime_error",
 		modality: "voice",
@@ -62,8 +59,7 @@ const REPLAY_FIXTURES: ReplaySummary[] = [
 	},
 	{
 		id: "33333333-3333-3333-3333-333333333333",
-		conversation_id: CONVERSATION_ID,
-		conversation_version: "v1",
+		conversation_hash: CONVERSATION_HASH,
 		status: "running",
 		failure_reason: null,
 		modality: "voice",
@@ -77,16 +73,16 @@ const REPLAY_FIXTURES: ReplaySummary[] = [
 
 function mockConversationAndReplays() {
 	server.use(
-		http.get(`http://localhost/v1/conversations/${CONVERSATION_ID}`, () =>
+		http.get(`http://localhost/v1/conversations/${CONVERSATION_HASH}`, () =>
 			HttpResponse.json({
-				id: CONVERSATION_ID,
-				version: "v1",
-				title: "Title X",
+				hash: CONVERSATION_HASH,
+				name: "Conversation X",
 				created_at: "2026-05-15T00:00:00.000Z",
+				last_run_at: "2026-05-15T10:02:00.000Z",
 				turns: [{ role: "user", text: "hello" }],
 			}),
 		),
-		http.get(`http://localhost/v1/conversations/${CONVERSATION_ID}/replays`, () =>
+		http.get(`http://localhost/v1/conversations/${CONVERSATION_HASH}/replays`, () =>
 			HttpResponse.json({ items: REPLAY_FIXTURES }),
 		),
 	);
@@ -96,7 +92,7 @@ describe("ConversationDetail", () => {
 	it("renders the replays list with status chips for each row", async () => {
 		mockConversationAndReplays();
 		const { ui } = renderWithRouter({
-			initialEntries: [`/conversations/${CONVERSATION_ID}`],
+			initialEntries: [`/conversations/${CONVERSATION_HASH}`],
 		});
 		render(ui);
 
@@ -108,7 +104,7 @@ describe("ConversationDetail", () => {
 	it("exposes the failureReason as visible text on a failed replay", async () => {
 		mockConversationAndReplays();
 		const { ui } = renderWithRouter({
-			initialEntries: [`/conversations/${CONVERSATION_ID}`],
+			initialEntries: [`/conversations/${CONVERSATION_HASH}`],
 		});
 		render(ui);
 
@@ -119,7 +115,7 @@ describe("ConversationDetail", () => {
 	it("Compare-Replays button enables for 2 selected, disables for 1 or >8", async () => {
 		mockConversationAndReplays();
 		const { ui } = renderWithRouter({
-			initialEntries: [`/conversations/${CONVERSATION_ID}`],
+			initialEntries: [`/conversations/${CONVERSATION_HASH}`],
 		});
 		render(ui);
 

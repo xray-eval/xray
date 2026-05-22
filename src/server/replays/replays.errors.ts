@@ -1,5 +1,7 @@
 import type { BaseIssue } from "valibot";
 
+import type { ReplayLifecycleState } from "@/server/store/types.ts";
+
 export class ReplayError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
@@ -53,20 +55,10 @@ export class ReplayNotFoundError extends ReplayError {
 	}
 }
 
-export class ConversationVersionNotFoundError extends ReplayError {
-	readonly conversationId: string;
-	readonly conversationVersion: string;
-	constructor(conversationId: string, conversationVersion: string) {
-		super(`Conversation "${conversationId}" version "${conversationVersion}" not found`);
-		this.name = "ConversationVersionNotFoundError";
-		this.conversationId = conversationId;
-		this.conversationVersion = conversationVersion;
-	}
-}
-
 /**
- * A PATCH attempted to move the replay out of a terminal lifecycle state.
- * Terminal states (`completed`, `failed`) are write-once.
+ * A PATCH attempted an illegal lifecycle transition. Terminal states
+ * (`completed`, `failed`) are write-once; `analyzing` is owned by the
+ * worker. Mapped to 409.
  */
 export class ReplayLifecycleTransitionError extends ReplayError {
 	readonly replayId: string;
@@ -96,8 +88,8 @@ export class ReplayBodyTooLargeError extends ReplayError {
  */
 export class ReplayNotReadyForAnalysisError extends ReplayError {
 	readonly replayId: string;
-	readonly currentState: string;
-	constructor(replayId: string, currentState: string) {
+	readonly currentState: ReplayLifecycleState;
+	constructor(replayId: string, currentState: ReplayLifecycleState) {
 		super(`Replay "${replayId}" is in state "${currentState}", not "recording_uploaded"`);
 		this.name = "ReplayNotReadyForAnalysisError";
 		this.replayId = replayId;

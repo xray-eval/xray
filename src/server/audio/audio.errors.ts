@@ -1,5 +1,7 @@
 import type { BaseIssue } from "valibot";
 
+import type { ReplayLifecycleState } from "@/server/store/types.ts";
+
 export class AudioError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
@@ -93,8 +95,8 @@ export class InvalidWavFormatError extends AudioError {
  */
 export class ReplayUploadStateError extends AudioError {
 	readonly replayId: string;
-	readonly currentState: string;
-	constructor(replayId: string, currentState: string) {
+	readonly currentState: ReplayLifecycleState;
+	constructor(replayId: string, currentState: ReplayLifecycleState) {
 		super(`Replay "${replayId}" is in state "${currentState}" — upload not allowed`);
 		this.name = "ReplayUploadStateError";
 		this.replayId = replayId;

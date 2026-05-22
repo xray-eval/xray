@@ -2,16 +2,17 @@ import {
 	ConversationBodyTooLargeError,
 	ConversationError,
 	ConversationNotFoundError,
-	InvalidConversationIdError,
+	InvalidConversationHashError,
 	InvalidConversationRequestError,
 	MalformedConversationBodyError,
-	VersionFingerprintMismatchError,
+	MissingSpecPartError,
+	RecordedAudioUploadKeyError,
 } from "./conversations.errors.ts";
 import { describe, expect, it } from "bun:test";
 
 describe("ConversationError subclasses", () => {
-	it("InvalidConversationRequestError carries issues + name + parentage", () => {
-		const err = new InvalidConversationRequestError([
+	it("InvalidConversationHashError carries issues + name", () => {
+		const err = new InvalidConversationHashError([
 			{
 				kind: "schema",
 				type: "x",
@@ -22,19 +23,12 @@ describe("ConversationError subclasses", () => {
 			},
 		]);
 		expect(err).toBeInstanceOf(ConversationError);
-		expect(err.name).toBe("InvalidConversationRequestError");
+		expect(err.name).toBe("InvalidConversationHashError");
 		expect(err.issues).toHaveLength(1);
 	});
 
-	it("MalformedConversationBodyError exposes a frozen issues array", () => {
-		const err = new MalformedConversationBodyError();
-		expect(err).toBeInstanceOf(ConversationError);
-		expect(err.name).toBe("MalformedConversationBodyError");
-		expect(err.issues[0]?.type).toBe("json_body");
-	});
-
-	it("InvalidConversationIdError carries issues + name", () => {
-		const err = new InvalidConversationIdError([
+	it("InvalidConversationRequestError carries issues + name", () => {
+		const e = new InvalidConversationRequestError([
 			{
 				kind: "schema",
 				type: "x",
@@ -44,30 +38,48 @@ describe("ConversationError subclasses", () => {
 				message: "m",
 			},
 		]);
-		expect(err).toBeInstanceOf(ConversationError);
-		expect(err.name).toBe("InvalidConversationIdError");
+		expect(e).toBeInstanceOf(ConversationError);
+		expect(e.name).toBe("InvalidConversationRequestError");
+		expect(e.issues).toHaveLength(1);
 	});
 
-	it("ConversationNotFoundError carries id (+ optional version)", () => {
-		const a = new ConversationNotFoundError("conv-1");
-		expect(a.conversationId).toBe("conv-1");
-		expect(a.conversationVersion).toBeNull();
-		const b = new ConversationNotFoundError("conv-2", "v1");
-		expect(b.conversationVersion).toBe("v1");
+	it("MalformedConversationBodyError exposes a frozen issues array", () => {
+		const e = new MalformedConversationBodyError();
+		expect(e).toBeInstanceOf(ConversationError);
+		expect(e.name).toBe("MalformedConversationBodyError");
+		expect(e.issues[0]?.type).toBe("json_body");
 	});
 
-	it("VersionFingerprintMismatchError carries id + version + parentage", () => {
-		const err = new VersionFingerprintMismatchError("conv-1", "v1");
-		expect(err).toBeInstanceOf(ConversationError);
-		expect(err.name).toBe("VersionFingerprintMismatchError");
-		expect(err.conversationId).toBe("conv-1");
-		expect(err.conversationVersion).toBe("v1");
+	it("MissingSpecPartError extends MalformedConversationBodyError", () => {
+		const e = new MissingSpecPartError();
+		expect(e).toBeInstanceOf(MalformedConversationBodyError);
+		expect(e).toBeInstanceOf(ConversationError);
+		expect(e.name).toBe("MissingSpecPartError");
+		expect(e.issues[0]?.type).toBe("multipart_part");
 	});
 
-	it("ConversationBodyTooLargeError carries maxBytes + parentage", () => {
-		const err = new ConversationBodyTooLargeError(1024);
-		expect(err).toBeInstanceOf(ConversationError);
-		expect(err.name).toBe("ConversationBodyTooLargeError");
-		expect(err.maxBytes).toBe(1024);
+	it("ConversationBodyTooLargeError carries maxBytes + name", () => {
+		const e = new ConversationBodyTooLargeError(4096);
+		expect(e).toBeInstanceOf(ConversationError);
+		expect(e.name).toBe("ConversationBodyTooLargeError");
+		expect(e.maxBytes).toBe(4096);
+	});
+
+	it("ConversationNotFoundError carries hash + name", () => {
+		const e = new ConversationNotFoundError("a".repeat(64));
+		expect(e).toBeInstanceOf(ConversationError);
+		expect(e.name).toBe("ConversationNotFoundError");
+		expect(e.conversationHash).toBe("a".repeat(64));
+	});
+
+	it("RecordedAudioUploadKeyError carries uploadKey + reason + name", () => {
+		const missing = new RecordedAudioUploadKeyError("audio_0", "missing");
+		expect(missing).toBeInstanceOf(ConversationError);
+		expect(missing.name).toBe("RecordedAudioUploadKeyError");
+		expect(missing.uploadKey).toBe("audio_0");
+		expect(missing.reason).toBe("missing");
+
+		const unreferenced = new RecordedAudioUploadKeyError("orphan", "unreferenced");
+		expect(unreferenced.reason).toBe("unreferenced");
 	});
 });

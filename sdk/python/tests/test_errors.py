@@ -12,7 +12,6 @@ from xray.errors import (
     LiveKitDependencyError,
     MixdownError,
     RuntimeBindError,
-    VersionFingerprintMismatchError,
     XrayError,
 )
 
@@ -26,7 +25,6 @@ from xray.errors import (
         (lambda: AudioTooLargeError(byte_size=99, max_bytes=10), "driver_aborted"),
         (lambda: MixdownError("oops"), "driver_aborted"),
         (lambda: LiveKitDependencyError("install [livekit]"), "driver_aborted"),
-        (lambda: VersionFingerprintMismatchError("conv-A", "v1"), "driver_aborted"),
     ],
 )
 def test_each_error_carries_its_failure_reason(
@@ -52,10 +50,3 @@ def test_audio_too_large_keeps_sizes():
     err = AudioTooLargeError(byte_size=10_000, max_bytes=1000)
     assert err.byte_size == 10_000
     assert err.max_bytes == 1000
-
-
-def test_version_fingerprint_mismatch_keeps_typed_attrs():
-    err = VersionFingerprintMismatchError("conv-A", "v1")
-    assert err.conversation_id == "conv-A"
-    assert err.version == "v1"
-    assert type(err).__name__ == "VersionFingerprintMismatchError"

@@ -25,18 +25,28 @@ import type {
 // - JSON payloads stay as JSON-encoded `text` columns; deserialization is the
 //   reader's job.
 
+// Conversations — dev-authored test definitions
+//
+// Primary key is `hash`: a 64-char hex SHA-256 over the canonical-JSON
+// encoding of the turns (including sha256 of per-turn RecordedAudio bytes).
+// The dev sets `name` as a free-form display label; renaming does NOT change
+// identity, so a re-POST with the same hash and a different name updates the
+// existing row's `name` (last-write-wins). `last_run_at` is denormalized from
+// `MAX(replays.started_at)` to power list ordering without a join.
 export const conversations = sqliteTable(
 	"conversations",
 	{
-		id: text("id").notNull(),
-		version: text("version").notNull(),
+		hash: text("hash").primaryKey(),
+		name: text("name").notNull(),
+		// JSON-encoded array of turn descriptors. Schema validated at the wire
+		// boundary; storage is opaque to the DB.
 		turnsJson: text("turns_json").notNull(),
-		title: text("title"),
 		createdAt: text("created_at").notNull(),
+		lastRunAt: text("last_run_at"),
 	},
 	(t) => [
-		primaryKey({ columns: [t.id, t.version], name: "conversations_pk" }),
-		index("idx_conversations_id_created_at").on(t.id, t.createdAt),
+		check("conversations_hash_ck", sql`length(${t.hash}) = 64`),
+		index("idx_conversations_last_run_at").on(t.lastRunAt),
 	],
 );
 
@@ -51,8 +61,9 @@ export const replays = sqliteTable(
 	"replays",
 	{
 		id: text("id").primaryKey(),
-		conversationId: text("conversation_id").notNull(),
-		conversationVersion: text("conversation_version").notNull(),
+		conversationHash: text("conversation_hash")
+			.notNull()
+			.references(() => conversations.hash, { onDelete: "restrict" }),
 		lifecycleState: text("lifecycle_state").$type<ReplayLifecycleState>().notNull(),
 		// Current analysis sub-step, surfaced over SSE. Null outside `analyzing`.
 		analysisStep: text("analysis_step").$type<AnalysisStep | null>(),
@@ -67,7 +78,7 @@ export const replays = sqliteTable(
 		jobId: text("job_id"),
 	},
 	(t) => [
-		index("idx_replays_conversation").on(t.conversationId, t.conversationVersion, t.startedAt),
+		index("idx_replays_conversation_hash").on(t.conversationHash, t.startedAt),
 		index("idx_replays_started_at").on(t.startedAt),
 		check(
 			"replays_lifecycle_state_ck",
