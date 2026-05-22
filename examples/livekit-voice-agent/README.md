@@ -1,17 +1,16 @@
-# xray + LiveKit voice agent — minimal example
+# xray + LiveKit voice agent
 
-Self-contained `docker compose` stack: **xray**, a **LiveKit** server, and
-a **minimal Gemini Live voice agent**. A pytest driver runs one Replay
-end-to-end to prove the wiring.
+Minimal `docker compose` stack — **xray**, a **LiveKit** server, and a
+**Gemini Live voice agent** — plus a pytest driver that runs one Replay
+end-to-end. Demonstrates the one-line `xray.attach(ctx)` integration.
 
 ```
 .
-├── compose.yaml           ← 4 services: livekit, xray, agent, driver(profile:test)
+├── compose.yaml           ← livekit, xray, agent, driver(profile:test)
 ├── .env.example           ← only GEMINI_API_KEY required
 ├── agent/main.py          ← the one xray.attach() call
 ├── driver/test_e2e.py     ← pytest; drives one Replay
-├── fixtures/user_turn_1.wav  ← 48kHz mono int16, ~2s
-└── snapshot/              ← committed DB + audio from one canonical run
+└── fixtures/user_turn_1.wav
 ```
 
 ## Quickstart
@@ -30,23 +29,6 @@ docker compose --profile test run --rm driver
 # 4. Open the inspector — http://localhost:8080
 ```
 
-## Expected log noise
-
-The agent container prints **2 `ERROR` entries** from
-`opentelemetry.sdk._shared_internal` during startup, complaining about
-connection refused on `127.0.0.1:1`. This is by design:
-
-- Langfuse v3 unconditionally installs its own OTLP exporter pointing
-  at `LANGFUSE_HOST` when given API keys.
-- The example sets fake Langfuse keys (so `@observe` emits spans into
-  xray's vocabulary) and points `LANGFUSE_HOST` at a non-routable
-  address so the cloud upload fails fast.
-- xray's own exporter is unaffected — those spans land at xray
-  normally; the test passes.
-
-In real use with real Langfuse keys + host, no errors appear and both
-Langfuse and xray receive the spans in parallel.
-
 ## Adapting to your own agent
 
 Two lines in your existing LiveKit Agents entrypoint:
@@ -60,52 +42,3 @@ async def entrypoint(ctx: JobContext) -> None:
 ```
 
 See `docs/integrate.md` for the deep-dive.
-
-## The fixture
-
-`fixtures/user_turn_1.wav` was generated via macOS `say` → `ffmpeg` so
-the example has no runtime OpenAI-key dependency. Bytes are committed
-(~220 KB).
-
-For your own conversations, point `RecordedAudio(path=...)` at any
-**48 kHz / mono / 16-bit** WAV:
-
-```bash
-ffmpeg -i input.wav -ar 48000 -ac 1 -sample_fmt s16 output.wav
-```
-
-or use `TtsAudio()` with `OPENAI_API_KEY` set in your driver process.
-
-## The snapshot
-
-`snapshot/` is a checked-in capture of one full example run — `xray.db`
-plus the per-replay audio under `audio/`. It replaces the previous
-synthetic `pnpm seed` script: the inspector now has authentic data to
-render without anyone needing to run the example.
-
-Total size: ~2.2 MB (104 KB DB + 2.1 MB audio: stereo mixdown +
-recorded user-turn WAV).
-
-To browse it, mount it into a fresh xray container:
-
-```bash
-docker run --rm -p 8080:8080 \
-  -v $(pwd)/snapshot:/data \
-  ghcr.io/xray-eval/xray
-```
-
-Regenerate after schema changes or example-agent changes that affect
-emitted spans:
-
-```bash
-docker compose down -v
-docker compose up --build -d
-docker compose --profile test run --rm driver
-docker compose exec xray bun -e \
-  'import { Database } from "bun:sqlite"; const db = new Database("/data/xray.db"); db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); db.close();'
-rm -rf snapshot
-mkdir snapshot
-docker cp example-xray:/data/xray.db snapshot/xray.db
-docker cp example-xray:/data/audio   snapshot/audio
-docker compose down -v
-```
