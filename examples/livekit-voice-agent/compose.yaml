@@ -1,51 +1,21 @@
-# Four-service compose stack for the LiveKit voice-agent example.
-#
-#   livekit  — LiveKit server with explicit dev keys (see livekit.yaml)
-#   xray     — built from the repo's root Dockerfile
-#   agent    — minimal LiveKit Agents worker using Gemini Live
-#   driver   — one-shot pytest container, only spins up under `--profile test`
-#
-# Build contexts are `../..` (repo root) so the agent + driver Dockerfiles
-# can COPY the in-tree `sdk/python/`. This means the example tests the
-# CURRENT working-tree code, not a published wheel — the whole point of
-# wiring an e2e test into CI.
-#
-# Host port bindings are loopback-only (`127.0.0.1:`) so running this
-# example on a shared network doesn't expose the inspector or LiveKit
-# signaling to other devices on the LAN.
-#
-# Local boot:
-#   export GEMINI_API_KEY=...                      # never commit
-#   docker compose up --build
-#
-# Run the e2e test:
-#   docker compose --profile test run --rm driver
-
 services:
   livekit:
-    # livekit/livekit-server:v1.7.2 — pinned by digest per
-    # `.claude/rules/supply-chain.md` §4.
+    # livekit/livekit-server:v1.7.2 — pinned per `.claude/rules/supply-chain.md` §4.
     image: livekit/livekit-server@sha256:27d72fa264baa4db4e635b3b6df12d185b4a95fee5f2ddce03e06d150d599e0e
     container_name: example-livekit
     command: --config /etc/livekit.yaml --bind 0.0.0.0
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
-    # LiveKit 1.7.2 calls out to public STUN servers (e.g. stun.l.google.com)
-    # at boot to populate srflx ICE candidates, regardless of `use_external_ip`
-    # or `stun_servers` in the YAML. Restricting DNS to Docker's embedded
-    # resolver (127.0.0.11) makes those external lookups fail; only compose
-    # service names (`livekit`, `xray`, `agent`) resolve. No srflx leak.
+    # LiveKit 1.7.2 calls out to public STUN at boot regardless of YAML config;
+    # restricting DNS to Docker's embedded resolver blocks the lookup. No srflx leak.
     dns:
       - 127.0.0.11
     dns_opt:
       - ndots:0
     ports:
-      # Loopback-only. Remapped from 7880/7881 to avoid colliding with a
-      # developer's existing LiveKit instance. Agent + driver reach
-      # LiveKit via the compose service name (ws://livekit:7880); the
-      # host mapping is only for ad-hoc inspection from this host.
-      - "127.0.0.1:7890:7880"   # signaling (ws)
-      - "127.0.0.1:7891:7881"   # ICE/TCP fallback
+      # Loopback-only; remapped from 7880/7881 to avoid colliding with a local LiveKit.
+      - "127.0.0.1:7890:7880"
+      - "127.0.0.1:7891:7881"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:7880/ || exit 1"]
       interval: 3s
@@ -88,25 +58,15 @@ services:
       LIVEKIT_URL: "ws://livekit:7880"
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "devsecret32charsminimumlengthxyz123"
-      # xray.attach reads this; the OTLP/JSON exporter ships here.
       XRAY_OTLP_ENDPOINT: "http://xray:8080"
-      # Picked up by livekit-plugins-google's RealtimeModel.
       GOOGLE_API_KEY: "${GEMINI_API_KEY:-}"
-      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
-      # Langfuse v3 refuses to initialize its `@observe` decorator without
-      # public + secret keys. Fake values let the client init so the spans
-      # emit through the shared OTel TracerProvider (which `xray.attach`
-      # installed an exporter on). LANGFUSE_HOST points at a non-routable
-      # IP so the langfuse cloud upload fails fast — we only want the
-      # local spans, not the network leg.
+      # Langfuse v3 refuses to init `@observe` without keys; fake values + non-routable
+      # host let spans emit locally while skipping the cloud upload.
       LANGFUSE_PUBLIC_KEY: "pk-lf-example-public-key"
       LANGFUSE_SECRET_KEY: "sk-lf-example-secret-key"
       LANGFUSE_HOST: "http://127.0.0.1:1"
 
   driver:
-    # `profiles: [test]` keeps `docker compose up` from launching the
-    # one-shot test container. Run explicitly:
-    #   docker compose --profile test run --rm driver
     profiles: [test]
     build:
       context: ../..

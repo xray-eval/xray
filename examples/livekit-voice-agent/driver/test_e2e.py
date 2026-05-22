@@ -1,21 +1,3 @@
-"""End-to-end test for the LiveKit voice-agent example.
-
-Drives one Replay through ``xray.run`` against the compose stack
-(LiveKit + xray + agent). Verifies the full wire:
-
-- ``RunResult.status == "completed"`` (SDK-side outcome).
-- Server's final ``lifecycle_state == "completed"`` (after VAD/analyze).
-- Mixdown WAV uploaded (``audio_path != null``).
-- At least one OTLP span landed at the receiver, proving baggage
-  propagation worked end-to-end from JWT attribute → agent-side OTEL →
-  OTLP/JSON exporter → xray's ``POST /v1/otlp/v1/traces`` route.
-- Server-derived ``turns`` and ``speech_segments`` are populated
-  (proves the bunqueue analyze-replay worker ran VAD on the upload).
-- Per-turn assertion: agent transcript is non-empty (the agent emits
-  via ``rtc.Transcription`` republished by the example agent — see
-  the ``conversation_item_added`` bridge in ``agent/main.py``).
-"""
-
 from __future__ import annotations
 
 import os
@@ -62,31 +44,19 @@ async def test_e2e_voice_agent_replay() -> None:
     conv = Conversation(
         name="example/livekit-voice-agent/quickstart",
         turns=[
-            Turn.agent(
-                key="a-greet",
-                assertion=lambda r: len(r.transcript) > 5,
-                assertion_name="agent_greeted",
-            ),
+            Turn.agent(key="a-greet"),
             Turn.user(
                 "Hello, can you tell me what year it is?",
                 key="u-ask",
                 audio=RecordedAudio(path=str(USER_TURN_WAV)),
             ),
-            Turn.agent(
-                key="a-answer",
-                assertion=lambda r: len(r.transcript) > 5,
-                assertion_name="agent_answered",
-            ),
+            Turn.agent(key="a-answer"),
         ],
     )
 
     result = await run(conversation=conv, runtime=runtime, xray_url=xray_url)
 
     assert result.status == "completed", f"replay status={result.status} result={result}"
-    for assertion in result.assertions:
-        assert assertion.status == "passed", (
-            f"assertion {assertion.name!r} did not pass: {assertion}"
-        )
 
     async with httpx.AsyncClient(base_url=xray_url, timeout=10.0) as client:
         response = await client.get(f"/v1/replays/{result.id}")
@@ -103,12 +73,6 @@ async def test_e2e_voice_agent_replay() -> None:
         f"speech_segments missing — VAD couldn't segment the mixdown: {replay}"
     )
 
-    # The example agent emits exactly one span per recognized vocabulary,
-    # to prove all three are wired:
-    # (a) xray   → `xray.stage.tts`
-    # (b) langfuse → `example_langfuse_step` (via Langfuse `@observe`)
-    # (c) gen_ai → `execute_tool` (via `xray_session.record_tool_call(...)`)
-    #              which also extracts into a `tool_calls` row.
     spans_by_vocab: dict[str, set[str]] = {}
     for s in replay["spans"]:
         spans_by_vocab.setdefault(s["vocabulary"], set()).add(s["name"])

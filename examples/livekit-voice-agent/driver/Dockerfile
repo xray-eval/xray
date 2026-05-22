@@ -1,10 +1,5 @@
 # syntax=docker/dockerfile:1.7
-#
-# One-shot test-runner image. Builds from the REPO ROOT (../..) so it
-# can COPY the in-tree xray Python SDK + the example's fixtures. Run
-# via `docker compose --profile test run --rm driver`.
-
-# python:3.12-slim-bookworm — pinned by digest per `.claude/rules/supply-chain.md` §4.
+# python:3.12-slim-bookworm — pinned per `.claude/rules/supply-chain.md` §4.
 FROM python@sha256:93ab4b7fa528b25124c97bcc755415e60eb671a86b4dbe0328df2fe2d1c1193d
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
