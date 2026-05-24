@@ -24,7 +24,7 @@ async function readSseUntilCompleted(
 			const { done, value } = await reader.read();
 			if (done) break;
 			buf += decoder.decode(value, { stream: true });
-			if (buf.includes("event: completed")) break;
+			if (buf.includes("event: evaluation_complete") || buf.includes("event: failed")) break;
 		}
 	} finally {
 		await reader.cancel().catch(() => undefined);
@@ -143,13 +143,24 @@ describe("GET /v1/replays/:id/events (SSE)", () => {
 
 		events.emit(replayId, { type: "progress", percent: 10, step: "vad" });
 		events.emit(replayId, { type: "state", lifecycle_state: "completed", analysis_step: null });
-		events.emit(replayId, { type: "completed", turns_written: 1, segments_written: 2 });
+		events.emit(replayId, {
+			type: "evaluation_complete",
+			result: {
+				replay_id: replayId,
+				conversation_hash: "a".repeat(64),
+				passed: true,
+				assertions: [],
+				judges: [],
+				metrics: { turns: [] },
+			},
+		});
 
 		const text = await readSseUntilCompleted(body);
 		expect(text).toContain('"lifecycle_state":"pending"');
 		expect(text).toContain('"percent":10');
 		expect(text).toContain('"lifecycle_state":"completed"');
-		expect(text).toContain('"turns_written":1');
+		expect(text).toContain('"evaluation_complete"');
+		expect(text).toContain('"passed":true');
 	});
 
 	it("returns 404 for unknown id", async () => {
@@ -167,7 +178,17 @@ describe("GET /v1/replays/:id/events (SSE)", () => {
 		const body = res.body;
 		if (body === null) throw new Error("missing SSE body");
 
-		events.emit(replayId, { type: "completed", turns_written: 0, segments_written: 0 });
+		events.emit(replayId, {
+			type: "evaluation_complete",
+			result: {
+				replay_id: replayId,
+				conversation_hash: "a".repeat(64),
+				passed: true,
+				assertions: [],
+				judges: [],
+				metrics: { turns: [] },
+			},
+		});
 		await readSseUntilCompleted(body);
 
 		await new Promise((r) => setTimeout(r, 10));
@@ -192,7 +213,8 @@ describe("POST /v1/replays/:id/analyze", () => {
 		const body = await readJson(res, v.object({ job_id: v.string(), lifecycle_state: v.string() }));
 		expect(body.lifecycle_state).toBe("analyzing");
 		expect(jobRunner.enqueued).toHaveLength(1);
-		expect(jobRunner.enqueued[0]?.replayId).toBe(replayId);
+		expect(jobRunner.enqueued[0]?.name).toBe("analyze-replay");
+		expect(jobRunner.enqueued[0]?.payload.replayId).toBe(replayId);
 	});
 
 	it("returns 409 when the replay is not in recording_uploaded state", async () => {

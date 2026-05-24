@@ -1,9 +1,110 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e278793b-256a-42a2-b2fb-be3685c7cce3",
+  "id": "9a92677b-ff6f-434c-ad79-28b52ae06dde",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
+    "assertion_results": {
+      "name": "assertion_results",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "replay_id": {
+          "name": "replay_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "turn_idx": {
+          "name": "turn_idx",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "assertion_idx": {
+          "name": "assertion_idx",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "params_json": {
+          "name": "params_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "evaluated_at": {
+          "name": "evaluated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_assertion_results_replay_turn": {
+          "name": "idx_assertion_results_replay_turn",
+          "columns": [
+            "replay_id",
+            "turn_idx"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "assertion_results_replay_id_replays_id_fk": {
+          "name": "assertion_results_replay_id_replays_id_fk",
+          "tableFrom": "assertion_results",
+          "tableTo": "replays",
+          "columnsFrom": [
+            "replay_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "assertion_results_status_ck": {
+          "name": "assertion_results_status_ck",
+          "value": "\"assertion_results\".\"status\" IN ('passed', 'failed', 'errored')"
+        }
+      }
+    },
     "conversations": {
       "name": "conversations",
       "columns": {
@@ -59,6 +160,124 @@
         "conversations_hash_ck": {
           "name": "conversations_hash_ck",
           "value": "length(\"conversations\".\"hash\") = 64"
+        }
+      }
+    },
+    "judge_results": {
+      "name": "judge_results",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "replay_id": {
+          "name": "replay_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "judge_idx": {
+          "name": "judge_idx",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "params_json": {
+          "name": "params_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "score": {
+          "name": "score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "evaluated_at": {
+          "name": "evaluated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_judge_results_replay": {
+          "name": "idx_judge_results_replay",
+          "columns": [
+            "replay_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "judge_results_replay_id_replays_id_fk": {
+          "name": "judge_results_replay_id_replays_id_fk",
+          "tableFrom": "judge_results",
+          "tableTo": "replays",
+          "columnsFrom": [
+            "replay_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "judge_results_status_ck": {
+          "name": "judge_results_status_ck",
+          "value": "\"judge_results\".\"status\" IN ('passed', 'failed', 'errored')"
+        },
+        "judge_results_score_ck": {
+          "name": "judge_results_score_ck",
+          "value": "\"judge_results\".\"score\" IS NULL OR (\"judge_results\".\"score\" >= 0 AND \"judge_results\".\"score\" <= 100)"
         }
       }
     },
@@ -176,6 +395,153 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "replay_evaluations": {
+      "name": "replay_evaluations",
+      "columns": {
+        "replay_id": {
+          "name": "replay_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "passed": {
+          "name": "passed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "assertions_total": {
+          "name": "assertions_total",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "assertions_passed": {
+          "name": "assertions_passed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "judges_total": {
+          "name": "judges_total",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "judges_passed": {
+          "name": "judges_passed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "evaluated_at": {
+          "name": "evaluated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "replay_evaluations_replay_id_replays_id_fk": {
+          "name": "replay_evaluations_replay_id_replays_id_fk",
+          "tableFrom": "replay_evaluations",
+          "tableTo": "replays",
+          "columnsFrom": [
+            "replay_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "replay_metrics": {
+      "name": "replay_metrics",
+      "columns": {
+        "replay_id": {
+          "name": "replay_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "turn_idx": {
+          "name": "turn_idx",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "agent_response_ms": {
+          "name": "agent_response_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "ttft_ms": {
+          "name": "ttft_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "interrupted": {
+          "name": "interrupted",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "interruption_start_ms": {
+          "name": "interruption_start_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "replay_metrics_replay_id_replays_id_fk": {
+          "name": "replay_metrics_replay_id_replays_id_fk",
+          "tableFrom": "replay_metrics",
+          "tableTo": "replays",
+          "columnsFrom": [
+            "replay_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "replay_metrics_pk": {
+          "columns": [
+            "replay_id",
+            "turn_idx"
+          ],
+          "name": "replay_metrics_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -386,6 +752,14 @@
         "replays_lifecycle_state_ck": {
           "name": "replays_lifecycle_state_ck",
           "value": "\"replays\".\"lifecycle_state\" IN ('pending', 'running', 'recording_uploaded', 'analyzing', 'completed', 'failed')"
+        },
+        "replays_analysis_step_ck": {
+          "name": "replays_analysis_step_ck",
+          "value": "\"replays\".\"analysis_step\" IS NULL OR \"replays\".\"analysis_step\" IN ('vad', 'transcribe', 'metrics', 'evaluate')"
+        },
+        "replays_failure_reason_ck": {
+          "name": "replays_failure_reason_ck",
+          "value": "\"replays\".\"failure_reason\" IS NULL OR \"replays\".\"failure_reason\" IN ('stalled', 'timeout', 'explicit_fail', 'max_attempts_exceeded', 'worker_lost', 'upload_failed', 'driver_aborted', 'agent_not_joined', 'audio_missing', 'transcription_failed', 'metrics_failed', 'evaluation_failed')"
         }
       }
     },
@@ -685,6 +1059,94 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "turn_transcripts": {
+      "name": "turn_transcripts",
+      "columns": {
+        "replay_id": {
+          "name": "replay_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "turn_idx": {
+          "name": "turn_idx",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "words_json": {
+          "name": "words_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "turn_transcripts_replay_id_replays_id_fk": {
+          "name": "turn_transcripts_replay_id_replays_id_fk",
+          "tableFrom": "turn_transcripts",
+          "tableTo": "replays",
+          "columnsFrom": [
+            "replay_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "turn_transcripts_pk": {
+          "columns": [
+            "replay_id",
+            "turn_idx"
+          ],
+          "name": "turn_transcripts_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     }

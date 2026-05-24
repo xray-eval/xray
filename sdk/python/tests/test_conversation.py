@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from xray import Conversation, Turn
+from xray import Assertion, Conversation, Judge, Turn
 from xray.conversation import RecordedAudio, TtsAudio
 
 
@@ -85,3 +85,106 @@ def test_recorded_audio_uploads_skips_turns_without_recorded_audio():
         ],
     )
     assert c.recorded_audio_uploads() == []
+
+
+# ─── Assertion / Judge wire encoding ──────────────────────────────────
+
+
+def test_assertion_contains_wire_includes_kind_text_and_case_insensitive_default():
+    a = Assertion.contains("hello")
+    assert a.to_wire() == {"kind": "contains", "text": "hello", "case_insensitive": True}
+
+
+def test_assertion_contains_respects_case_insensitive_override():
+    a = Assertion.contains("hello", case_insensitive=False)
+    assert a.to_wire()["case_insensitive"] is False
+
+
+def test_assertion_regex_wire_carries_pattern_and_flags():
+    a = Assertion.regex(r"\d+", flags="i")
+    assert a.to_wire() == {"kind": "regex", "pattern": r"\d+", "flags": "i"}
+
+
+def test_assertion_tool_called_minimal_wire():
+    a = Assertion.tool_called("reserve_table")
+    assert a.to_wire() == {"kind": "tool_called", "name": "reserve_table"}
+
+
+def test_assertion_tool_args_match_carries_args():
+    a = Assertion.tool_args_match("reserve_table", {"party_size": 2})
+    assert a.to_wire() == {
+        "kind": "tool_args_match",
+        "name": "reserve_table",
+        "args": {"party_size": 2},
+    }
+
+
+def test_assertion_max_latency_ms_carries_integer():
+    a = Assertion.max_latency_ms(2_000)
+    assert a.to_wire() == {"kind": "max_latency_ms", "max_ms": 2_000}
+
+
+def test_turn_assertions_round_trip_into_wire_payload():
+    c = Conversation(
+        name="x",
+        turns=[
+            Turn.user("book a table", key="u0"),
+            Turn.agent(
+                key="a0",
+                assertions=(
+                    Assertion.contains("confirmed"),
+                    Assertion.max_latency_ms(2_000),
+                ),
+            ),
+        ],
+    )
+    payload = c.to_conversation_spec_payload()
+    agent_turn = payload["turns"][1]
+    assert agent_turn.get("assertions") == [
+        {"kind": "contains", "text": "confirmed", "case_insensitive": True},
+        {"kind": "max_latency_ms", "max_ms": 2_000},
+    ]
+
+
+def test_turn_without_assertions_omits_the_key_from_wire_payload():
+    c = Conversation(name="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+    payload = c.to_conversation_spec_payload()
+    assert "assertions" not in payload["turns"][0]
+    assert "assertions" not in payload["turns"][1]
+
+
+def test_judge_text_match_wire_includes_reference_and_default_pass_score():
+    j = Judge.text_match("agent confirms booking")
+    assert j.to_wire() == {
+        "kind": "text_match",
+        "reference": "agent confirms booking",
+        "pass_score": 70,
+    }
+
+
+def test_judge_text_match_includes_rubric_when_set():
+    j = Judge.text_match("ref", rubric="Penalize hedging.", pass_score=85)
+    assert j.to_wire() == {
+        "kind": "text_match",
+        "reference": "ref",
+        "pass_score": 85,
+        "rubric": "Penalize hedging.",
+    }
+
+
+def test_conversation_judges_round_trip_into_wire_payload():
+    c = Conversation(
+        name="x",
+        turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")],
+        judges=(Judge.text_match("agent confirms", pass_score=80),),
+    )
+    payload = c.to_conversation_spec_payload()
+    assert payload.get("judges") == [
+        {"kind": "text_match", "reference": "agent confirms", "pass_score": 80}
+    ]
+
+
+def test_conversation_without_judges_omits_the_key_from_wire_payload():
+    c = Conversation(name="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+    payload = c.to_conversation_spec_payload()
+    assert "judges" not in payload

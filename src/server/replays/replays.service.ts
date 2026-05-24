@@ -1,10 +1,14 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import { ConversationNotFoundError } from "@/server/conversations/conversations.errors.ts";
 import { getConversationByHash } from "@/server/conversations/conversations.service.ts";
 import type { JobRunner } from "@/server/jobs/jobs.bunqueue.ts";
 import {
+	assertionResults,
+	judgeResults,
 	modelUsage,
+	replayEvaluations,
+	replayMetrics,
 	replays,
 	replayTurns,
 	spans,
@@ -34,6 +38,7 @@ import type {
 	CreateReplayRequest,
 	ModelUsageResponse,
 	ReplayDetailResponse,
+	ReplayResult,
 	ReplaySummaryResponse,
 	ReplayTurnResponse,
 	SpanResponse,
@@ -280,6 +285,88 @@ export interface MarkReplayFailedOptions {
 }
 
 /**
+ * Hydrate the `ReplayResult` payload for a completed replay. Returns
+ * `undefined` if the replay doesn't exist or hasn't reached the
+ * `replay_evaluations` write — late SSE subscribers and the GET
+ * /v1/replays/:id/result handler share this. Two queries plus row-side
+ * joins; the table sizes per-replay are tiny.
+ */
+export function getReplayResult(store: Store, id: string): ReplayResult | undefined {
+	const replay = findReplay(store, id);
+	if (replay === undefined) return undefined;
+	const evaluation = store.db
+		.select()
+		.from(replayEvaluations)
+		.where(eq(replayEvaluations.replayId, id))
+		.get();
+	if (evaluation === undefined) return undefined;
+	const assertionRows = store.db
+		.select()
+		.from(assertionResults)
+		.where(eq(assertionResults.replayId, id))
+		.orderBy(asc(assertionResults.turnIdx), asc(assertionResults.assertionIdx))
+		.all();
+	const judgeRows = store.db
+		.select()
+		.from(judgeResults)
+		.where(eq(judgeResults.replayId, id))
+		.orderBy(asc(judgeResults.judgeIdx))
+		.all();
+	const turnRows = store.db
+		.select()
+		.from(replayTurns)
+		.where(eq(replayTurns.replayId, id))
+		.orderBy(asc(replayTurns.idx))
+		.all();
+	const metricByTurnIdx = new Map(
+		store.db
+			.select()
+			.from(replayMetrics)
+			.where(eq(replayMetrics.replayId, id))
+			.all()
+			.map((m) => [m.turnIdx, m]),
+	);
+	return {
+		replay_id: id,
+		conversation_hash: replay.conversationHash,
+		passed: evaluation.passed,
+		assertions: assertionRows.map((r) => ({
+			turn_idx: r.turnIdx,
+			assertion_idx: r.assertionIdx,
+			kind: r.kind,
+			status: assertionStatusFor(r.status),
+			message: r.message,
+		})),
+		judges: judgeRows.map((r) => ({
+			judge_idx: r.judgeIdx,
+			kind: r.kind,
+			status: assertionStatusFor(r.status),
+			score: r.score,
+			reason: r.reason,
+		})),
+		metrics: {
+			turns: turnRows.map((turn) => {
+				const m = metricByTurnIdx.get(turn.idx);
+				return {
+					turn_idx: turn.idx,
+					role: turn.role,
+					agent_response_ms: m?.agentResponseMs ?? null,
+					ttft_ms: m?.ttftMs ?? null,
+					interrupted: m?.interrupted ?? false,
+				};
+			}),
+		},
+	};
+}
+
+function assertionStatusFor(raw: string): "passed" | "failed" | "errored" {
+	if (raw === "passed" || raw === "failed" || raw === "errored") return raw;
+	// CHECK constraint guards the column; this branch only fires on a
+	// corrupt manual UPDATE.
+	throw new Error(`unexpected evaluation status "${raw}"`);
+}
+
+/**
  * Stamp a replay's row with `lifecycle_state='failed'` + reason + cleared
  * `analysis_step` + `finished_at`, then emit the matching SSE events.
  *
@@ -348,7 +435,7 @@ export async function enqueueAnalysis(
 
 	let jobId: string;
 	try {
-		jobId = await jobRunner.enqueue({ replayId: id });
+		jobId = await jobRunner.enqueue("analyze-replay", { replayId: id });
 	} catch (cause) {
 		store.db
 			.update(replays)

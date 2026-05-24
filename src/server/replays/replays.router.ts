@@ -34,6 +34,7 @@ import {
 	enqueueAnalysis,
 	findReplay,
 	getReplay,
+	getReplayResult,
 	updateReplay,
 } from "./replays.service.ts";
 import {
@@ -45,6 +46,7 @@ import {
 	CreateReplayRequestSchema,
 	ReplayDetailResponseSchema,
 	ReplayIdSchema,
+	ReplayResultSchema,
 	UpdateReplayRequestSchema,
 } from "./replays.types.ts";
 
@@ -287,12 +289,78 @@ export function createReplaysRouter(
 	);
 
 	router.get(
+		"/replays/:id/result",
+		describeRoute({
+			tags: ["Replays"],
+			summary: "Get the evaluation result for a completed replay",
+			description:
+				"Returns the `ReplayResult` payload (passed/failed verdict + per-assertion outcomes + per-judge outcomes + per-turn metrics). Same shape as the `evaluation_complete` SSE event — late SSE subscribers fall back to this. 409 when the replay hasn't reached evaluation yet.",
+			parameters: [
+				{
+					in: "path",
+					name: "id",
+					required: true,
+					schema: openApiSchemaFromValibot(ReplayIdSchema),
+				},
+			],
+			responses: {
+				"200": {
+					description: "Evaluation result payload.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ReplayResultSchema) },
+					},
+				},
+				"400": {
+					description: "Id failed validation.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description: "Replay not found.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
+					},
+				},
+				"409": {
+					description: "Replay hasn't completed evaluation yet.",
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								properties: {
+									error: { type: "string", enum: ["replay_not_evaluated"] },
+									lifecycle_state: { type: "string" },
+								},
+								required: ["error", "lifecycle_state"],
+							},
+						},
+					},
+				},
+			},
+		}),
+		(c) => {
+			const id = parseReplayId(c.req.param("id"));
+			const replay = findReplay(store, id);
+			if (replay === undefined) throw new ReplayNotFoundError(id);
+			const result = getReplayResult(store, id);
+			if (result === undefined) {
+				return c.json(
+					{ error: "replay_not_evaluated", lifecycle_state: replay.lifecycleState },
+					409,
+				);
+			}
+			return c.json(result);
+		},
+	);
+
+	router.get(
 		"/replays/:id/events",
 		describeRoute({
 			tags: ["Replays"],
 			summary: "Server-sent events for analysis progress",
 			description:
-				"Streams `state`, `progress`, `completed`, and `failed` SSE events for one replay. The handler sends an initial `state` event with the current lifecycle, then forwards every transition until the replay reaches a terminal state. A `: heartbeat\\n\\n` line lands every 15s to keep proxies from idling out the connection.",
+				"Streams `state`, `progress`, `evaluation_complete`, and `failed` SSE events for one replay. The handler sends an initial `state` event with the current lifecycle, then forwards every transition until the replay reaches a terminal state. The `evaluation_complete` event carries the full `ReplayResult` payload — SDKs read it and return immediately, no follow-up GET needed. A `: heartbeat\\n\\n` line lands every 15s to keep proxies from idling out the connection.",
 			parameters: [
 				{
 					in: "path",
@@ -337,7 +405,7 @@ export function createReplaysRouter(
 				const done = Promise.withResolvers<void>();
 				const unsubscribe = events.subscribe(id, (event) => {
 					void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).then(() => {
-						if (event.type === "completed" || event.type === "failed") {
+						if (event.type === "evaluation_complete" || event.type === "failed") {
 							done.resolve();
 						}
 					});

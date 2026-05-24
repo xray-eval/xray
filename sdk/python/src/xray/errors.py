@@ -14,14 +14,18 @@ from __future__ import annotations
 
 from typing import ClassVar, Final, Literal
 
-# Subset of the server's REPLAY_FAILURE_REASONS used by the SDK. Three
-# distinct failure classes the driver can surface:
+# Subset of the server's REPLAY_FAILURE_REASONS used by the SDK. Six
+# distinct failure classes the driver / orchestrator can surface:
 #   * `driver_aborted` — generic SDK-side failure (runtime binding errors,
 #     mixdown errors, missing LiveKit extra, version mismatch, unmapped
 #     exception)
 #   * `agent_not_joined` — LiveKit agent participant never joined in time
 #   * `audio_missing` — driver couldn't materialize a turn's audio bytes
 #     (recorded file missing, TTS without OPENAI_API_KEY)
+#   * `transcription_failed` / `metrics_failed` / `evaluation_failed` —
+#     the server's analyze-chain stage failed. The SDK never writes these;
+#     it reads them from the server's `failed` SSE event and surfaces them
+#     via :class:`ReplayEvaluationError`.
 #
 # Bunqueue DLQ reasons (`stalled`/`timeout`/`worker_lost`/...) and
 # `upload_failed` are server-internal and never written by the SDK.
@@ -29,12 +33,22 @@ FailureReason = Literal[
     "driver_aborted",
     "agent_not_joined",
     "audio_missing",
+    "transcription_failed",
+    "metrics_failed",
+    "evaluation_failed",
 ]
 
 # Runtime-side mirror of the picklist for membership checks. Frozen so a
 # downstream mutation can't poison the orchestrator's classifier.
 FAILURE_REASONS: Final[frozenset[FailureReason]] = frozenset(
-    {"driver_aborted", "agent_not_joined", "audio_missing"}
+    {
+        "driver_aborted",
+        "agent_not_joined",
+        "audio_missing",
+        "transcription_failed",
+        "metrics_failed",
+        "evaluation_failed",
+    }
 )
 
 
@@ -114,6 +128,31 @@ class LiveKitDependencyError(XrayError):
     failure_reason: ClassVar[FailureReason] = "driver_aborted"
 
 
+class ReplayEvaluationError(XrayError):
+    """The server failed the analyze chain before producing a verdict.
+
+    Carries the stage-specific ``failure_reason`` so the dev can decide
+    whether the test should be retried (transient transcription provider
+    error) or investigated (consistent evaluation crash). Distinct from
+    "the test ran and assertions failed" — that case returns a
+    :class:`xray.ReplayResult` with ``passed=False``, no exception.
+    """
+
+    failure_reason: ClassVar[FailureReason] = "evaluation_failed"
+
+    replay_id: str
+    # Per-instance override of the class-level default. Mirrors the
+    # `failure_reason` the server stamped on the replay row.
+    instance_failure_reason: FailureReason
+
+    def __init__(self, replay_id: str, failure_reason: FailureReason) -> None:
+        super().__init__(
+            f"server failed replay {replay_id!r} during evaluation chain: {failure_reason}"
+        )
+        self.replay_id = replay_id
+        self.instance_failure_reason = failure_reason
+
+
 class XrayServerError(XrayError):
     """The xray server returned an unexpected HTTP error.
 
@@ -141,6 +180,7 @@ __all__ = [
     "FailureReason",
     "LiveKitDependencyError",
     "MixdownError",
+    "ReplayEvaluationError",
     "RuntimeBindError",
     "XrayError",
     "XrayServerError",

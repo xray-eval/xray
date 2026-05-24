@@ -126,6 +126,16 @@ export function ingestOtlpTraces(
 	};
 }
 
+/**
+ * Persist extracted tool_calls / model_usage rows with `turn_idx = null`.
+ * The analyze-replay job backfills `turn_idx` from `replay_turns` once VAD
+ * has produced authoritative turn boundaries — see spec 0001 §8.
+ *
+ * The receiver no longer trusts driver-emitted `xray.turn.idx`: spans can
+ * arrive before VAD has run (or with stale baggage from a prior turn).
+ * Timestamp-based attribution against `replay_turns.voice_start_ms..voice_end_ms`
+ * is the single source of truth.
+ */
 function persistExtracted(
 	tx: StoreDb,
 	replayId: string,
@@ -137,7 +147,7 @@ function persistExtracted(
 			.values(
 				extraction.toolCalls.map((tc) => ({
 					replayId,
-					turnIdx: turnIdxFromAttributes(span.attributes),
+					turnIdx: null,
 					spanId: span.spanId,
 					name: tc.name,
 					argsJson: tc.argsJson,
@@ -154,7 +164,7 @@ function persistExtracted(
 			.values(
 				extraction.modelUsage.map((mu) => ({
 					replayId,
-					turnIdx: turnIdxFromAttributes(span.attributes),
+					turnIdx: null,
 					spanId: span.spanId,
 					provider: mu.provider,
 					model: mu.model,
@@ -185,13 +195,6 @@ function resourceReplayId(resource: FlatAttributes, spanAttrs: FlatAttributes): 
 	const fromSpan = asNonEmptyString(spanAttrs[XRAY_REPLAY_ID_KEY]);
 	if (fromSpan !== null) return fromSpan;
 	return asNonEmptyString(resource[XRAY_REPLAY_ID_KEY]);
-}
-
-function turnIdxFromAttributes(attrs: FlatAttributes): number | null {
-	const v = attrs["xray.turn.idx"];
-	if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
-	if (typeof v === "string" && /^[-+]?\d+$/.test(v)) return Number(v);
-	return null;
 }
 
 interface ProjectedRequest {

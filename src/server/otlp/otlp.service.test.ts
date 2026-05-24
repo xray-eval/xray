@@ -26,7 +26,7 @@ describe("ingestOtlpTraces — filter posture", () => {
 		const { store } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId: null,
-			spans: [{ name: "xray.assertion" }],
+			spans: [{ name: "xray.turn" }],
 		});
 		const { result } = ingestOtlpTraces(store, req);
 		expect(result.persistedSpans).toBe(0);
@@ -39,7 +39,7 @@ describe("ingestOtlpTraces — filter posture", () => {
 		const { store } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId: "00000000-0000-0000-0000-000000000099",
-			spans: [{ name: "xray.assertion" }],
+			spans: [{ name: "xray.turn" }],
 		});
 		const { result } = ingestOtlpTraces(store, req);
 		expect(result.persistedSpans).toBe(0);
@@ -61,7 +61,24 @@ describe("ingestOtlpTraces — filter posture", () => {
 });
 
 describe("ingestOtlpTraces — xray vocabulary (raw spans only)", () => {
-	it("persists xray.* spans as raw spans only (no structured extraction in v0.2)", async () => {
+	it("persists xray.turn / xray.stage.* as raw spans (no structured extraction)", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = makeOtlpRequest({
+			replayId,
+			spans: [
+				{ name: "xray.turn", attributes: { "xray.turn.idx": 0, "xray.turn.role": "agent" } },
+				{ name: "xray.stage.stt" },
+				{ name: "xray.stage.tts" },
+			],
+		});
+		const { result } = ingestOtlpTraces(store, req);
+		expect(result.persistedSpans).toBe(3);
+		const rows = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
+		expect(rows).toHaveLength(3);
+		for (const r of rows) expect(r.vocabulary).toBe("xray");
+	});
+
+	it("drops xray.assertion and xray.judge silently — they no longer carry server-meaningful data", async () => {
 		const { store, replayId } = await setupReplay();
 		const req = makeOtlpRequest({
 			replayId,
@@ -69,22 +86,18 @@ describe("ingestOtlpTraces — xray vocabulary (raw spans only)", () => {
 				{
 					name: "xray.assertion",
 					attributes: {
-						"xray.turn.idx": 0,
 						"xray.assertion.name": "first_turn_responds",
 						"xray.assertion.status": "passed",
 					},
 				},
 				{ name: "xray.judge", attributes: { "xray.judge.status": "failed" } },
-				{ name: "xray.turn", attributes: { "xray.turn.idx": 0, "xray.turn.role": "agent" } },
-				{ name: "xray.stage.stt" },
-				{ name: "xray.stage.tts" },
 			],
 		});
 		const { result } = ingestOtlpTraces(store, req);
-		expect(result.persistedSpans).toBe(5);
-		const rows = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
-		expect(rows).toHaveLength(5);
-		for (const r of rows) expect(r.vocabulary).toBe("xray");
+		expect(result.persistedSpans).toBe(0);
+		expect(result.rejectedSpans).toBe(2);
+		expect(store.db.select().from(spans).where(eq(spans.replayId, replayId)).all()).toEqual([]);
+		store.close();
 	});
 });
 
@@ -174,7 +187,7 @@ describe("ingestOtlpTraces — limits", () => {
 	it("throws TooManySpansPerRequestError above the per-request cap", async () => {
 		const { store, replayId } = await setupReplay();
 		const tooMany = Array.from({ length: MAX_SPANS_PER_REQUEST + 1 }, () => ({
-			name: "xray.assertion",
+			name: "xray.turn",
 		}));
 		const req = makeOtlpRequest({ replayId, spans: tooMany });
 		expect(() => ingestOtlpTraces(store, req)).toThrow(TooManySpansPerRequestError);
@@ -198,7 +211,7 @@ describe("ingestOtlpTraces — limits", () => {
 				replayId,
 				traceId: `t${i}`,
 				spanId: `seed-s${i}`,
-				name: "xray.assertion",
+				name: "xray.turn",
 				vocabulary: "xray",
 				startedAt: "2026-05-18T12:00:00.000Z",
 				endedAt: "2026-05-18T12:00:00.001Z",
@@ -215,12 +228,8 @@ describe("ingestOtlpTraces — limits", () => {
 			replayId,
 			spans: [
 				{
-					name: "xray.assertion",
-					attributes: {
-						"xray.turn.idx": 0,
-						"xray.assertion.name": "n",
-						"xray.assertion.status": "passed",
-					},
+					name: "xray.turn",
+					attributes: { "xray.turn.idx": 0, "xray.turn.role": "agent" },
 				},
 			],
 		});

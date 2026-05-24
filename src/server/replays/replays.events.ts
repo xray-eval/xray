@@ -1,3 +1,4 @@
+import type { ReplayResult } from "@/server/replays/replays.types.ts";
 import type { AnalysisStep, ReplayLifecycleState } from "@/server/store/types.ts";
 
 export interface ReplayStateEvent {
@@ -12,10 +13,15 @@ export interface ReplayProgressEvent {
 	readonly step: string | null;
 }
 
-export interface ReplayCompletedEvent {
-	readonly type: "completed";
-	readonly turns_written: number;
-	readonly segments_written: number;
+/**
+ * Emitted exactly once per replay, by the `evaluate-replay` job after the
+ * full chain commits. Carries the final pass/fail verdict plus every
+ * assertion/judge/metric the SDK needs to render `ReplayResult` without
+ * a follow-up GET. Subsumes the legacy `completed` event.
+ */
+export interface ReplayEvaluationCompleteEvent {
+	readonly type: "evaluation_complete";
+	readonly result: ReplayResult;
 }
 
 export interface ReplayFailedEvent {
@@ -26,7 +32,7 @@ export interface ReplayFailedEvent {
 export type ReplayEvent =
 	| ReplayStateEvent
 	| ReplayProgressEvent
-	| ReplayCompletedEvent
+	| ReplayEvaluationCompleteEvent
 	| ReplayFailedEvent;
 
 type Listener = (event: ReplayEvent) => void;

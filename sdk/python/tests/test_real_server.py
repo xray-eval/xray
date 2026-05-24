@@ -122,9 +122,10 @@ async def test_run_against_real_server_returns_conversation_hash(xray_server: st
     result = await run(conversation=conv, runtime=runtime, xray_url=xray_server)
 
     assert len(result.conversation_hash) == 64
-    assert result.name == "integration test"
-    assert result.status == "completed"
-    # Bind kwargs got propagated by the orchestrator.
+    # Spec 0001 reshape: ReplayResult no longer carries name/status — the
+    # SDK returns the server's evaluation verdict. `passed` is always true
+    # for a no-assertions, no-judges conversation (vacuously).
+    assert result.passed is True
     assert runtime.bound is not None
     assert runtime.bound["conversation_hash"] == result.conversation_hash
 

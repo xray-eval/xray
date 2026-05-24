@@ -2,6 +2,7 @@ import { count, eq } from "drizzle-orm";
 import { match, P } from "ts-pattern";
 import * as v from "valibot";
 
+import type { Judge } from "@/server/judges/judges.types.ts";
 import { conversations, replays } from "@/server/store/schema.ts";
 import type { Store, StoreDbOrTx } from "@/server/store/store.ts";
 import type { ConversationRow } from "@/server/store/types.ts";
@@ -13,7 +14,7 @@ import type {
 	ConversationTurn,
 	ConversationTurnRequest,
 } from "./conversations.types.ts";
-import { TurnsArraySchema } from "./conversations.types.ts";
+import { StoredConversationSpecSchema } from "./conversations.types.ts";
 
 /** SHA-256 hex (64-char lowercase) of an arbitrary byte buffer. */
 async function sha256Hex(bytes: BufferSource): Promise<string> {
@@ -91,14 +92,23 @@ export async function materializeRequestTurns(
 }
 
 /**
- * Canonical-JSON encode + SHA-256 hex a canonical turn array. The conversation
- * hash is this value; the bytes stored in `turns_json` are this canonical JSON.
- * Server-only — the SDK never hashes anything.
+ * Canonical-JSON encode + SHA-256 hex the full conversation spec (turns +
+ * conversation-level judges). The conversation hash is this value; the
+ * bytes stored in `conversations.turns_json` are this canonical JSON. The
+ * column name is legacy — it carries the full spec object now, not just
+ * the turns array. Server-only — the SDK never hashes anything.
+ *
+ * Why judges are in the hash: changing the assertions or judges on a
+ * conversation changes the *test*, even if the script is identical. Two
+ * conversations with the same turns but different judges are two
+ * different tests, so they need two different hashes.
  */
-export async function canonicalizeAndHashTurns(
+export async function canonicalizeAndHashSpec(
 	turns: readonly ConversationTurn[],
+	judges: readonly Judge[],
 ): Promise<{ json: string; hash: string }> {
-	const json = canonicalStringify(turns);
+	const spec = { turns, judges } as const;
+	const json = canonicalStringify(spec);
 	const hash = await sha256Hex(new TextEncoder().encode(json));
 	return { json, hash };
 }
@@ -148,7 +158,10 @@ export function ensureConversation(
 	return row;
 }
 
-function parseStoredTurns(raw: string, hash: string): ConversationTurn[] {
+function parseStoredSpec(
+	raw: string,
+	hash: string,
+): { turns: ConversationTurn[]; judges: Judge[] } {
 	// Stored rows were validated on the way in; a corrupt row (botched
 	// migration, fsck'd file) shouldn't 500 the entire conversation handler.
 	let parsedJson: unknown;
@@ -156,33 +169,46 @@ function parseStoredTurns(raw: string, hash: string): ConversationTurn[] {
 		parsedJson = JSON.parse(raw);
 	} catch (err) {
 		console.warn(
-			"[conversations] turns_json JSON.parse failed for hash=%s; returning empty turns. err=%s",
+			"[conversations] turns_json JSON.parse failed for hash=%s; returning empty spec. err=%s",
 			hash,
 			err instanceof Error ? err.message : String(err),
 		);
-		return [];
+		return { turns: [], judges: [] };
 	}
-	const result = v.safeParse(TurnsArraySchema, parsedJson);
+	const result = v.safeParse(StoredConversationSpecSchema, parsedJson);
 	if (!result.success) {
 		console.warn(
-			"[conversations] turns_json schema validation failed for hash=%s; returning empty turns. issues=%s",
+			"[conversations] turns_json schema validation failed for hash=%s; returning empty spec. issues=%s",
 			hash,
 			JSON.stringify(result.issues.map((i) => ({ path: i.path, message: i.message }))),
 		);
-		return [];
+		return { turns: [], judges: [] };
 	}
 	return result.output;
 }
 
 /** Project a stored row back onto the wire response shape. */
 export function toConversationResponse(row: ConversationRow): ConversationResponse {
+	const { turns, judges } = parseStoredSpec(row.turnsJson, row.hash);
 	return {
 		hash: row.hash,
 		name: row.name,
 		created_at: row.createdAt,
 		last_run_at: row.lastRunAt,
-		turns: parseStoredTurns(row.turnsJson, row.hash),
+		turns,
+		judges,
 	};
+}
+
+/** Read the canonical spec stored in `conversations.turns_json`. Used by
+ *  the evaluate-replay job to walk per-turn assertions + judges. */
+export function getConversationSpec(
+	store: Store,
+	hash: string,
+): { turns: ConversationTurn[]; judges: Judge[] } | undefined {
+	const row = store.db.select().from(conversations).where(eq(conversations.hash, hash)).get();
+	if (row === undefined) return undefined;
+	return parseStoredSpec(row.turnsJson, row.hash);
 }
 
 /** List all conversations, newest-active first. One row per hash. */
@@ -222,25 +248,36 @@ export function getConversationByHash(store: Store, hash: string): ConversationR
 }
 
 /**
- * Canonical JSON: sorted keys, no whitespace, ASCII-only output. The
- * conversation hash is `sha256(canonicalStringify(canonicalTurns))`. This
- * is now server-only (the SDK no longer hashes), but the encoding is still
- * pinned because changing it would invalidate every stored conversation
- * hash retroactively.
+ * Canonical JSON: sorted keys, no whitespace, ASCII-only output, integer
+ * numbers only. The conversation hash is
+ * `sha256(canonicalStringify(spec))`. This is server-only (the SDK no
+ * longer hashes), but the encoding is still pinned because changing it
+ * would invalidate every stored conversation hash retroactively.
  *
- * Numbers are deliberately rejected: `JSON.stringify(1.0)` is `"1"` while
- * Python's `json.dumps(1.0)` is `"1.0"`, and JS+Python disagree on large-int
- * boundaries and `-0`. Until a numeric field is actually needed, locking
- * the input to null/bool/string/object/array forecloses an entire class of
- * "the encoder picked something surprising for this value" bugs.
+ * Integers serialize as their decimal string — JS `JSON.stringify(2000)`
+ * and Python `json.dumps(2000)` both produce `"2000"`. Floats, NaN, and
+ * non-finite values are rejected because the two encoders diverge there
+ * (`JSON.stringify(1.0)` is `"1"`, `json.dumps(1.0)` is `"1.0"`). `-0` is
+ * normalized to `0` for the same reason.
+ *
+ * If a float field is ever needed at this boundary, add a separate
+ * encoder (e.g. fixed-precision decimal as string) before relaxing this
+ * check.
  */
 export function canonicalStringify(value: unknown): string {
 	if (value === null) return "null";
 	if (typeof value === "boolean") return value ? "true" : "false";
 	if (typeof value === "number") {
-		throw new TypeError(
-			"Cannot canonicalize a number: JS+Python JSON encoders disagree on numeric formatting (floats, large ints, -0). Add a normalized encoding before introducing a numeric field.",
-		);
+		if (!Number.isFinite(value)) {
+			throw new TypeError("Cannot canonicalize NaN or +/-Infinity");
+		}
+		if (!Number.isInteger(value)) {
+			throw new TypeError(
+				`Cannot canonicalize non-integer number ${value}: JS+Python JSON encoders disagree on float formatting. Use an integer or a string.`,
+			);
+		}
+		// Normalize -0 to 0 so the encoded form is stable.
+		return String(value === 0 ? 0 : value);
 	}
 	if (typeof value === "string") return escapeAscii(value);
 	if (Array.isArray(value)) {

@@ -84,6 +84,14 @@ export const replays = sqliteTable(
 			"replays_lifecycle_state_ck",
 			sql`${t.lifecycleState} IN ('pending', 'running', 'recording_uploaded', 'analyzing', 'completed', 'failed')`,
 		),
+		check(
+			"replays_analysis_step_ck",
+			sql`${t.analysisStep} IS NULL OR ${t.analysisStep} IN ('vad', 'transcribe', 'metrics', 'evaluate')`,
+		),
+		check(
+			"replays_failure_reason_ck",
+			sql`${t.failureReason} IS NULL OR ${t.failureReason} IN ('stalled', 'timeout', 'explicit_fail', 'max_attempts_exceeded', 'worker_lost', 'upload_failed', 'driver_aborted', 'agent_not_joined', 'audio_missing', 'transcription_failed', 'metrics_failed', 'evaluation_failed')`,
+		),
 	],
 );
 
@@ -198,3 +206,120 @@ export const modelUsage = sqliteTable(
 	},
 	(t) => [index("idx_model_usage_replay").on(t.replayId, t.startedAt)],
 );
+
+// Per-turn transcripts. Produced by the transcription stage of
+// `analyze-replay`: each row is the STT output for one channel-slice of the
+// uploaded stereo WAV (left for user turns, right for agent turns), bounded
+// by the turn's `voice_start_ms..voice_end_ms`.
+export const turnTranscripts = sqliteTable(
+	"turn_transcripts",
+	{
+		replayId: text("replay_id")
+			.notNull()
+			.references(() => replays.id, { onDelete: "cascade" }),
+		turnIdx: integer("turn_idx").notNull(),
+		text: text("text").notNull(),
+		language: text("language"),
+		wordsJson: text("words_json"),
+		durationMs: integer("duration_ms").notNull(),
+		provider: text("provider").notNull(),
+		model: text("model").notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.replayId, t.turnIdx], name: "turn_transcripts_pk" })],
+);
+
+// Per-turn timing metrics. Produced by `calculate-metrics`.
+//
+// `agent_response_ms` is `voice_start_ms - prior_user_turn.voice_end_ms` for
+// agent turns; null for user turns. `ttft_ms` is the gap from the agent
+// turn's `voice_start_ms` back to the start of the FIRST `gen_ai.client.*`
+// span attributed to this turn — null if no such span exists.
+// `interrupted` is true when an opposite-channel speech segment started
+// while this turn was still active.
+export const replayMetrics = sqliteTable(
+	"replay_metrics",
+	{
+		replayId: text("replay_id")
+			.notNull()
+			.references(() => replays.id, { onDelete: "cascade" }),
+		turnIdx: integer("turn_idx").notNull(),
+		agentResponseMs: integer("agent_response_ms"),
+		ttftMs: integer("ttft_ms"),
+		interrupted: integer("interrupted", { mode: "boolean" }).notNull(),
+		interruptionStartMs: integer("interruption_start_ms"),
+	},
+	(t) => [primaryKey({ columns: [t.replayId, t.turnIdx], name: "replay_metrics_pk" })],
+);
+
+// One row per (replay, turn, assertion) evaluated by the server.
+// `assertion_idx` is the index into the conversation turn's `assertions[]`
+// array — stable across re-runs of the same conversation hash.
+// `params_json` is the serialized Assertion variant (the same JSON the SDK
+// posted) so a reviewer can see exactly what was evaluated without joining
+// back to the conversation row.
+export const assertionResults = sqliteTable(
+	"assertion_results",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		replayId: text("replay_id")
+			.notNull()
+			.references(() => replays.id, { onDelete: "cascade" }),
+		turnIdx: integer("turn_idx").notNull(),
+		assertionIdx: integer("assertion_idx").notNull(),
+		kind: text("kind").notNull(),
+		paramsJson: text("params_json").notNull(),
+		status: text("status").notNull(),
+		message: text("message"),
+		evaluatedAt: text("evaluated_at").notNull(),
+	},
+	(t) => [
+		index("idx_assertion_results_replay_turn").on(t.replayId, t.turnIdx),
+		check("assertion_results_status_ck", sql`${t.status} IN ('passed', 'failed', 'errored')`),
+	],
+);
+
+// One row per (replay, judge). `score` is 0..100 when applicable; null on
+// `errored`. `reason` is the LLM judge's explanation as returned by the
+// provider.
+export const judgeResults = sqliteTable(
+	"judge_results",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		replayId: text("replay_id")
+			.notNull()
+			.references(() => replays.id, { onDelete: "cascade" }),
+		judgeIdx: integer("judge_idx").notNull(),
+		kind: text("kind").notNull(),
+		paramsJson: text("params_json").notNull(),
+		status: text("status").notNull(),
+		score: integer("score"),
+		reason: text("reason"),
+		provider: text("provider").notNull(),
+		model: text("model").notNull(),
+		evaluatedAt: text("evaluated_at").notNull(),
+	},
+	(t) => [
+		index("idx_judge_results_replay").on(t.replayId),
+		check("judge_results_status_ck", sql`${t.status} IN ('passed', 'failed', 'errored')`),
+		check(
+			"judge_results_score_ck",
+			sql`${t.score} IS NULL OR (${t.score} >= 0 AND ${t.score} <= 100)`,
+		),
+	],
+);
+
+// One row per replay. Written by `evaluate-replay` on chain completion;
+// powers the `passed` boolean the SDK surfaces as `ReplayResult.passed`.
+// Aggregate counts are denormalized so the inspector can render a summary
+// without re-walking the per-assertion rows.
+export const replayEvaluations = sqliteTable("replay_evaluations", {
+	replayId: text("replay_id")
+		.primaryKey()
+		.references(() => replays.id, { onDelete: "cascade" }),
+	passed: integer("passed", { mode: "boolean" }).notNull(),
+	assertionsTotal: integer("assertions_total").notNull(),
+	assertionsPassed: integer("assertions_passed").notNull(),
+	judgesTotal: integer("judges_total").notNull(),
+	judgesPassed: integer("judges_passed").notNull(),
+	evaluatedAt: text("evaluated_at").notNull(),
+});

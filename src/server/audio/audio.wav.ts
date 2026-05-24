@@ -123,6 +123,36 @@ export function writeStereoWav(wav: StereoWav): Uint8Array {
 }
 
 /**
+ * Write a mono int16 PCM buffer as a WAV file at the given sample rate.
+ * Used to wrap per-turn audio slices before handing them to the
+ * transcription provider (OpenAI Whisper takes wav uploads).
+ */
+export function writeMonoWav(pcm: Int16Array, sampleRate: number): Uint8Array<ArrayBuffer> {
+	const samples = pcm.length;
+	const dataBytes = samples * 2;
+	const fileBytes = 44 + dataBytes;
+	const out = new Uint8Array(fileBytes);
+	const view = new DataView(out.buffer);
+	view.setUint32(0, RIFF, false);
+	view.setUint32(4, 36 + dataBytes, true);
+	view.setUint32(8, WAVE, false);
+	view.setUint32(12, FMT, false);
+	view.setUint32(16, 16, true);
+	view.setUint16(20, PCM_FORMAT, true);
+	view.setUint16(22, 1, true);
+	view.setUint32(24, sampleRate, true);
+	view.setUint32(28, sampleRate * 1 * (REQUIRED_BITS / 8), true);
+	view.setUint16(32, 1 * (REQUIRED_BITS / 8), true);
+	view.setUint16(34, REQUIRED_BITS, true);
+	view.setUint32(36, DATA, false);
+	view.setUint32(40, dataBytes, true);
+	for (let i = 0; i < samples; i++) {
+		view.setInt16(44 + i * 2, pcm[i] ?? 0, true);
+	}
+	return out;
+}
+
+/**
  * Linear-interpolation downsample from `srcRate` to `dstRate`. Used to bring
  * 48kHz int16 mono into the 16kHz expected by VAD. Linear is fine for VAD
  * (we don't need spectral fidelity — only energy + ZCR).

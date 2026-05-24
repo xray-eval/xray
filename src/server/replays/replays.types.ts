@@ -161,3 +161,50 @@ export type CompareReplaysResponse = v.InferOutput<typeof CompareReplaysResponse
 
 export const COMPARE_MIN = MIN_COMPARE_REPLAYS;
 export const COMPARE_MAX = MAX_COMPARE_REPLAYS;
+
+// ─── Evaluation result (Spec 0001 §11) ────────────────────────────────
+// Returned by GET /v1/replays/:id/result and shipped as the payload of
+// the `evaluation_complete` SSE event. The SDK projects this into its
+// `ReplayResult` dataclass — the wire shape and the SDK shape are
+// intentionally identical so future-language SDKs need no transformation.
+
+const EvaluationStatusSchema = v.picklist(["passed", "failed", "errored"]);
+
+export const AssertionOutcomeResponseSchema = v.object({
+	turn_idx: v.number(),
+	assertion_idx: v.number(),
+	kind: v.string(),
+	status: EvaluationStatusSchema,
+	message: v.nullable(v.string()),
+});
+export type AssertionOutcomeResponse = v.InferOutput<typeof AssertionOutcomeResponseSchema>;
+
+export const JudgeOutcomeResponseSchema = v.object({
+	judge_idx: v.number(),
+	kind: v.string(),
+	status: EvaluationStatusSchema,
+	score: v.nullable(v.number()),
+	reason: v.nullable(v.string()),
+});
+export type JudgeOutcomeResponse = v.InferOutput<typeof JudgeOutcomeResponseSchema>;
+
+export const TurnMetricsResponseSchema = v.object({
+	turn_idx: v.number(),
+	role: TurnRoleSchema,
+	agent_response_ms: v.nullable(v.number()),
+	ttft_ms: v.nullable(v.number()),
+	interrupted: v.boolean(),
+});
+export type TurnMetricsResponse = v.InferOutput<typeof TurnMetricsResponseSchema>;
+
+export const ReplayResultSchema = v.object({
+	replay_id: v.string(),
+	conversation_hash: ConversationHashSchema,
+	passed: v.boolean(),
+	assertions: v.array(AssertionOutcomeResponseSchema),
+	judges: v.array(JudgeOutcomeResponseSchema),
+	metrics: v.object({
+		turns: v.array(TurnMetricsResponseSchema),
+	}),
+});
+export type ReplayResult = v.InferOutput<typeof ReplayResultSchema>;

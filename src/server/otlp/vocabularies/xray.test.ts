@@ -3,37 +3,7 @@ import { xrayVocabulary } from "./xray.ts";
 import { describe, expect, it } from "bun:test";
 
 describe("xrayVocabulary — recognized span shapes", () => {
-	it("claims xray.assertion as a raw xray span (no extracted rows in v0.2)", () => {
-		const span = makeProjectedSpan({
-			name: "xray.assertion",
-			endedAt: "2026-05-18T12:00:02.500Z",
-			attributes: {
-				"xray.turn.idx": 1,
-				"xray.assertion.name": "agent_greets",
-				"xray.assertion.status": "passed",
-				"xray.assertion.message": "ok",
-			},
-		});
-		const out = xrayVocabulary(span, EMPTY_RESOURCE);
-		expect(out?.vocabulary).toBe("xray");
-		expect(out?.toolCalls).toBeUndefined();
-		expect(out?.modelUsage).toBeUndefined();
-	});
-
-	it("claims xray.judge as a raw xray span (no extracted rows in v0.2)", () => {
-		const span = makeProjectedSpan({
-			name: "xray.judge",
-			attributes: {
-				"xray.judge.status": "failed",
-				"xray.judge.score": 3,
-				"xray.judge.reason": "off-topic",
-			},
-		});
-		const out = xrayVocabulary(span, EMPTY_RESOURCE);
-		expect(out?.vocabulary).toBe("xray");
-	});
-
-	it("claims xray.turn as a raw xray span (no extracted rows in v0.2)", () => {
+	it("claims xray.turn as a raw xray span (no extracted rows)", () => {
 		const span = makeProjectedSpan({
 			name: "xray.turn",
 			startedAt: "2026-05-18T12:00:00.000Z",
@@ -45,6 +15,8 @@ describe("xrayVocabulary — recognized span shapes", () => {
 		});
 		const out = xrayVocabulary(span, EMPTY_RESOURCE);
 		expect(out?.vocabulary).toBe("xray");
+		expect(out?.toolCalls).toBeUndefined();
+		expect(out?.modelUsage).toBeUndefined();
 	});
 
 	it("claims xray.stage.stt / xray.stage.tts as raw xray spans", () => {
@@ -56,11 +28,10 @@ describe("xrayVocabulary — recognized span shapes", () => {
 
 	it("narrows the attribute bag to xray.* keys only", () => {
 		const span = makeProjectedSpan({
-			name: "xray.assertion",
+			name: "xray.turn",
 			attributes: {
 				"xray.turn.idx": 0,
-				"xray.assertion.name": "n",
-				"xray.assertion.status": "passed",
+				"xray.turn.role": "agent",
 				"gen_ai.system": "openai",
 				"http.method": "POST",
 			},
@@ -68,13 +39,34 @@ describe("xrayVocabulary — recognized span shapes", () => {
 		const out = xrayVocabulary(span, EMPTY_RESOURCE);
 		expect(out?.attributes).toEqual({
 			"xray.turn.idx": 0,
-			"xray.assertion.name": "n",
-			"xray.assertion.status": "passed",
+			"xray.turn.role": "agent",
 		});
 	});
 });
 
 describe("xrayVocabulary — non-matching spans", () => {
+	it("returns null for xray.assertion (dropped in spec 0001, evaluator runs server-side)", () => {
+		const span = makeProjectedSpan({
+			name: "xray.assertion",
+			attributes: {
+				"xray.assertion.name": "agent_greets",
+				"xray.assertion.status": "passed",
+			},
+		});
+		expect(xrayVocabulary(span, EMPTY_RESOURCE)).toBeNull();
+	});
+
+	it("returns null for xray.judge (dropped in spec 0001, evaluator runs server-side)", () => {
+		const span = makeProjectedSpan({
+			name: "xray.judge",
+			attributes: {
+				"xray.judge.status": "failed",
+				"xray.judge.score": 3,
+			},
+		});
+		expect(xrayVocabulary(span, EMPTY_RESOURCE)).toBeNull();
+	});
+
 	it("returns null for a span whose name is not in the recognized set", () => {
 		const span = makeProjectedSpan({
 			name: "some.other.span",

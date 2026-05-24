@@ -1,13 +1,18 @@
 import type { InferInsertModel, InferSelectModel } from "drizzle-orm";
 
 import type {
+	assertionResults,
 	conversations,
+	judgeResults,
 	modelUsage,
+	replayEvaluations,
+	replayMetrics,
 	replays,
 	replayTurns,
 	spans,
 	speechSegments,
 	toolCalls,
+	turnTranscripts,
 } from "./schema.ts";
 
 export const REPLAY_LIFECYCLE_STATES = [
@@ -20,9 +25,13 @@ export const REPLAY_LIFECYCLE_STATES = [
 ] as const;
 export type ReplayLifecycleState = (typeof REPLAY_LIFECYCLE_STATES)[number];
 
-// Server-internal analysis sub-state. Surfaced via SSE but not used by the
-// driver-facing lifecycle. Null outside `lifecycle_state='analyzing'`.
-export const ANALYSIS_STEPS = ["vad", "turns"] as const;
+// Server-internal analysis sub-state. Surfaced via SSE so the SDK / inspector
+// can show progress through the chained job pipeline. Null outside
+// `lifecycle_state='analyzing'`. Order is the chain order:
+//   `analyze-replay` runs `vad` then `transcribe`;
+//   `calculate-metrics` runs `metrics`;
+//   `evaluate-replay` runs `evaluate`.
+export const ANALYSIS_STEPS = ["vad", "transcribe", "metrics", "evaluate"] as const;
 export type AnalysisStep = (typeof ANALYSIS_STEPS)[number];
 
 // Reasons that explain a `failed` replay. Three groups:
@@ -34,6 +43,10 @@ export type AnalysisStep = (typeof ANALYSIS_STEPS)[number];
 //      = audio upload step failed, `agent_not_joined` = LiveKit agent
 //      participant never joined the room, `audio_missing` = a turn
 //      referenced audio bytes the SDK could not produce).
+//   3. Pipeline-stage failures stamped by each chained job
+//      (`transcription_failed`, `metrics_failed`, `evaluation_failed`).
+//      The job that failed names itself so the driver can decide whether
+//      to retry the run vs. flag a flaky provider.
 //
 // The SDK's `xray.errors.FailureReason` literal MUST be a subset of this
 // list — enforced by the contract test at
@@ -48,6 +61,9 @@ export const REPLAY_FAILURE_REASONS = [
 	"driver_aborted",
 	"agent_not_joined",
 	"audio_missing",
+	"transcription_failed",
+	"metrics_failed",
+	"evaluation_failed",
 ] as const;
 export type ReplayFailureReason = (typeof REPLAY_FAILURE_REASONS)[number];
 
@@ -80,3 +96,27 @@ export type ToolCallInput = InferInsertModel<typeof toolCalls>;
 
 export type ModelUsageRow = InferSelectModel<typeof modelUsage>;
 export type ModelUsageInput = InferInsertModel<typeof modelUsage>;
+
+// Per-turn transcripts produced by the transcription stage of analyze-replay.
+export type TurnTranscriptRow = InferSelectModel<typeof turnTranscripts>;
+export type TurnTranscriptInput = InferInsertModel<typeof turnTranscripts>;
+
+// Per-turn timing metrics produced by calculate-metrics.
+export type ReplayMetricRow = InferSelectModel<typeof replayMetrics>;
+export type ReplayMetricInput = InferInsertModel<typeof replayMetrics>;
+
+// One row per (replay, turn, assertion) — written by evaluate-replay.
+export type AssertionResultRow = InferSelectModel<typeof assertionResults>;
+export type AssertionResultInput = InferInsertModel<typeof assertionResults>;
+
+// One row per (replay, judge) — written by evaluate-replay.
+export type JudgeResultRow = InferSelectModel<typeof judgeResults>;
+export type JudgeResultInput = InferInsertModel<typeof judgeResults>;
+
+// One row per replay — written by evaluate-replay on chain success.
+export type ReplayEvaluationRow = InferSelectModel<typeof replayEvaluations>;
+export type ReplayEvaluationInput = InferInsertModel<typeof replayEvaluations>;
+
+// Status enum shared by assertion + judge result rows.
+export const EVALUATION_STATUSES = ["passed", "failed", "errored"] as const;
+export type EvaluationStatus = (typeof EVALUATION_STATUSES)[number];
