@@ -390,8 +390,8 @@ export function createReplaysRouter(
 		}),
 		async (c) => {
 			const id = parseReplayId(c.req.param("id"));
-			const replay = findReplay(store, id);
-			if (replay === undefined) throw new ReplayNotFoundError(id);
+			const initial = findReplay(store, id);
+			if (initial === undefined) throw new ReplayNotFoundError(id);
 			return streamSSE(c, async (stream) => {
 				let heartbeat: ReturnType<typeof setInterval> | undefined;
 
@@ -415,6 +415,9 @@ export function createReplaysRouter(
 					done.resolve();
 				});
 
+				// Re-read after subscribe so a terminal-state flip during the
+				// gap between findReplay above and events.subscribe isn't lost.
+				const replay = findReplay(store, id) ?? initial;
 				const initialState: {
 					type: "state";
 					lifecycle_state: string;
@@ -426,7 +429,23 @@ export function createReplaysRouter(
 				};
 				await stream.writeSSE({ event: "state", data: JSON.stringify(initialState) });
 
-				if (replay.lifecycleState === "completed" || replay.lifecycleState === "failed") {
+				if (replay.lifecycleState === "completed") {
+					const result = getReplayResult(store, id);
+					if (result !== undefined) {
+						await stream.writeSSE({
+							event: "evaluation_complete",
+							data: JSON.stringify({ type: "evaluation_complete", result }),
+						});
+					}
+					cleanup();
+					unsubscribe();
+					return;
+				}
+				if (replay.lifecycleState === "failed") {
+					await stream.writeSSE({
+						event: "failed",
+						data: JSON.stringify({ type: "failed", reason: replay.failureReason ?? "unknown" }),
+					});
 					cleanup();
 					unsubscribe();
 					return;

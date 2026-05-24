@@ -116,7 +116,8 @@ class Assertion:
         return cls(kind="max_ttft_ms", params={"max_ms": max_ms})
 
     def to_wire(self) -> AssertionWirePayload:
-        return {"kind": self.kind, **self.params}
+        # Spread first so a `kind` in params can't clobber the dispatch tag.
+        return {**self.params, "kind": self.kind}
 
 
 # ─── Judge: conversation-level ──────────────────────────────────────
@@ -148,7 +149,7 @@ class Judge:
         return cls(kind="text_match", params=params)
 
     def to_wire(self) -> JudgeWirePayload:
-        return {"kind": self.kind, **self.params}
+        return {**self.params, "kind": self.kind}
 
 
 # ─── Turn + Conversation ──────────────────────────────────────────────
@@ -412,6 +413,28 @@ class ReplayResult:
     metrics: tuple[TurnMetrics, ...]
 
 
+def format_failures(result: ReplayResult) -> str:
+    """Render non-passed assertion + judge outcomes as a multi-line string.
+
+    Use with the pytest idiom ``assert result.passed, format_failures(result)``.
+    """
+    lines: list[str] = []
+    for a in result.assertions:
+        if a.status == "passed":
+            continue
+        msg = a.message or "(no message)"
+        lines.append(f"  turn {a.turn_idx} assertion[{a.assertion_idx}] {a.kind}: {a.status} — {msg}")
+    for j in result.judges:
+        if j.status == "passed":
+            continue
+        reason = j.reason or "(no reason)"
+        score = "n/a" if j.score is None else str(j.score)
+        lines.append(f"  judge[{j.judge_idx}] {j.kind}: {j.status} score={score} — {reason}")
+    if len(lines) == 0:
+        return "all assertions and judges passed"
+    return "replay failed:\n" + "\n".join(lines)
+
+
 __all__ = [
     "AgentResponse",
     "Assertion",
@@ -437,4 +460,5 @@ __all__ = [
     "Turn",
     "TurnMetrics",
     "TurnWirePayload",
+    "format_failures",
 ]

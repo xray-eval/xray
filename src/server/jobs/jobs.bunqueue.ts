@@ -1,6 +1,6 @@
 import { Bunqueue } from "bunqueue/client";
 
-import { JobEnqueueError } from "./jobs.errors.ts";
+import { JobEnqueueError, UnknownJobNameError } from "./jobs.errors.ts";
 import type { JobName, JobPayload, JobProcessor, JobResult } from "./jobs.types.ts";
 import { JOB_NAMES } from "./jobs.types.ts";
 
@@ -72,7 +72,7 @@ export function createJobRunner(opts: JobRunnerOptions): JobRunner {
 		retry: { maxAttempts: retryAttempts, strategy: "exponential", delay: retryDelayMs },
 		processor: async (job) => {
 			if (!isJobName(job.name)) {
-				throw new Error(`No processor registered for job name "${job.name}"`);
+				throw new UnknownJobNameError(job.name);
 			}
 			return opts.processors[job.name](job.data);
 		},

@@ -376,7 +376,7 @@ async def test_server_chain_failure_raises_replay_evaluation_error(tmp_path: Pat
             )
 
     assert exc_info.value.replay_id == replay_id
-    assert exc_info.value.instance_failure_reason == "transcription_failed"
+    assert exc_info.value.failure_reason == "transcription_failed"
 
 
 @pytest.mark.asyncio
@@ -501,8 +501,8 @@ async def test_conversations_post_carries_assertions_and_judges_in_spec_json(tmp
     # The multipart body inlines the `spec` JSON as a form field. Grep for
     # both shapes — the precise multipart boundary doesn't matter for the
     # contract.
-    assert '"assertions":[{"kind":"contains","text":"yes","case_insensitive":true}]' in body
-    assert '"judges":[{"kind":"text_match","reference":"agent agrees","pass_score":70}]' in body
+    assert '"assertions":[{"text":"yes","case_insensitive":true,"kind":"contains"}]' in body
+    assert '"judges":[{"reference":"agent agrees","pass_score":70,"kind":"text_match"}]' in body
 
 
 @pytest.mark.asyncio

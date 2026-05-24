@@ -12,7 +12,7 @@ no message parsing, ever.
 
 from __future__ import annotations
 
-from typing import ClassVar, Final, Literal
+from typing import Final, Literal
 
 # Subset of the server's REPLAY_FAILURE_REASONS used by the SDK. Six
 # distinct failure classes the driver / orchestrator can surface:
@@ -55,26 +55,25 @@ FAILURE_REASONS: Final[frozenset[FailureReason]] = frozenset(
 class XrayError(Exception):
     """Base class for every error raised by the SDK."""
 
-    # ClassVar so subclasses overwrite at class level, not per-instance.
-    failure_reason: ClassVar[FailureReason] = "driver_aborted"
+    # Plain attribute, not ClassVar: subclasses override at class level OR
+    # assign per-instance in __init__ (see ReplayEvaluationError).
+    failure_reason: FailureReason = "driver_aborted"
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
-        # Stable name across minified / repackaged distributions — see
-        # `.claude/rules/errors.md` §2.
         self.name: str = type(self).__name__
 
 
 class RuntimeBindError(XrayError):
     """A runtime was asked to ``run`` before ``bind(replay_id=...)``."""
 
-    failure_reason: ClassVar[FailureReason] = "driver_aborted"
+    failure_reason: FailureReason = "driver_aborted"
 
 
 class AgentNotJoinedError(XrayError):
     """The agent participant never joined the LiveKit room in time."""
 
-    failure_reason: ClassVar[FailureReason] = "agent_not_joined"
+    failure_reason: FailureReason = "agent_not_joined"
 
     room: str
     timeout_s: float
@@ -93,7 +92,7 @@ class AudioMissingError(XrayError):
     without ``OPENAI_API_KEY`` configured.
     """
 
-    failure_reason: ClassVar[FailureReason] = "audio_missing"
+    failure_reason: FailureReason = "audio_missing"
 
     turn_idx: int | None
 
@@ -105,7 +104,7 @@ class AudioMissingError(XrayError):
 class AudioTooLargeError(XrayError):
     """Mixdown WAV exceeds the server's per-upload cap."""
 
-    failure_reason: ClassVar[FailureReason] = "driver_aborted"
+    failure_reason: FailureReason = "driver_aborted"
 
     byte_size: int
     max_bytes: int
@@ -119,13 +118,13 @@ class AudioTooLargeError(XrayError):
 class MixdownError(XrayError):
     """Encoding the per-turn PCM streams into a single WAV failed."""
 
-    failure_reason: ClassVar[FailureReason] = "driver_aborted"
+    failure_reason: FailureReason = "driver_aborted"
 
 
 class LiveKitDependencyError(XrayError):
     """The optional ``[livekit]`` extra is not installed."""
 
-    failure_reason: ClassVar[FailureReason] = "driver_aborted"
+    failure_reason: FailureReason = "driver_aborted"
 
 
 class ReplayEvaluationError(XrayError):
@@ -138,19 +137,14 @@ class ReplayEvaluationError(XrayError):
     :class:`xray.ReplayResult` with ``passed=False``, no exception.
     """
 
-    failure_reason: ClassVar[FailureReason] = "evaluation_failed"
-
     replay_id: str
-    # Per-instance override of the class-level default. Mirrors the
-    # `failure_reason` the server stamped on the replay row.
-    instance_failure_reason: FailureReason
 
     def __init__(self, replay_id: str, failure_reason: FailureReason) -> None:
         super().__init__(
             f"server failed replay {replay_id!r} during evaluation chain: {failure_reason}"
         )
         self.replay_id = replay_id
-        self.instance_failure_reason = failure_reason
+        self.failure_reason = failure_reason
 
 
 class XrayServerError(XrayError):
@@ -163,7 +157,7 @@ class XrayServerError(XrayError):
     ``failure_reason`` PATCH path instead.
     """
 
-    failure_reason: ClassVar[FailureReason] = "driver_aborted"
+    failure_reason: FailureReason = "driver_aborted"
 
     status_code: int
 

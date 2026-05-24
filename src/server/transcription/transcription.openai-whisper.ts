@@ -12,6 +12,7 @@ import type {
 
 const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
 const DEFAULT_MODEL = "whisper-1";
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
  * Minimal subset of `fetch` we depend on. Bun's `typeof fetch` includes a
@@ -27,6 +28,7 @@ export interface OpenAIWhisperOptions {
 	readonly apiKey: () => string | undefined;
 	readonly model?: string;
 	readonly fetchImpl?: FetchLike;
+	readonly timeoutMs?: number;
 }
 
 /**
@@ -41,6 +43,7 @@ export interface OpenAIWhisperOptions {
 export function createOpenAIWhisperProvider(opts: OpenAIWhisperOptions): TranscriptionProvider {
 	const model = opts.model ?? DEFAULT_MODEL;
 	const fetchImpl = opts.fetchImpl ?? fetch;
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	return {
 		name: "openai-whisper",
 		model,
@@ -63,9 +66,14 @@ export function createOpenAIWhisperProvider(opts: OpenAIWhisperOptions): Transcr
 					method: "POST",
 					headers: { authorization: `Bearer ${key}` },
 					body: form,
+					signal: AbortSignal.timeout(timeoutMs),
 				});
 			} catch (cause) {
-				throw new TranscriptionProviderError("openai-whisper", "fetch failed", null, { cause });
+				const message =
+					cause instanceof Error && cause.name === "TimeoutError"
+						? `fetch timed out after ${timeoutMs}ms`
+						: "fetch failed";
+				throw new TranscriptionProviderError("openai-whisper", message, null, { cause });
 			}
 
 			if (!response.ok) {

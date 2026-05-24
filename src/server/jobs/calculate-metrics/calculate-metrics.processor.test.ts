@@ -63,58 +63,13 @@ describe("computeMetrics (pure)", () => {
 		expect(rows[0]?.agentResponseMs).toBeNull();
 	});
 
-	it("returns ttftMs from the earliest gen_ai span landing inside the turn window", () => {
+	it("computes positive ttftMs from the earliest gen_ai span in [turnStartMs, voiceStartMs)", () => {
 		const turns: ReplayTurnRow[] = [
 			{
 				replayId: "r",
 				idx: 0,
 				role: "agent",
-				turnStartMs: 0,
-				turnEndMs: 2000,
-				voiceStartMs: 800,
-				voiceEndMs: 2000,
-			},
-		];
-		const replayStartMs = Date.parse("2026-05-18T12:00:00.000Z");
-		const ttftSpans: SpanRow[] = [
-			{
-				id: 1,
-				replayId: "r",
-				traceId: "t",
-				spanId: "s",
-				parentSpanId: null,
-				name: "chat",
-				vocabulary: "gen_ai",
-				// 200ms into the turn — earliest signal
-				startedAt: new Date(replayStartMs + 1000).toISOString(),
-				endedAt: new Date(replayStartMs + 1500).toISOString(),
-				attributesJson: "{}",
-			},
-			{
-				id: 2,
-				replayId: "r",
-				traceId: "t",
-				spanId: "s2",
-				parentSpanId: null,
-				name: "chat2",
-				vocabulary: "gen_ai",
-				startedAt: new Date(replayStartMs + 1400).toISOString(),
-				endedAt: new Date(replayStartMs + 1500).toISOString(),
-				attributesJson: "{}",
-			},
-		];
-		const rows = computeMetrics("r", turns, [], ttftSpans, replayStartMs);
-		// voice_start_ms=800, earliest span at offset 1000 → ttft = 800 - 1000 = -200 → null
-		expect(rows[0]?.ttftMs).toBeNull();
-	});
-
-	it("computes positive ttftMs when the span starts before the turn's voice begins", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 0,
+				turnStartMs: 800,
 				turnEndMs: 2000,
 				voiceStartMs: 1500,
 				voiceEndMs: 2000,
@@ -130,14 +85,55 @@ describe("computeMetrics (pure)", () => {
 				parentSpanId: null,
 				name: "chat",
 				vocabulary: "gen_ai",
-				// 1600ms after start: inside the turn window (1500..2000), 100ms after voice start → ttft = 1500-1600 = -100 → null
+				startedAt: new Date(replayStartMs + 1000).toISOString(),
+				endedAt: new Date(replayStartMs + 1400).toISOString(),
+				attributesJson: "{}",
+			},
+			{
+				id: 2,
+				replayId: "r",
+				traceId: "t",
+				spanId: "s2",
+				parentSpanId: null,
+				name: "chat2",
+				vocabulary: "gen_ai",
+				startedAt: new Date(replayStartMs + 1200).toISOString(),
+				endedAt: new Date(replayStartMs + 1450).toISOString(),
+				attributesJson: "{}",
+			},
+		];
+		const rows = computeMetrics("r", turns, [], ttftSpans, replayStartMs);
+		expect(rows[0]?.ttftMs).toBe(500);
+	});
+
+	it("returns null when no gen_ai span lands in the LLM-call attribution window", () => {
+		const turns: ReplayTurnRow[] = [
+			{
+				replayId: "r",
+				idx: 0,
+				role: "agent",
+				turnStartMs: 1000,
+				turnEndMs: 2000,
+				voiceStartMs: 1500,
+				voiceEndMs: 2000,
+			},
+		];
+		const replayStartMs = Date.parse("2026-05-18T12:00:00.000Z");
+		const ttftSpans: SpanRow[] = [
+			{
+				id: 1,
+				replayId: "r",
+				traceId: "t",
+				spanId: "s",
+				parentSpanId: null,
+				name: "chat",
+				vocabulary: "gen_ai",
 				startedAt: new Date(replayStartMs + 1600).toISOString(),
 				endedAt: new Date(replayStartMs + 1700).toISOString(),
 				attributesJson: "{}",
 			},
 		];
 		const rows = computeMetrics("r", turns, [], ttftSpans, replayStartMs);
-		// span starts after voice; the metric is signed and ttft<0 maps to null
 		expect(rows[0]?.ttftMs).toBeNull();
 	});
 

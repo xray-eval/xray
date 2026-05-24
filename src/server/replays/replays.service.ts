@@ -421,16 +421,17 @@ export async function enqueueAnalysis(
 		throw new ReplayNotReadyForAnalysisError(id, replay.lifecycleState);
 	}
 
-	store.db
+	// `returning` is the atomic claim: concurrent /analyze callers race here,
+	// only the one whose UPDATE mutated a row gets an id back.
+	const claimed = store.db
 		.update(replays)
 		.set({ lifecycleState: "analyzing", analysisStep: "vad" })
 		.where(and(eq(replays.id, id), eq(replays.lifecycleState, "recording_uploaded")))
-		.run();
-
-	const claimed = findReplay(store, id);
-	if (claimed === undefined) throw new ReplayNotFoundError(id);
-	if (claimed.lifecycleState !== "analyzing") {
-		throw new ReplayNotReadyForAnalysisError(id, claimed.lifecycleState);
+		.returning({ id: replays.id })
+		.all();
+	if (claimed.length === 0) {
+		const current = findReplay(store, id);
+		throw new ReplayNotReadyForAnalysisError(id, current?.lifecycleState ?? replay.lifecycleState);
 	}
 
 	let jobId: string;

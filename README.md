@@ -22,7 +22,7 @@ Open-source replay/eval framework for LiveKit voice agents. One Docker image, on
 The image is published to GHCR:
 
 ```bash
-docker pull ghcr.io/xray-eval/xray:0.0.1-alpha
+docker pull ghcr.io/xray-eval/xray:latest
 ```
 
 Tagged releases are signed with cosign keyless (OIDC). To verify:
@@ -57,7 +57,7 @@ Drop xray into your existing compose stack alongside your LiveKit agent:
 # compose.yaml
 services:
   xray:
-    image: ghcr.io/xray-eval/xray:0.0.1-alpha
+    image: ghcr.io/xray-eval/xray:latest
     ports:
       - "127.0.0.1:8080:8080"   # bind to localhost only — see Security below
     volumes:
@@ -80,37 +80,47 @@ volumes:
 ### Write a Conversation in Python
 
 ```python
-from xray import Conversation, Turn, expect_agent_turn, run
-from xray.conversation import AgentResponse
-from xray.runtime.livekit import LiveKitRuntime
+import asyncio
 import os
 
-conv = Conversation(
-    id="booking-happy-path",
-    turns=[
-        Turn.user("Hi, I'd like to book a table for two at 7pm.", key="u0"),
-        expect_agent_turn(
-            key="a0",
-            assertion=lambda agent: "confirmed" in agent.transcript.lower(),
-            assertion_name="confirms_booking",
-        ),
-    ],
-)
+from xray import Assertion, Conversation, Judge, RunConfig, Turn, format_failures, run
+from xray.runtime.livekit import LiveKitRuntime
 
-runtime = LiveKitRuntime(
-    url=os.environ["LIVEKIT_URL"],
-    api_key=os.environ["LIVEKIT_API_KEY"],
-    api_secret=os.environ["LIVEKIT_API_SECRET"],
-    room="booking-test-room",
-)
 
-result = run(
-    conversation=conv,
-    runtime=runtime,
-    xray_url="http://localhost:8080",
-    run_config={"model": "gpt-4o", "temperature": 0.5},
-)
-print(f"replay: http://localhost:8080/replays/{result.id}")
+async def main() -> None:
+    conv = Conversation(
+        name="booking-happy-path",
+        turns=[
+            Turn.user("Hi, I'd like to book a table for two at 7pm.", key="u0"),
+            Turn.agent(
+                key="a0",
+                assertions=(
+                    Assertion.contains("confirmed"),
+                    Assertion.tool_called("reserve_table"),
+                    Assertion.max_latency_ms(2_000),
+                ),
+            ),
+        ],
+        judges=(Judge.text_match("agent confirms a reservation for two", pass_score=80),),
+    )
+
+    runtime = LiveKitRuntime(
+        url=os.environ["LIVEKIT_URL"],
+        api_key=os.environ["LIVEKIT_API_KEY"],
+        api_secret=os.environ["LIVEKIT_API_SECRET"],
+        room="booking-test-room",
+    )
+
+    result = await run(
+        conversation=conv,
+        runtime=runtime,
+        xray_url="http://localhost:8080",
+        run_config=RunConfig(model="gpt-4o", temperature=0.5),
+    )
+    assert result.passed, format_failures(result)
+
+
+asyncio.run(main())
 ```
 
 ### Wire your agent (one-time)
@@ -132,10 +142,10 @@ One Bun process serves both the SPA and the API. One SQLite file at `/data/xray.
 
 ```
    ┌─ xray-py SDK on dev's machine ───────────────────────────────────────┐
-   │  POST /v1/conversations   (idempotent upsert by (id, version))     │
+   │  POST /v1/conversations   (multipart spec; server hashes for hash)  │
    │  POST /v1/replays         → returns replay_id                       │
-   │  LiveKitRuntime joins room, plays user audio                        │
-   │  PATCH /v1/replays/:id    (final status + judge result)             │
+   │  LiveKitRuntime joins room, plays user audio, captures the mixdown  │
+   │  POST /v1/replays/:id/audio + /analyze; SSE → evaluation_complete   │
    └─────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼

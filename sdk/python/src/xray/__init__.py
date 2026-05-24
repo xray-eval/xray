@@ -39,6 +39,7 @@ from xray.conversation import (
     TtsAudio,
     Turn,
     TurnMetrics,
+    format_failures,
 )
 from xray.errors import ReplayEvaluationError, XrayError
 from xray.instrument import XraySession, attach
@@ -65,6 +66,7 @@ __all__ = [
     "XrayError",
     "XraySession",
     "attach",
+    "format_failures",
     "run",
 ]
 

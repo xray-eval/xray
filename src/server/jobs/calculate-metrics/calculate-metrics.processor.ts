@@ -165,14 +165,13 @@ function ttftFor(
 	for (const span of ttftSpans) {
 		const startMs = Date.parse(span.startedAt) - replayStartMs;
 		if (!Number.isFinite(startMs)) continue;
-		if (startMs < turn.voiceStartMs || startMs >= turn.voiceEndMs) continue;
+		if (startMs < turn.turnStartMs || startMs >= turn.voiceStartMs) continue;
 		if (earliestOffsetMs === null || startMs < earliestOffsetMs) {
 			earliestOffsetMs = startMs;
 		}
 	}
 	if (earliestOffsetMs === null) return null;
-	const ttft = turn.voiceStartMs - earliestOffsetMs;
-	return ttft >= 0 ? ttft : null;
+	return turn.voiceStartMs - earliestOffsetMs;
 }
 
 function interruptionFor(

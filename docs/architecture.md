@@ -371,12 +371,6 @@ served by the same Bun process that owns the API. There is **no
 client-side build step in CI**; Bun builds it at request time and at
 container start.
 
-> **Note (v0.2):** the inspector SPA is intentionally not yet updated
-> for the audio-ground-truth schema. The server endpoints return the
-> new shape, so the SPA currently shows broken state for replay
-> detail. A follow-up PR rebuilds the inspector against the new
-> `replay_turns` + `speech_segments` shape.
-
 ```mermaid
 flowchart LR
     UI["Inspector SPA<br/>(React)"]

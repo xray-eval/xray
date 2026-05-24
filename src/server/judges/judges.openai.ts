@@ -6,11 +6,13 @@ import type { JudgeProvider, JudgeProviderResponse } from "./judges.types.ts";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-4o";
+const DEFAULT_TIMEOUT_MS = 60_000;
 
 export interface OpenAIJudgeOptions {
 	readonly apiKey: () => string | undefined;
 	readonly model?: string;
 	readonly fetchImpl?: FetchLike;
+	readonly timeoutMs?: number;
 }
 
 /**
@@ -27,6 +29,7 @@ export interface OpenAIJudgeOptions {
 export function createOpenAIJudgeProvider(opts: OpenAIJudgeOptions): JudgeProvider {
 	const model = opts.model ?? DEFAULT_MODEL;
 	const fetchImpl = opts.fetchImpl ?? fetch;
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	return {
 		name: "openai",
 		model,
@@ -54,9 +57,14 @@ export function createOpenAIJudgeProvider(opts: OpenAIJudgeOptions): JudgeProvid
 						"content-type": "application/json",
 					},
 					body: JSON.stringify(body),
+					signal: AbortSignal.timeout(timeoutMs),
 				});
 			} catch (cause) {
-				throw new JudgeProviderError("openai", "fetch failed", null, { cause });
+				const message =
+					cause instanceof Error && cause.name === "TimeoutError"
+						? `fetch timed out after ${timeoutMs}ms`
+						: "fetch failed";
+				throw new JudgeProviderError("openai", message, null, { cause });
 			}
 
 			if (!response.ok) {

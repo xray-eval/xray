@@ -79,7 +79,7 @@ export function makeEvaluateReplayProcessor(
 		try {
 			const spec = getConversationSpec(store, replay.conversationHash);
 			if (spec === undefined) {
-				throw new Error(`conversation ${replay.conversationHash} not found`);
+				throw new JobProcessingError(replayId, `conversation ${replay.conversationHash} not found`);
 			}
 
 			const turnRows = store.db

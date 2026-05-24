@@ -379,9 +379,10 @@ async def _wait_for_evaluation(
                     if parsed is not None:
                         return _EvalCompleted(kind="completed", payload=parsed)
                 elif event_type == "failed":
-                    reason = _parse_failed_reason(data)
-                    if reason is not None:
-                        return _EvalFailed(kind="failed", failure_reason=reason)
+                    # `failed` is terminal even with an unreadable body — don't
+                    # wait for stream close, the server already gave up.
+                    reason = _parse_failed_reason(data) or "evaluation_failed"
+                    return _EvalFailed(kind="failed", failure_reason=reason)
         # Stream closed without a terminal event — treat as a server-side
         # collapse so the dev sees a clear error instead of a successful
         # null verdict.

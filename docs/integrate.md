@@ -252,7 +252,7 @@ User-turn audio formats:
 
 For Cartesia / 11Labs / Deepgram, synthesize externally and pass the
 output as `RecordedAudio` — multi-provider TTS Protocol is on the
-v0.2 roadmap.
+roadmap.
 
 ---
 
@@ -289,7 +289,7 @@ Production-shape compose:
 ```yaml
 services:
   xray:
-    image: ghcr.io/xray-eval/xray:0.2.0
+    image: ghcr.io/xray-eval/xray:latest
     restart: unless-stopped
     ports: ["8080:8080"]
     volumes: ["xray-data:/data"]
@@ -312,15 +312,13 @@ mounted volume:
 - `/data/bunqueue.db` — bunqueue's job queue + DLQ (the
   `analyze-replay` worker runs embedded in the same Bun process).
 
-Inspector UI at `http://localhost:8080`. (Note for v0.2: the SPA is
-not yet rebuilt against the new schema; expect rendering glitches
-until the inspector follow-up PR.)
+Inspector UI at `http://localhost:8080`.
 
 ---
 
 ## What changed from earlier alphas
 
-xray-py is at **v0.3.0** — server runs assertions + judges.
+This release moves assertion + judge evaluation onto the server.
 
 - **Declarative assertions + judges.** Replace per-turn lambdas with
   `Assertion.contains(...)`, `Assertion.tool_called(...)`,
@@ -349,7 +347,7 @@ xray-py is at **v0.3.0** — server runs assertions + judges.
   PATCHes when the driver itself fails (mixdown error, missing audio
   file).
 - **Schema reset.** If you're upgrading an existing volume, drop
-  `xray.db` and `bunqueue.db` before starting v0.3.0 — the column
-  shape of `replays` + the new `turn_transcripts` /
+  `xray.db` and `bunqueue.db` before starting the new container —
+  the column shape of `replays` + the new `turn_transcripts` /
   `replay_metrics` / `assertion_results` / `judge_results` /
   `replay_evaluations` tables aren't migration-compatible.

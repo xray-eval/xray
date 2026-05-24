@@ -11,6 +11,7 @@ import { makeCalculateMetricsProcessor } from "./jobs/calculate-metrics/calculat
 import { makeEvaluateReplayProcessor } from "./jobs/evaluate-replay/evaluate-replay.processor.ts";
 import type { JobRunner } from "./jobs/jobs.bunqueue.ts";
 import { createJobRunner } from "./jobs/jobs.bunqueue.ts";
+import { JobRunnerNotInitializedError } from "./jobs/jobs.errors.ts";
 import { createOpenAIJudgeProvider } from "./judges/judges.openai.ts";
 import { makeReplayEvents } from "./replays/replays.events.ts";
 import { markReplayFailed } from "./replays/replays.service.ts";
@@ -52,7 +53,7 @@ const bunqueuePath = env.BUNQUEUE_DATA_PATH ?? join(env.XRAY_DATA_DIR, "bunqueue
 let runnerRef: JobRunner | null = null;
 const lazyRunner: JobRunner = {
 	async enqueue(name, payload) {
-		if (runnerRef === null) throw new Error("job runner used before initialization");
+		if (runnerRef === null) throw new JobRunnerNotInitializedError();
 		return runnerRef.enqueue(name, payload);
 	},
 	async close() {
