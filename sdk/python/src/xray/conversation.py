@@ -85,9 +85,7 @@ class Assertion:
         )
 
     @classmethod
-    def equals(
-        cls, text: str, *, case_insensitive: bool = True, trim: bool = True
-    ) -> Assertion:
+    def equals(cls, text: str, *, case_insensitive: bool = True, trim: bool = True) -> Assertion:
         return cls(
             kind="equals",
             params={"text": text, "case_insensitive": case_insensitive, "trim": trim},

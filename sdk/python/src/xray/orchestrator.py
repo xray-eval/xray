@@ -195,7 +195,11 @@ async def run(
             otel_context.detach(baggage_token)
 
         # 5. Upload mixdown if produced and driver didn't fail.
-        if driver_failure is None and runtime_result is not None and runtime_result.full_audio_path is not None:
+        if (
+            driver_failure is None
+            and runtime_result is not None
+            and runtime_result.full_audio_path is not None
+        ):
             try:
                 await _upload_replay_audio(
                     client=client, replay_id=replay_id, audio_path=runtime_result.full_audio_path
@@ -265,7 +269,9 @@ class _ReplayResultPayload(BaseModel):
     replay_id: str
     conversation_hash: str
     passed: bool
-    assertions: list[_AssertionOutcomePayload] = Field(default_factory=list[_AssertionOutcomePayload])
+    assertions: list[_AssertionOutcomePayload] = Field(
+        default_factory=list[_AssertionOutcomePayload]
+    )
     judges: list[_JudgeOutcomePayload] = Field(default_factory=list[_JudgeOutcomePayload])
     metrics: _ReplayResultMetricsPayload
 

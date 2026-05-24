@@ -6,8 +6,8 @@ verdict off the SSE `evaluation_complete` event and returns
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import httpx
 import pytest
@@ -20,6 +20,7 @@ from xray.errors import (
     AgentNotJoinedError,
     AudioMissingError,
     ReplayEvaluationError,
+    XrayError,
     XrayServerError,
 )
 from xray.runtime.base import Runtime, RuntimeResult
@@ -86,9 +87,7 @@ def _sse_stream(events: Iterable[tuple[str, dict[str, object]]]) -> bytes:
     return ("\n".join(lines) + "\n").encode()
 
 
-def _mock_sse_endpoint(
-    mock: respx.MockRouter, replay_id: str, body: bytes
-) -> respx.Route:
+def _mock_sse_endpoint(mock: respx.MockRouter, replay_id: str, body: bytes) -> respx.Route:
     return mock.get(f"/v1/replays/{replay_id}/events").mock(
         return_value=httpx.Response(
             200,
@@ -230,14 +229,23 @@ async def test_passed_false_when_an_assertion_fails(tmp_path: Path):
     replay_id = "00000000-0000-0000-0000-000000000bbb"
     conversation = Conversation(
         name="x",
-        turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0", assertions=(Assertion.contains("missing"),))],
+        turns=[
+            Turn.user("hi", key="u0"),
+            Turn.agent(key="a0", assertions=(Assertion.contains("missing"),)),
+        ],
     )
 
     with respx.mock(base_url="http://test.local") as mock:
-        mock.post("/v1/conversations").mock(return_value=httpx.Response(200, json=_conversation_upsert_response()))
-        mock.post("/v1/replays").mock(return_value=httpx.Response(201, json=_replay_response(replay_id)))
+        mock.post("/v1/conversations").mock(
+            return_value=httpx.Response(200, json=_conversation_upsert_response())
+        )
+        mock.post("/v1/replays").mock(
+            return_value=httpx.Response(201, json=_replay_response(replay_id))
+        )
         mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
-        mock.post(f"/v1/replays/{replay_id}/analyze").mock(return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"}))
+        mock.post(f"/v1/replays/{replay_id}/analyze").mock(
+            return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
+        )
         _mock_sse_endpoint(
             mock,
             replay_id,
@@ -287,10 +295,16 @@ async def test_orchestrator_does_not_fetch_enrichment_or_patch_on_success(tmp_pa
     conversation = Conversation(name="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
 
     with respx.mock(base_url="http://test.local") as mock:
-        mock.post("/v1/conversations").mock(return_value=httpx.Response(200, json=_conversation_upsert_response()))
-        mock.post("/v1/replays").mock(return_value=httpx.Response(201, json=_replay_response(replay_id)))
+        mock.post("/v1/conversations").mock(
+            return_value=httpx.Response(200, json=_conversation_upsert_response())
+        )
+        mock.post("/v1/replays").mock(
+            return_value=httpx.Response(201, json=_replay_response(replay_id))
+        )
         mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
-        mock.post(f"/v1/replays/{replay_id}/analyze").mock(return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"}))
+        mock.post(f"/v1/replays/{replay_id}/analyze").mock(
+            return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
+        )
         _mock_sse_endpoint(
             mock,
             replay_id,
@@ -298,7 +312,10 @@ async def test_orchestrator_does_not_fetch_enrichment_or_patch_on_success(tmp_pa
                 [
                     (
                         "evaluation_complete",
-                        {"type": "evaluation_complete", "result": _eval_complete_payload(replay_id=replay_id)},
+                        {
+                            "type": "evaluation_complete",
+                            "result": _eval_complete_payload(replay_id=replay_id),
+                        },
                     )
                 ]
             ),
@@ -328,10 +345,16 @@ async def test_server_chain_failure_raises_replay_evaluation_error(tmp_path: Pat
     conversation = Conversation(name="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
 
     with respx.mock(base_url="http://test.local") as mock:
-        mock.post("/v1/conversations").mock(return_value=httpx.Response(200, json=_conversation_upsert_response()))
-        mock.post("/v1/replays").mock(return_value=httpx.Response(201, json=_replay_response(replay_id)))
+        mock.post("/v1/conversations").mock(
+            return_value=httpx.Response(200, json=_conversation_upsert_response())
+        )
+        mock.post("/v1/replays").mock(
+            return_value=httpx.Response(201, json=_replay_response(replay_id))
+        )
         mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
-        mock.post(f"/v1/replays/{replay_id}/analyze").mock(return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"}))
+        mock.post(f"/v1/replays/{replay_id}/analyze").mock(
+            return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
+        )
         _mock_sse_endpoint(
             mock,
             replay_id,
@@ -362,11 +385,15 @@ async def test_driver_runtime_typed_failure_patches_failed_and_raises():
     conversation = Conversation(name="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
 
     with respx.mock(base_url="http://test.local") as mock:
-        mock.post("/v1/conversations").mock(return_value=httpx.Response(200, json=_conversation_upsert_response()))
-        mock.post("/v1/replays").mock(return_value=httpx.Response(201, json=_replay_response(replay_id)))
+        mock.post("/v1/conversations").mock(
+            return_value=httpx.Response(200, json=_conversation_upsert_response())
+        )
+        mock.post("/v1/replays").mock(
+            return_value=httpx.Response(201, json=_replay_response(replay_id))
+        )
         patch = mock.patch(f"/v1/replays/{replay_id}").mock(return_value=httpx.Response(200))
 
-        with pytest.raises(Exception):  # XrayError subclass
+        with pytest.raises(XrayError):
             await run(
                 conversation=conversation,
                 runtime=StubRuntime(
@@ -437,9 +464,13 @@ async def test_conversations_post_carries_assertions_and_judges_in_spec_json(tmp
         post_conv = mock.post("/v1/conversations").mock(
             return_value=httpx.Response(200, json=_conversation_upsert_response())
         )
-        mock.post("/v1/replays").mock(return_value=httpx.Response(201, json=_replay_response(replay_id)))
+        mock.post("/v1/replays").mock(
+            return_value=httpx.Response(201, json=_replay_response(replay_id))
+        )
         mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
-        mock.post(f"/v1/replays/{replay_id}/analyze").mock(return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"}))
+        mock.post(f"/v1/replays/{replay_id}/analyze").mock(
+            return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
+        )
         _mock_sse_endpoint(
             mock,
             replay_id,
@@ -447,7 +478,10 @@ async def test_conversations_post_carries_assertions_and_judges_in_spec_json(tmp
                 [
                     (
                         "evaluation_complete",
-                        {"type": "evaluation_complete", "result": _eval_complete_payload(replay_id=replay_id)},
+                        {
+                            "type": "evaluation_complete",
+                            "result": _eval_complete_payload(replay_id=replay_id),
+                        },
                     )
                 ]
             ),
