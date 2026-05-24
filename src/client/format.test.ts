@@ -1,4 +1,10 @@
-import { formatAbsolute, formatDuration, HASH_PREFIX_LEN, shortHash } from "./format.ts";
+import {
+	formatAbsolute,
+	formatDuration,
+	formatTimestamp,
+	HASH_PREFIX_LEN,
+	shortHash,
+} from "./format.ts";
 import { describe, expect, it } from "bun:test";
 
 describe("shortHash", () => {
@@ -24,6 +30,18 @@ describe("formatAbsolute", () => {
 		// it returned a parseable date string, not the exact format.
 		expect(out.length).toBeGreaterThan(0);
 		expect(Number.isNaN(new Date(out).getTime())).toBe(false);
+	});
+});
+
+describe("formatTimestamp", () => {
+	it("renders a non-empty, year-less, second-precise timestamp", () => {
+		const out = formatTimestamp("2026-05-16T12:00:42.000Z");
+		// Locale and tz vary by runtime; assert the shape, not the exact text:
+		expect(out.length).toBeGreaterThan(0);
+		// Year omitted by design — `formatAbsolute` is the year-bearing variant.
+		expect(out).not.toContain("2026");
+		// Second-precision: the `42` from the input should survive into the output.
+		expect(out).toContain("42");
 	});
 });
 

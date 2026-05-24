@@ -71,9 +71,30 @@ export function Inspector() {
 						/>
 					)}
 				</div>
-				<div className="space-y-1.5">
-					<h2 className="text-2xl font-semibold tracking-tight">Replay</h2>
-					<p className="font-mono text-xs text-muted-foreground">{replayId}</p>
+				<div className="space-y-2">
+					<div className="flex flex-wrap items-center gap-3">
+						<h2 className="text-2xl font-semibold tracking-tight">Replay</h2>
+						{query.data && <RunStatusBadge replay={query.data} />}
+					</div>
+					<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-xs text-muted-foreground tabular-nums">
+						<span>{replayId}</span>
+						{query.data && (
+							<>
+								<span aria-hidden="true" className="text-border">
+									·
+								</span>
+								<span>Started {formatTimestamp(query.data.started_at)}</span>
+								{query.data.finished_at !== null && (
+									<>
+										<span aria-hidden="true" className="text-border">
+											·
+										</span>
+										<span>Finished {formatTimestamp(query.data.finished_at)}</span>
+									</>
+								)}
+							</>
+						)}
+					</div>
 				</div>
 			</div>
 
@@ -98,7 +119,6 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<div className="grid gap-6 lg:grid-cols-3">
 			<div className="grid gap-6 lg:col-span-2">
-				<HeaderCard replay={replay} />
 				<TurnsCard replay={replay} />
 				<SpansCard spans={replay.spans} />
 			</div>
@@ -269,23 +289,6 @@ function ModelUsageCard({ usage }: { usage: ModelUsageResponse[] }) {
 						</li>
 					))}
 				</ul>
-			</CardContent>
-		</Card>
-	);
-}
-
-function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
-	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="flex items-center justify-between gap-3 text-sm font-medium uppercase tracking-wider text-muted-foreground">
-					<span>Status</span>
-					<RunStatusBadge replay={replay} />
-				</CardTitle>
-			</CardHeader>
-			<CardContent className="space-y-1.5 text-sm text-muted-foreground tabular-nums">
-				<div>Started {formatTimestamp(replay.started_at)}</div>
-				{replay.finished_at !== null && <div>Finished {formatTimestamp(replay.finished_at)}</div>}
 			</CardContent>
 		</Card>
 	);

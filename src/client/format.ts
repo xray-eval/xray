@@ -14,8 +14,28 @@ export function formatAbsolute(iso: string): string {
 	return new Date(iso).toLocaleString();
 }
 
-/** Alias used by the Conversation/Replay views — same as `formatAbsolute`. */
-export const formatTimestamp = formatAbsolute;
+/**
+ * Locale-aware short timestamp — `May 24, 22:53:12` in en-US, `24 May,
+ * 22:53:12` in en-GB. Year is intentionally omitted: every UI site pairs
+ * this with a "Started"/"Finished"/range label, so the recent-relative
+ * reading is what matters. 24-hour format reads cleaner than AM/PM at
+ * second-precision. Use `formatAbsolute` when year disambiguation matters.
+ *
+ * Cached at module scope because `Intl.DateTimeFormat` construction is
+ * not cheap and we call this once per row in trace-heavy views.
+ */
+const TIMESTAMP_FORMATTER = new Intl.DateTimeFormat(undefined, {
+	month: "short",
+	day: "numeric",
+	hour: "2-digit",
+	minute: "2-digit",
+	second: "2-digit",
+	hour12: false,
+});
+
+export function formatTimestamp(iso: string): string {
+	return TIMESTAMP_FORMATTER.format(new Date(iso));
+}
 
 /**
  * Render a duration in ms as `123ms` / `42s` / `2m05s`. `null` means the
