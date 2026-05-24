@@ -20,9 +20,6 @@ const USER_WAVE = "#38bdf8"; // sky-400
 const AGENT_WAVE = "#fb923c"; // orange-400
 const USER_REGION_FILL = "rgba(56, 189, 248, 0.16)";
 const AGENT_REGION_FILL = "rgba(251, 146, 60, 0.18)";
-// Progress color renders the already-played portion of each channel — a
-// translucent white turns it into a "frosted" overlay over the channel tone.
-const PROGRESS_COLOR = "rgba(255, 255, 255, 0.85)";
 const CURSOR_COLOR = "#ffffff";
 
 interface StereoTurnPlayerProps {
@@ -48,10 +45,13 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 	// Each wavesurfer option that's a non-primitive must be referentially
 	// stable, otherwise @wavesurfer/react tears down and recreates the
 	// instance on every render (the hook deps-array spreads option values).
+	// progressColor === waveColor → the bars keep their channel tone whether
+	// played or not. The "played" cue is the translucent white overlay
+	// rendered as a sibling div below, not a color swap.
 	const splitChannels = useMemo(
 		() => [
-			{ waveColor: USER_WAVE, progressColor: PROGRESS_COLOR },
-			{ waveColor: AGENT_WAVE, progressColor: PROGRESS_COLOR },
+			{ waveColor: USER_WAVE, progressColor: USER_WAVE },
+			{ waveColor: AGENT_WAVE, progressColor: AGENT_WAVE },
 		],
 		[],
 	);
@@ -61,7 +61,7 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 		url: audioUrl,
 		height: 56,
 		waveColor: USER_WAVE,
-		progressColor: PROGRESS_COLOR,
+		progressColor: USER_WAVE,
 		cursorColor: CURSOR_COLOR,
 		cursorWidth: 2,
 		barWidth: 2,
@@ -132,16 +132,23 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 				</span>
 			</div>
 
-			<section className="relative px-2 pb-1" aria-label="Replay waveform">
-				<div ref={containerRef} className="w-full" />
-				{loadError !== null && (
-					<p
-						role="alert"
-						className="absolute inset-0 flex items-center justify-center bg-card/80 text-xs text-destructive backdrop-blur-sm"
-					>
-						Couldn't load audio. {loadError}
-					</p>
-				)}
+			<section className="px-2 pb-1" aria-label="Replay waveform">
+				<div className="relative">
+					<div ref={containerRef} className="w-full" />
+					<div
+						aria-hidden="true"
+						className="pointer-events-none absolute inset-y-0 left-0 bg-white/15"
+						style={{ width: `${Math.min(playedFraction(currentTime, duration) * 100, 100)}%` }}
+					/>
+					{loadError !== null && (
+						<p
+							role="alert"
+							className="absolute inset-0 flex items-center justify-center bg-card/80 text-xs text-destructive backdrop-blur-sm"
+						>
+							Couldn't load audio. {loadError}
+						</p>
+					)}
+				</div>
 			</section>
 
 			<div className="flex items-center gap-4 border-t border-border/50 bg-muted/30 px-5 py-3">
@@ -202,6 +209,11 @@ function useWaveState(wavesurfer: WaveSurfer | null): {
 		};
 	}, [wavesurfer]);
 	return { duration, loadError };
+}
+
+function playedFraction(currentTime: number, duration: number): number {
+	if (!(duration > 0) || !Number.isFinite(currentTime)) return 0;
+	return Math.max(0, currentTime / duration);
 }
 
 function formatClock(seconds: number): string {
