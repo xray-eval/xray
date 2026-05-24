@@ -13,11 +13,10 @@ import { getConversation, getReplay, replayAudioUrl } from "../api/api.ts";
 import type {
 	ModelUsageResponse,
 	ReplayDetailResponse,
-	ReplayTurnResponse,
 	SpanResponse,
 	ToolCallResponse,
 } from "../api/api.types.ts";
-import { AudioWithCaptions } from "../audio/audio-with-captions.tsx";
+import { StereoTurnPlayer } from "../audio/stereo-turn-player.tsx";
 import { formatTimestamp } from "../format.ts";
 import { RunStatusBadge } from "../replay-status/replay-status.tsx";
 
@@ -113,6 +112,23 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 }
 
 function TurnsCard({ replay }: { replay: ReplayDetailResponse }) {
+	if (replay.audio_path === null) {
+		return (
+			<Card className="gap-4">
+				<CardHeader>
+					<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+						Turns
+					</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<p className="text-sm text-muted-foreground">
+						Awaiting audio upload. Server-side VAD analysis populates turns after the stereo WAV
+						lands.
+					</p>
+				</CardContent>
+			</Card>
+		);
+	}
 	return (
 		<Card className="gap-4">
 			<CardHeader>
@@ -121,49 +137,10 @@ function TurnsCard({ replay }: { replay: ReplayDetailResponse }) {
 				</CardTitle>
 			</CardHeader>
 			<CardContent>
-				{replay.turns.length === 0 ? (
-					<p className="text-sm text-muted-foreground">
-						No turns derived yet. Server-side VAD analysis populates this list after the audio
-						upload completes.
-					</p>
-				) : (
-					<ol className="grid gap-3">
-						{replay.turns.map((turn) => (
-							<li key={`${turn.idx}-${turn.role}`}>
-								<TurnBlock turn={turn} />
-							</li>
-						))}
-					</ol>
-				)}
+				<StereoTurnPlayer audioUrl={replayAudioUrl(replay.id)} turns={replay.turns} />
 			</CardContent>
 		</Card>
 	);
-}
-
-// VAD-derived turn idx is independent of script turn idx — `deriveTurns`
-// merges consecutive same-role VAD segments into one turn, so a silent
-// agent or VAD-merged user utterances drop the script alignment. Show
-// only what the VAD actually measured; the script lives on the
-// conversation page.
-function TurnBlock({ turn }: { turn: ReplayTurnResponse }) {
-	return (
-		<div className="rounded-md border border-border/60 bg-muted/20 p-4">
-			<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-				<Badge variant={turn.role === "user" ? "secondary" : "default"} className="font-normal">
-					{turn.role}
-				</Badge>
-				<span className="font-mono">#{turn.idx}</span>
-				<span className="tabular-nums">
-					· {formatMsRange(turn.voice_start_ms, turn.voice_end_ms)}
-				</span>
-			</div>
-		</div>
-	);
-}
-
-function formatMsRange(startMs: number, endMs: number): string {
-	const fmt = (ms: number) => (ms / 1000).toFixed(2);
-	return `${fmt(startMs)}s → ${fmt(endMs)}s`;
 }
 
 function SpansCard({ spans }: { spans: SpanResponse[] }) {
@@ -303,16 +280,6 @@ function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
 			<CardContent className="space-y-1.5 text-sm text-muted-foreground tabular-nums">
 				<div>Started {formatTimestamp(replay.started_at)}</div>
 				{replay.finished_at !== null && <div>Finished {formatTimestamp(replay.finished_at)}</div>}
-				{replay.audio_path !== null && (
-					<div className="mt-4">
-						<AudioWithCaptions
-							src={replayAudioUrl(replay.id)}
-							captionText={null}
-							className="w-full"
-							label="Full replay audio"
-						/>
-					</div>
-				)}
 			</CardContent>
 		</Card>
 	);
