@@ -168,7 +168,8 @@ One Bun process serves both the SPA and the API. One SQLite file at `/data/xray.
 ### Security
 
 - **The SDK→xray surface has no auth.** xray and your agent are expected to live in the same Docker network. **Do not expose port 8080 publicly.** The default compose snippet above binds to `127.0.0.1`.
-- Secrets (LiveKit, LLM provider keys) live in the SDK's process, never in xray's. xray's image never holds provider credentials.
+- **Server-side analyze chain calls OpenAI on every `/analyze` request.** Whisper runs once per VAD-detected turn for transcription; the judge LLM runs once per declared `Judge`. xray ships no rate limit or per-replay cost ceiling — that's deliberate for a single-tenant local dev tool, but it means a wider bind (`HOST=0.0.0.0`, port-forwarded to the internet, etc.) without a fronting auth proxy lets anyone who can reach `/v1/replays/:id/analyze` drain your OpenAI budget. If you must bind beyond loopback, put an auth proxy in front.
+- Secrets (LiveKit) live in the SDK's process. **`OPENAI_API_KEY` lives in xray's environment** (used by both transcription and the judge). Pass it at runtime via compose `env_file:`, `environment:`, or `docker run -e`; never bake it into the image.
 - Secrets are runtime-only — pass them at run time (compose `environment:` / `env_file:`, or `docker run -e`), never baked into the image.
 - 7-day cooldown on npm releases, deny-by-default lifecycle scripts, every GitHub Action pinned to a 40-char SHA. See [`.claude/rules/supply-chain.md`](.claude/rules/supply-chain.md).
 - Releases are signed with cosign keyless (OIDC) and carry build-provenance attestations.

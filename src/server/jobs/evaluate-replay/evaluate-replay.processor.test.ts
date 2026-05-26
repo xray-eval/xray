@@ -32,9 +32,22 @@ function fakeJudge(score = 95, reason = "matches") {
 	};
 }
 
+interface VadFixture {
+	idx: number;
+	role: "user" | "agent";
+	transcript: string;
+	turnStartMs?: number;
+	turnEndMs?: number;
+	voiceStartMs?: number;
+	voiceEndMs?: number;
+	agentResponseMs?: number | null;
+	ttftMs?: number | null;
+}
+
 async function setupReplay(opts: {
 	turns?: Array<{ role: "user" | "agent"; assertions?: Assertion[] }>;
 	judges?: Judge[];
+	vadOverride?: VadFixture[];
 }) {
 	const store = makeTempStore();
 	const turns: ConversationTurn[] = opts.turns?.map((t, i) =>
@@ -58,76 +71,73 @@ async function setupReplay(opts: {
 		.where(eq(replays.id, detail.id))
 		.run();
 
-	// Seed two turn rows (user idx 0, agent idx 1) — enough for the
-	// assertion contexts the test cares about.
+	// Default VAD fixture: one user turn (idx 0) + one agent turn (idx 1)
+	// with the agent transcript that the happy-path tests expect. Override
+	// for divergence tests below.
+	const vad: VadFixture[] = opts.vadOverride ?? [
+		{
+			idx: 0,
+			role: "user",
+			transcript: "book a table",
+			turnStartMs: 0,
+			turnEndMs: 1000,
+			voiceStartMs: 0,
+			voiceEndMs: 1000,
+		},
+		{
+			idx: 1,
+			role: "agent",
+			transcript: "confirmed for two",
+			turnStartMs: 1000,
+			turnEndMs: 2500,
+			voiceStartMs: 1300,
+			voiceEndMs: 2500,
+			agentResponseMs: 300,
+			ttftMs: 100,
+		},
+	];
+
 	store.db
 		.insert(replayTurns)
-		.values([
-			{
+		.values(
+			vad.map((t) => ({
 				replayId: detail.id,
-				idx: 0,
-				role: "user",
-				turnStartMs: 0,
-				turnEndMs: 1000,
-				voiceStartMs: 0,
-				voiceEndMs: 1000,
-			},
-			{
-				replayId: detail.id,
-				idx: 1,
-				role: "agent",
-				turnStartMs: 1000,
-				turnEndMs: 2500,
-				voiceStartMs: 1300,
-				voiceEndMs: 2500,
-			},
-		])
+				idx: t.idx,
+				role: t.role,
+				turnStartMs: t.turnStartMs ?? 0,
+				turnEndMs: t.turnEndMs ?? 1000,
+				voiceStartMs: t.voiceStartMs ?? 0,
+				voiceEndMs: t.voiceEndMs ?? 1000,
+			})),
+		)
 		.run();
 	store.db
 		.insert(turnTranscripts)
-		.values([
-			{
+		.values(
+			vad.map((t) => ({
 				replayId: detail.id,
-				turnIdx: 0,
-				text: "book a table",
+				turnIdx: t.idx,
+				text: t.transcript,
 				language: "en",
 				wordsJson: null,
 				durationMs: 1000,
 				provider: "fake",
 				model: "fake-1",
-			},
-			{
-				replayId: detail.id,
-				turnIdx: 1,
-				text: "confirmed for two",
-				language: "en",
-				wordsJson: null,
-				durationMs: 1200,
-				provider: "fake",
-				model: "fake-1",
-			},
-		])
+			})),
+		)
 		.run();
 	store.db
 		.insert(replayMetrics)
-		.values([
-			{
+		.values(
+			vad.map((t) => ({
 				replayId: detail.id,
-				turnIdx: 0,
-				agentResponseMs: null,
-				ttftMs: null,
+				turnIdx: t.idx,
+				agentResponseMs: t.role === "agent" ? (t.agentResponseMs ?? 300) : null,
+				ttftMs: t.role === "agent" ? (t.ttftMs ?? 100) : null,
 				interrupted: false,
 				interruptionStartMs: null,
-			},
-			{
-				replayId: detail.id,
-				turnIdx: 1,
-				agentResponseMs: 300,
-				ttftMs: 100,
-				interrupted: false,
-				interruptionStartMs: null,
-			},
-		])
+			})),
+		)
 		.run();
 
 	return { store, replayId: detail.id, conversationHash: hash };
@@ -287,5 +297,159 @@ describe("evaluate-replay processor", () => {
 		expect(after?.lifecycleState).toBe("failed");
 		expect(after?.failureReason).toBe("evaluation_failed");
 		store.close();
+	});
+
+	describe("idempotency under retry against terminal row", () => {
+		it("does NOT trash existing assertion_results / judge_results / replay_evaluations when re-run against a `failed` row", async () => {
+			// Seed an existing failed-state replay with pre-existing assertion
+			// + judge + evaluation rows from a prior run. The processor MUST
+			// detect the non-analyzing lifecycle and bail out before any
+			// DELETE.
+			const { store, replayId } = await setupReplay({
+				turns: [
+					{ role: "user", assertions: [] },
+					{
+						role: "agent",
+						assertions: [{ kind: "contains", text: "confirmed", case_insensitive: true }],
+					},
+				],
+				judges: [],
+			});
+			// Pre-seed an evaluation row + flip lifecycle to `failed`.
+			store.db
+				.insert(replayEvaluations)
+				.values({
+					replayId,
+					passed: false,
+					assertionsTotal: 1,
+					assertionsPassed: 0,
+					judgesTotal: 0,
+					judgesPassed: 0,
+					evaluatedAt: new Date(0).toISOString(),
+				})
+				.run();
+			store.db
+				.update(replays)
+				.set({ lifecycleState: "failed", failureReason: "transcription_failed" })
+				.where(eq(replays.id, replayId))
+				.run();
+
+			const processor = makeEvaluateReplayProcessor(store, makeReplayEvents(), fakeJudge());
+			const result = await processor({ replayId });
+			expect(result.ok).toBe(true);
+
+			const evalRow = store.db
+				.select()
+				.from(replayEvaluations)
+				.where(eq(replayEvaluations.replayId, replayId))
+				.get();
+			// Pre-seeded row preserved — its evaluatedAt is epoch.
+			expect(evalRow?.evaluatedAt).toBe(new Date(0).toISOString());
+			const after = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+			expect(after?.lifecycleState).toBe("failed");
+			expect(after?.failureReason).toBe("transcription_failed");
+		});
+	});
+
+	describe("spec / VAD turn alignment", () => {
+		it("tolerates extra VAD turns when spec turns still align by role-order", async () => {
+			// Spec: [user, agent]. VAD: [user, user-noise, agent]. The walk
+			// finds user at idx 0, then advances past the noise to agent at
+			// idx 2. Assertion runs against the agent VAD row's transcript.
+			const { store, replayId } = await setupReplay({
+				turns: [
+					{ role: "user", assertions: [] },
+					{
+						role: "agent",
+						assertions: [{ kind: "contains", text: "confirmed", case_insensitive: true }],
+					},
+				],
+				judges: [],
+				vadOverride: [
+					{ idx: 0, role: "user", transcript: "book a table" },
+					{ idx: 1, role: "user", transcript: "uhh" },
+					{ idx: 2, role: "agent", transcript: "confirmed for two" },
+				],
+			});
+			const processor = makeEvaluateReplayProcessor(store, makeReplayEvents(), fakeJudge());
+			const result = await processor({ replayId });
+			expect(result.passed).toBe(true);
+			const ars = store.db
+				.select()
+				.from(assertionResults)
+				.where(eq(assertionResults.replayId, replayId))
+				.all();
+			expect(ars.length).toBe(1);
+			expect(ars[0]?.status).toBe("passed");
+		});
+
+		it("stamps failed + spec_vad_mismatch when VAD has fewer matching role turns than spec", async () => {
+			// Spec: [user, agent, user, agent]. VAD: [user, agent]. The walk
+			// matches spec[0] → vad[0], spec[1] → vad[1], then spec[2]=user
+			// finds no remaining VAD turn → SpecVadMismatchError.
+			const { store, replayId } = await setupReplay({
+				turns: [
+					{ role: "user", assertions: [] },
+					{ role: "agent", assertions: [] },
+					{ role: "user", assertions: [] },
+					{ role: "agent", assertions: [] },
+				],
+				judges: [],
+				vadOverride: [
+					{ idx: 0, role: "user", transcript: "first" },
+					{ idx: 1, role: "agent", transcript: "ok" },
+				],
+			});
+			const processor = makeEvaluateReplayProcessor(store, makeReplayEvents(), fakeJudge());
+			await expect(processor({ replayId })).rejects.toThrow(/evaluation stage failed/);
+			const after = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+			expect(after?.lifecycleState).toBe("failed");
+			expect(after?.failureReason).toBe("spec_vad_mismatch");
+		});
+
+		it("stamps failed + spec_vad_mismatch when role order diverges (vad starts with agent, spec with user)", async () => {
+			const { store, replayId } = await setupReplay({
+				turns: [
+					{ role: "user", assertions: [] },
+					{ role: "agent", assertions: [] },
+				],
+				judges: [],
+				vadOverride: [
+					{ idx: 0, role: "agent", transcript: "echo" },
+					{ idx: 1, role: "agent", transcript: "echo again" },
+				],
+			});
+			const processor = makeEvaluateReplayProcessor(store, makeReplayEvents(), fakeJudge());
+			await expect(processor({ replayId })).rejects.toThrow(/evaluation stage failed/);
+			const after = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+			expect(after?.lifecycleState).toBe("failed");
+			expect(after?.failureReason).toBe("spec_vad_mismatch");
+		});
+
+		it("assertion context reads matched VAD-turn transcript even when VAD idx differs from spec idx", async () => {
+			// Spec[1]=agent, VAD: [user idx 0, user idx 1 (noise), agent idx
+			// 2]. Without the role-walk fix the assertion would look up
+			// transcripts.find(turnIdx === 1) = the noise user-turn text,
+			// fail the `contains` check, and report `passed=false`. With
+			// role-walk it looks up VAD idx 2's transcript.
+			const { store, replayId } = await setupReplay({
+				turns: [
+					{ role: "user", assertions: [] },
+					{
+						role: "agent",
+						assertions: [{ kind: "contains", text: "agent text", case_insensitive: true }],
+					},
+				],
+				judges: [],
+				vadOverride: [
+					{ idx: 0, role: "user", transcript: "hi" },
+					{ idx: 1, role: "user", transcript: "noise" },
+					{ idx: 2, role: "agent", transcript: "Agent Text — go" },
+				],
+			});
+			const processor = makeEvaluateReplayProcessor(store, makeReplayEvents(), fakeJudge());
+			const result = await processor({ replayId });
+			expect(result.passed).toBe(true);
+		});
 	});
 });

@@ -19,6 +19,7 @@ import {
 	turnTranscripts,
 } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
+import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 import type { TranscriptionProvider } from "@/server/transcription/transcription.types.ts";
 
 import type { JobRunner } from "../jobs.bunqueue.ts";
@@ -91,10 +92,13 @@ export function makeAnalyzeProcessor(
 
 		// Worker holds the `analyzing` claim from enqueueAnalysis. If anything
 		// (operator PATCH, future second-failure path) stamps `failed` before
-		// we commit, the conditional UPDATE below short-circuits and we leave
-		// the row in whatever terminal state landed first. Skip the chain
-		// enqueue + SSE emits in that case — they'd lie about the state.
+		// we commit, we MUST NOT trash the existing rows that the prior
+		// successful run left behind. Read the lifecycle inside the
+		// transaction first; only delete+insert when the claim is still ours.
 		const committed = store.db.transaction((tx) => {
+			const current = tx.select().from(replays).where(eq(replays.id, replayId)).get();
+			if (current?.lifecycleState !== "analyzing") return false;
+
 			tx.delete(speechSegments).where(eq(speechSegments.replayId, replayId)).run();
 			tx.delete(replayTurns).where(eq(replayTurns.replayId, replayId)).run();
 
@@ -134,13 +138,9 @@ export function makeAnalyzeProcessor(
 
 			backfillTurnIdx(tx, replayId, replay.startedAt, turns);
 
-			tx.update(replays)
-				.set({ analysisStep: "transcribe" })
-				.where(and(eq(replays.id, replayId), eq(replays.lifecycleState, "analyzing")))
-				.run();
+			tx.update(replays).set({ analysisStep: "transcribe" }).where(eq(replays.id, replayId)).run();
 
-			const after = tx.select().from(replays).where(eq(replays.id, replayId)).get();
-			return after?.lifecycleState === "analyzing" && after.analysisStep === "transcribe";
+			return true;
 		});
 
 		if (!committed) {
@@ -166,7 +166,15 @@ export function makeAnalyzeProcessor(
 		try {
 			transcribedCount = await runTranscriptionStage(store, replayId, wav, turns, transcription);
 		} catch (cause) {
-			markReplayFailed(store, events, replayId, "transcription_failed");
+			// MissingProviderCredentialError signals an operator config gap
+			// (`OPENAI_API_KEY` unset), NOT a transient provider failure.
+			// Stamp a distinct reason so the operator's first instinct is to
+			// set the env var, not to retry the run.
+			const reason =
+				cause instanceof MissingProviderCredentialError
+					? "missing_credential"
+					: "transcription_failed";
+			markReplayFailed(store, events, replayId, reason);
 			const detail = cause instanceof Error ? cause.message : String(cause);
 			throw new JobProcessingError(replayId, `transcription stage failed: ${detail}`, { cause });
 		}
@@ -207,25 +215,49 @@ async function runTranscriptionStage(
 	}>,
 	transcription: TranscriptionProvider,
 ): Promise<number> {
-	const settled = await Promise.all(
-		turns.map(async (turn) => {
-			if (turn.voiceEndMs <= turn.voiceStartMs) return null;
-			const pcm = sliceTurnAudio(wav, turn.role, turn.voiceStartMs, turn.voiceEndMs);
-			if (pcm.length === 0) return null;
-			const result = await transcription.transcribe({ audio: pcm, sampleRate: wav.sampleRate });
-			return {
-				replayId,
-				turnIdx: turn.idx,
-				text: result.text,
-				language: result.language,
-				wordsJson: result.words === null ? null : JSON.stringify(result.words),
-				durationMs: result.durationMs,
-				provider: transcription.name,
-				model: transcription.model,
-			};
-		}),
-	);
-	const rows = settled.filter((r) => r !== null);
+	// Shared AbortController so one Whisper rejection cancels the other
+	// in-flight siblings. `Promise.all` rejects on first failure but does
+	// NOT cancel the rest — they keep running and burning provider quota
+	// for nothing. The provider merges this signal with its own timeout.
+	const controller = new AbortController();
+	let rows: Array<{
+		replayId: string;
+		turnIdx: number;
+		text: string;
+		language: string | null;
+		wordsJson: string | null;
+		durationMs: number;
+		provider: string;
+		model: string;
+	}>;
+	try {
+		const settled = await Promise.all(
+			turns.map(async (turn) => {
+				if (turn.voiceEndMs <= turn.voiceStartMs) return null;
+				const pcm = sliceTurnAudio(wav, turn.role, turn.voiceStartMs, turn.voiceEndMs);
+				if (pcm.length === 0) return null;
+				const result = await transcription.transcribe({
+					audio: pcm,
+					sampleRate: wav.sampleRate,
+					signal: controller.signal,
+				});
+				return {
+					replayId,
+					turnIdx: turn.idx,
+					text: result.text,
+					language: result.language,
+					wordsJson: result.words === null ? null : JSON.stringify(result.words),
+					durationMs: result.durationMs,
+					provider: transcription.name,
+					model: transcription.model,
+				};
+			}),
+		);
+		rows = settled.filter((r) => r !== null);
+	} catch (cause) {
+		controller.abort();
+		throw cause;
+	}
 	if (rows.length === 0) return 0;
 
 	store.db.transaction((tx) => {

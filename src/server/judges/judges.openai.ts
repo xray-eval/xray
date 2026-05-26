@@ -1,12 +1,38 @@
+import * as v from "valibot";
+
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 import type { FetchLike } from "@/server/transcription/transcription.openai-whisper.ts";
+import { redactProviderSecrets } from "@/server/transcription/transcription.openai-whisper.ts";
 
 import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import type { JudgeProvider, JudgeProviderResponse } from "./judges.types.ts";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
-const DEFAULT_MODEL = "gpt-4o";
+// Pinned model snapshot — the floating alias `gpt-4o` has been re-pointed
+// multiple times in the past year, and a moving target on a verdict layer
+// produces silent test drift (same transcript passes Tuesday, fails
+// Wednesday). Operators who want a different snapshot set XRAY_JUDGE_MODEL.
+const DEFAULT_MODEL = "gpt-4o-2024-08-06";
 const DEFAULT_TIMEOUT_MS = 60_000;
+
+// Validate the OpenAI Chat Completions response at the boundary per
+// `.claude/rules/boundary-validation.md`. We model only the path we read:
+// `choices[0].message.content` is a JSON string (because we forced
+// `response_format: json_object` on the request) that itself decodes to
+// `{score: int, reason: string}`.
+const ChatCompletionsResponseSchema = v.object({
+	choices: v.array(
+		v.object({
+			message: v.object({
+				content: v.string(),
+			}),
+		}),
+	),
+});
+const JudgeContentSchema = v.object({
+	score: v.number(),
+	reason: v.string(),
+});
 
 export interface OpenAIJudgeOptions {
 	readonly apiKey: () => string | undefined;
@@ -76,7 +102,7 @@ export function createOpenAIJudgeProvider(opts: OpenAIJudgeOptions): JudgeProvid
 				}
 				throw new JudgeProviderError(
 					"openai",
-					`HTTP ${response.status}: ${detail.slice(0, 512)}`,
+					`HTTP ${response.status}: ${redactProviderSecrets(detail).slice(0, 512)}`,
 					response.status,
 				);
 			}
@@ -98,39 +124,19 @@ export function createOpenAIJudgeProvider(opts: OpenAIJudgeOptions): JudgeProvid
 	};
 }
 
-interface ChatCompletionsRaw {
-	choices?: unknown;
-}
-
-interface ChatCompletionsChoice {
-	message?: unknown;
-}
-
-interface ChatCompletionsMessage {
-	content?: unknown;
-}
-
-interface JudgeContentRaw {
-	score?: unknown;
-	reason?: unknown;
-}
-
 function extractMessageContent(raw: unknown): string {
-	if (!isObject<ChatCompletionsRaw>(raw)) {
-		throw new JudgeProviderError("openai", "response body was not an object");
+	const result = v.safeParse(ChatCompletionsResponseSchema, raw);
+	if (!result.success) {
+		throw new JudgeProviderError(
+			"openai",
+			`response failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
+		);
 	}
-	const choice = Array.isArray(raw.choices) ? raw.choices[0] : undefined;
-	if (!isObject<ChatCompletionsChoice>(choice)) {
-		throw new JudgeProviderError("openai", "response missing choices[0].message.content");
+	const first = result.output.choices[0];
+	if (first === undefined) {
+		throw new JudgeProviderError("openai", "response choices array was empty");
 	}
-	if (!isObject<ChatCompletionsMessage>(choice.message)) {
-		throw new JudgeProviderError("openai", "response missing choices[0].message.content");
-	}
-	const content = choice.message.content;
-	if (typeof content !== "string") {
-		throw new JudgeProviderError("openai", "response missing choices[0].message.content");
-	}
-	return content;
+	return first.message.content;
 }
 
 function parseJudgeContent(content: string): JudgeProviderResponse {
@@ -142,13 +148,17 @@ function parseJudgeContent(content: string): JudgeProviderResponse {
 			cause,
 		});
 	}
-	if (!isObject<JudgeContentRaw>(parsed)) {
-		throw new JudgeOutputParseError("openai", content, "content was not a JSON object");
+	const result = v.safeParse(JudgeContentSchema, parsed);
+	if (!result.success) {
+		throw new JudgeOutputParseError(
+			"openai",
+			content,
+			`content failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
+		);
 	}
-	const score = parsed.score;
-	const reason = parsed.reason;
-	if (typeof score !== "number" || !Number.isFinite(score)) {
-		throw new JudgeOutputParseError("openai", content, "missing or non-numeric `score`");
+	const score = result.output.score;
+	if (!Number.isFinite(score)) {
+		throw new JudgeOutputParseError("openai", content, "score was not a finite number");
 	}
 	const intScore = Math.round(score);
 	if (intScore < 0 || intScore > 100) {
@@ -158,19 +168,5 @@ function parseJudgeContent(content: string): JudgeProviderResponse {
 			`score ${intScore} outside the 0..100 range`,
 		);
 	}
-	if (typeof reason !== "string") {
-		throw new JudgeOutputParseError("openai", content, "missing or non-string `reason`");
-	}
-	return { score: intScore, reason };
-}
-
-/**
- * Narrow `unknown` to an interface-shaped object. The interface is open
- * (every field declared as `unknown?`) so the caller can read individual
- * fields without bracket-key access — works with the strict-mode
- * `noPropertyAccessFromIndexSignature` while keeping biome's
- * `useLiteralKeys` happy.
- */
-function isObject<T>(value: unknown): value is T {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+	return { score: intScore, reason: result.output.reason };
 }

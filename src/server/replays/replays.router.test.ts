@@ -293,3 +293,148 @@ describe("POST /v1/replays/compare", () => {
 		expect(res.status).toBe(404);
 	});
 });
+
+describe("GET /v1/replays/:id/result", () => {
+	it("returns 404 for unknown id", async () => {
+		const { app } = makeApp();
+		const res = await app.request("/v1/replays/00000000-0000-0000-0000-000000000099/result");
+		expect(res.status).toBe(404);
+	});
+
+	it("returns 409 when the replay hasn't reached a terminal state", async () => {
+		// `pending` (the default seed state) has no ReplayResult to project.
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const res = await app.request(`/v1/replays/${replayId}/result`);
+		expect(res.status).toBe(409);
+	});
+
+	it("returns 200 + the projected ReplayResult once the analyze chain has finished", async () => {
+		// Seed the five tables the projection joins:
+		//   replay_evaluations (verdict + counts)
+		//   assertion_results / judge_results (per-row outcomes)
+		//   replay_turns + replay_metrics (per-turn metrics)
+		// Then flip the replay row to `completed` so the endpoint accepts it.
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const evaluatedAt = "2026-05-18T12:30:00.000Z";
+		const {
+			assertionResults,
+			judgeResults,
+			replayEvaluations,
+			replayMetrics,
+			replayTurns,
+			replays: replaysTable,
+		} = await import("@/server/store/schema.ts");
+		const { eq } = await import("drizzle-orm");
+
+		store.db
+			.update(replaysTable)
+			.set({ lifecycleState: "completed", finishedAt: evaluatedAt })
+			.where(eq(replaysTable.id, replayId))
+			.run();
+		store.db
+			.insert(replayTurns)
+			.values([
+				{
+					replayId,
+					idx: 0,
+					role: "user",
+					turnStartMs: 0,
+					turnEndMs: 1000,
+					voiceStartMs: 0,
+					voiceEndMs: 1000,
+				},
+				{
+					replayId,
+					idx: 1,
+					role: "agent",
+					turnStartMs: 1000,
+					turnEndMs: 2000,
+					voiceStartMs: 1100,
+					voiceEndMs: 2000,
+				},
+			])
+			.run();
+		store.db
+			.insert(replayMetrics)
+			.values([
+				{
+					replayId,
+					turnIdx: 1,
+					agentResponseMs: 100,
+					ttftMs: 50,
+					interrupted: false,
+					interruptionStartMs: null,
+				},
+			])
+			.run();
+		store.db
+			.insert(assertionResults)
+			.values([
+				{
+					replayId,
+					turnIdx: 1,
+					assertionIdx: 0,
+					kind: "contains",
+					paramsJson: JSON.stringify({ kind: "contains", text: "hi" }),
+					status: "passed",
+					message: null,
+					evaluatedAt,
+				},
+			])
+			.run();
+		store.db
+			.insert(judgeResults)
+			.values([
+				{
+					replayId,
+					judgeIdx: 0,
+					kind: "text_match",
+					paramsJson: JSON.stringify({ kind: "text_match", reference: "x", pass_score: 70 }),
+					status: "passed",
+					score: 92,
+					reason: "ok",
+					provider: "fake",
+					model: "fake-1",
+					evaluatedAt,
+				},
+			])
+			.run();
+		store.db
+			.insert(replayEvaluations)
+			.values({
+				replayId,
+				passed: true,
+				assertionsTotal: 1,
+				assertionsPassed: 1,
+				judgesTotal: 1,
+				judgesPassed: 1,
+				evaluatedAt,
+			})
+			.run();
+
+		const res = await app.request(`/v1/replays/${replayId}/result`);
+		expect(res.status).toBe(200);
+		const body = await readJson(
+			res,
+			v.object({
+				replay_id: v.string(),
+				conversation_hash: v.string(),
+				passed: v.boolean(),
+				assertions: v.array(
+					v.object({ turn_idx: v.number(), kind: v.string(), status: v.string() }),
+				),
+				judges: v.array(v.object({ judge_idx: v.number(), kind: v.string(), status: v.string() })),
+				metrics: v.object({
+					turns: v.array(v.object({ turn_idx: v.number(), role: v.string() })),
+				}),
+			}),
+		);
+		expect(body.replay_id).toBe(replayId);
+		expect(body.passed).toBe(true);
+		expect(body.assertions.length).toBe(1);
+		expect(body.judges.length).toBe(1);
+		expect(body.metrics.turns.length).toBe(2);
+	});
+});

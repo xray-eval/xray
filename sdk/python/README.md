@@ -67,7 +67,9 @@ asyncio.run(main())
 
 The runtime produces **one stereo WAV per replay** (left = user, right = agent); `run(...)` uploads it to `POST /v1/replays/:id/audio`. The inspector slices it per-turn using the `replay_turns` timestamps.
 
-When a user `Turn` uses `TtsAudio()` (or has no `audio` + a text fallback), the runtime calls OpenAI's `/v1/audio/speech` directly using `OPENAI_API_KEY` from your environment — xray never sees the key — and caches the result per-turn keyed on `(text, voice, model)` so re-runs reuse the bytes. Changing any of those invalidates the cache for that turn.
+When a user `Turn` uses `TtsAudio()` (or has no `audio` + a text fallback), the runtime calls OpenAI's `/v1/audio/speech` directly using `OPENAI_API_KEY` from the SDK process's environment, and caches the result per-turn keyed on `(text, voice, model)` so re-runs reuse the bytes. Changing any of those invalidates the cache for that turn.
+
+> **Note:** the xray *server* also needs `OPENAI_API_KEY` set in its own environment — it uses the key for Whisper (per-turn transcription) and the judge LLM during `/analyze`. The SDK and server hold the same env var name; both need it for their respective stages.
 
 ## Three modules
 
@@ -82,7 +84,7 @@ The LiveKit runtime reads:
 | Var | Required? | Default | Purpose |
 |---|---|---|---|
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | yes | — | LiveKit credentials |
-| `OPENAI_API_KEY` | only for TTS turns | — | OpenAI key used directly — xray never holds it |
+| `OPENAI_API_KEY` | only for TTS turns | — | OpenAI key used directly by the SDK runtime for TTS. **xray's server also reads this var from its own env** for Whisper + judge. |
 | `OPENAI_TTS_MODEL` | no | `gpt-4o-mini-tts` | TTS model |
 | `OPENAI_TTS_VOICE` | no | `alloy` | Voice; per-turn `TtsAudio(voice_id=...)` overrides |
 

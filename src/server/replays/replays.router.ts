@@ -403,7 +403,21 @@ export function createReplaysRouter(
 				};
 
 				const done = Promise.withResolvers<void>();
+
+				// Subscribe BEFORE the re-read so a terminal-state flip that
+				// lands between findReplay() at the request boundary and the
+				// re-read below isn't lost. The `terminalEmitted` flag
+				// guards against the second race: when the writer commits +
+				// emits between subscribe() and the re-read, BOTH the
+				// listener path and the fallback re-read path would write
+				// `evaluation_complete` — the flag lets only the first
+				// arriver through.
+				let terminalEmitted = false;
 				const unsubscribe = events.subscribe(id, (event) => {
+					if (event.type === "evaluation_complete" || event.type === "failed") {
+						if (terminalEmitted) return;
+						terminalEmitted = true;
+					}
 					void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).then(() => {
 						if (event.type === "evaluation_complete" || event.type === "failed") {
 							done.resolve();
@@ -415,8 +429,6 @@ export function createReplaysRouter(
 					done.resolve();
 				});
 
-				// Re-read after subscribe so a terminal-state flip during the
-				// gap between findReplay above and events.subscribe isn't lost.
 				const replay = findReplay(store, id) ?? initial;
 				const initialState: {
 					type: "state";
@@ -429,7 +441,8 @@ export function createReplaysRouter(
 				};
 				await stream.writeSSE({ event: "state", data: JSON.stringify(initialState) });
 
-				if (replay.lifecycleState === "completed") {
+				if (replay.lifecycleState === "completed" && !terminalEmitted) {
+					terminalEmitted = true;
 					const result = getReplayResult(store, id);
 					if (result !== undefined) {
 						await stream.writeSSE({
@@ -441,11 +454,22 @@ export function createReplaysRouter(
 					unsubscribe();
 					return;
 				}
-				if (replay.lifecycleState === "failed") {
+				if (replay.lifecycleState === "failed" && !terminalEmitted) {
+					terminalEmitted = true;
 					await stream.writeSSE({
 						event: "failed",
-						data: JSON.stringify({ type: "failed", reason: replay.failureReason ?? "unknown" }),
+						data: JSON.stringify({
+							type: "failed",
+							reason: replay.failureReason ?? "evaluation_failed",
+						}),
 					});
+					cleanup();
+					unsubscribe();
+					return;
+				}
+				if (terminalEmitted) {
+					// Live listener already wrote the terminal event during the
+					// re-read window; nothing more for us to do.
 					cleanup();
 					unsubscribe();
 					return;

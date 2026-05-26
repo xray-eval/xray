@@ -74,14 +74,17 @@ export function makeCalculateMetricsProcessor(
 			const rows = computeMetrics(replayId, turns, segments, ttftSpans, replayStartMs);
 
 			const advanced = store.db.transaction((tx) => {
+				// Same idempotency rule as analyze-replay: don't trash existing
+				// metric rows if a concurrent path already flipped lifecycle to
+				// `failed` or `completed`. Read the lifecycle first; abort the
+				// write phase otherwise.
+				const current = tx.select().from(replays).where(eq(replays.id, replayId)).get();
+				if (current?.lifecycleState !== "analyzing") return false;
+
 				tx.delete(replayMetrics).where(eq(replayMetrics.replayId, replayId)).run();
 				if (rows.length > 0) tx.insert(replayMetrics).values(rows).run();
-				tx.update(replays)
-					.set({ analysisStep: "metrics" })
-					.where(and(eq(replays.id, replayId), eq(replays.lifecycleState, "analyzing")))
-					.run();
-				const after = tx.select().from(replays).where(eq(replays.id, replayId)).get();
-				return after?.lifecycleState === "analyzing";
+				tx.update(replays).set({ analysisStep: "metrics" }).where(eq(replays.id, replayId)).run();
+				return true;
 			});
 
 			if (!advanced) {

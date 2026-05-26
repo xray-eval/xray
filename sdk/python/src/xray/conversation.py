@@ -73,12 +73,22 @@ class Assertion:
     # variant. The classmethods enforce that the right keys are populated.
     params: JsonObject
 
+    # Fail-fast bounds checks at construction time. The server enforces the
+    # same bounds and rejects bad payloads with a 400, but a server 400
+    # surfaces hundreds of lines away from the assertion's source line and
+    # gives the dev no clue which assertion was wrong. These checks pin the
+    # error to the actual `Assertion.X(...)` call site.
+
     @classmethod
     def contains(cls, text: str, *, case_insensitive: bool = True) -> Assertion:
+        if not text:
+            raise ValueError("Assertion.contains: text must be non-empty")
         return cls(kind="contains", params={"text": text, "case_insensitive": case_insensitive})
 
     @classmethod
     def not_contains(cls, text: str, *, case_insensitive: bool = True) -> Assertion:
+        if not text:
+            raise ValueError("Assertion.not_contains: text must be non-empty")
         return cls(
             kind="not_contains",
             params={"text": text, "case_insensitive": case_insensitive},
@@ -86,6 +96,8 @@ class Assertion:
 
     @classmethod
     def equals(cls, text: str, *, case_insensitive: bool = True, trim: bool = True) -> Assertion:
+        if not text:
+            raise ValueError("Assertion.equals: text must be non-empty")
         return cls(
             kind="equals",
             params={"text": text, "case_insensitive": case_insensitive, "trim": trim},
@@ -93,26 +105,42 @@ class Assertion:
 
     @classmethod
     def regex(cls, pattern: str, *, flags: str = "") -> Assertion:
+        if not pattern:
+            raise ValueError("Assertion.regex: pattern must be non-empty")
         return cls(kind="regex", params={"pattern": pattern, "flags": flags})
 
     @classmethod
     def tool_called(cls, name: str) -> Assertion:
+        if not name:
+            raise ValueError("Assertion.tool_called: name must be non-empty")
         return cls(kind="tool_called", params={"name": name})
 
     @classmethod
     def tool_not_called(cls, name: str) -> Assertion:
+        if not name:
+            raise ValueError("Assertion.tool_not_called: name must be non-empty")
         return cls(kind="tool_not_called", params={"name": name})
 
     @classmethod
     def tool_args_match(cls, name: str, args: JsonObject) -> Assertion:
+        if not name:
+            raise ValueError("Assertion.tool_args_match: name must be non-empty")
         return cls(kind="tool_args_match", params={"name": name, "args": args})
 
     @classmethod
     def max_latency_ms(cls, max_ms: int) -> Assertion:
+        if max_ms < 1:
+            raise ValueError(
+                f"Assertion.max_latency_ms: max_ms must be >= 1 (got {max_ms})",
+            )
         return cls(kind="max_latency_ms", params={"max_ms": max_ms})
 
     @classmethod
     def max_ttft_ms(cls, max_ms: int) -> Assertion:
+        if max_ms < 1:
+            raise ValueError(
+                f"Assertion.max_ttft_ms: max_ms must be >= 1 (got {max_ms})",
+            )
         return cls(kind="max_ttft_ms", params={"max_ms": max_ms})
 
     def to_wire(self) -> AssertionWirePayload:
@@ -143,6 +171,18 @@ class Judge:
         rubric: str | None = None,
         pass_score: int = 70,
     ) -> Judge:
+        # Fail-fast at construction so the dev sees the source line of the
+        # bad Judge.text_match(...), not a server 400 round-trip later.
+        if not reference:
+            raise ValueError("Judge.text_match: reference must be non-empty")
+        if rubric is not None and len(rubric) == 0:
+            raise ValueError(
+                "Judge.text_match: rubric must be non-empty when provided",
+            )
+        if pass_score < 0 or pass_score > 100:
+            raise ValueError(
+                f"Judge.text_match: pass_score must be in 0..100 (got {pass_score})",
+            )
         params: JsonObject = {"reference": reference, "pass_score": pass_score}
         if rubric is not None:
             params["rubric"] = rubric

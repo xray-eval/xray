@@ -13,6 +13,7 @@ CREATE TABLE `assertion_results` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_assertion_results_replay_turn` ON `assertion_results` (`replay_id`,`turn_idx`);--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_assertion_results_replay_turn_idx` ON `assertion_results` (`replay_id`,`turn_idx`,`assertion_idx`);--> statement-breakpoint
 CREATE TABLE `conversations` (
 	`hash` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
@@ -41,6 +42,7 @@ CREATE TABLE `judge_results` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_judge_results_replay` ON `judge_results` (`replay_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_judge_results_replay_judge_idx` ON `judge_results` (`replay_id`,`judge_idx`);--> statement-breakpoint
 CREATE TABLE `model_usage` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`replay_id` text NOT NULL,
@@ -93,7 +95,6 @@ CREATE TABLE `replay_turns` (
 	CONSTRAINT "replay_turns_role_ck" CHECK("replay_turns"."role" IN ('user', 'agent'))
 );
 --> statement-breakpoint
-CREATE INDEX `idx_replay_turns_replay_idx` ON `replay_turns` (`replay_id`,`idx`);--> statement-breakpoint
 CREATE TABLE `replays` (
 	`id` text PRIMARY KEY NOT NULL,
 	`conversation_hash` text NOT NULL,
@@ -108,7 +109,7 @@ CREATE TABLE `replays` (
 	FOREIGN KEY (`conversation_hash`) REFERENCES `conversations`(`hash`) ON UPDATE no action ON DELETE restrict,
 	CONSTRAINT "replays_lifecycle_state_ck" CHECK("replays"."lifecycle_state" IN ('pending', 'running', 'recording_uploaded', 'analyzing', 'completed', 'failed')),
 	CONSTRAINT "replays_analysis_step_ck" CHECK("replays"."analysis_step" IS NULL OR "replays"."analysis_step" IN ('vad', 'transcribe', 'metrics', 'evaluate')),
-	CONSTRAINT "replays_failure_reason_ck" CHECK("replays"."failure_reason" IS NULL OR "replays"."failure_reason" IN ('stalled', 'timeout', 'explicit_fail', 'max_attempts_exceeded', 'worker_lost', 'upload_failed', 'driver_aborted', 'agent_not_joined', 'audio_missing', 'transcription_failed', 'metrics_failed', 'evaluation_failed'))
+	CONSTRAINT "replays_failure_reason_ck" CHECK("replays"."failure_reason" IS NULL OR "replays"."failure_reason" IN ('stalled', 'timeout', 'explicit_fail', 'max_attempts_exceeded', 'worker_lost', 'upload_failed', 'driver_aborted', 'agent_not_joined', 'audio_missing', 'missing_credential', 'transcription_failed', 'metrics_failed', 'evaluation_failed', 'spec_vad_mismatch'))
 );
 --> statement-breakpoint
 CREATE INDEX `idx_replays_conversation_hash` ON `replays` (`conversation_hash`,`started_at`);--> statement-breakpoint

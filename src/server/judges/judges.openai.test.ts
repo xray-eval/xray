@@ -51,7 +51,7 @@ function chatResponse(content: string): Response {
 }
 
 describe("createOpenAIJudgeProvider", () => {
-	it("posts to /v1/chat/completions with json_object response_format, default gpt-4o, temperature 0", async () => {
+	it("posts to /v1/chat/completions with json_object response_format, pinned gpt-4o snapshot, temperature 0", async () => {
 		let observedUrl = "";
 		let observedAuth = "";
 		let observedBody: ChatBody = {};
@@ -66,7 +66,9 @@ describe("createOpenAIJudgeProvider", () => {
 		await provider.judge({ systemPrompt: "sys", userPrompt: "user" });
 		expect(observedUrl).toBe("https://api.openai.com/v1/chat/completions");
 		expect(observedAuth).toBe("Bearer sk-test");
-		expect(observedBody.model).toBe("gpt-4o");
+		// Pinned snapshot, not the floating `gpt-4o` alias — verdict
+		// stability across days.
+		expect(observedBody.model).toBe("gpt-4o-2024-08-06");
 		expect(observedBody.temperature).toBe(0);
 		const rf = asResponseFormat(observedBody.response_format);
 		expect(rf?.type).toBe("json_object");

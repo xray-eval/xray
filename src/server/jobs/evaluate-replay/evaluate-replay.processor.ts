@@ -1,6 +1,7 @@
-import { and, asc, eq } from "drizzle-orm";
-import { match } from "ts-pattern";
+import { asc, eq } from "drizzle-orm";
+import { match, P } from "ts-pattern";
 
+import { SpecVadMismatchError } from "@/server/assertions/assertions.errors.ts";
 import { evaluateAssertion } from "@/server/assertions/assertions.evaluator.ts";
 import type { AssertionContext } from "@/server/assertions/assertions.types.ts";
 import { getConversationSpec } from "@/server/conversations/conversations.service.ts";
@@ -35,6 +36,7 @@ import type {
 	ToolCallRow,
 	TurnTranscriptRow,
 } from "@/server/store/types.ts";
+import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
 import { JobProcessingError } from "../jobs.errors.ts";
 import type { JobPayload } from "../jobs.types.ts";
@@ -113,19 +115,34 @@ export function makeEvaluateReplayProcessor(
 			const assertionRows: AssertionResultInsert[] = [];
 			const assertionOutcomes: AssertionOutcomeResponse[] = [];
 
+			// Align spec turns to VAD-derived turns by role-order walk. The
+			// spec declares the conversation the dev wrote; VAD reports what
+			// actually happened on the wire. We pair them by walking both in
+			// order and advancing the VAD cursor to the next role-matching
+			// row. Extra VAD turns (background noise, agent self-correction,
+			// stutter that produced a phantom turn split) are tolerated —
+			// they're persisted + transcribed + OTel-attributed by the prior
+			// stages; they just don't drive an assertion. The walk fails
+			// when the cursor exhausts `turnRows` before every spec turn has
+			// been matched — that's the recording materially diverged from
+			// the script, and the dev needs to see it loudly.
+			let vadCursor = 0;
 			for (let i = 0; i < spec.turns.length; i++) {
 				const turn = spec.turns[i];
 				if (turn === undefined) continue;
+				let matchIdx = vadCursor;
+				while (matchIdx < turnRows.length && turnRows[matchIdx]?.role !== turn.role) {
+					matchIdx++;
+				}
+				const matched = turnRows[matchIdx];
+				if (matched === undefined) {
+					throw new SpecVadMismatchError(i, turn.role, spec.turns.length, turnRows.length);
+				}
+				vadCursor = matchIdx + 1;
+
 				const assertions = turn.assertions ?? [];
 				if (assertions.length === 0) continue;
-				const ctx = buildAssertionContext(
-					i,
-					turnRows,
-					transcripts,
-					metricRows,
-					toolRows,
-					usageRows,
-				);
+				const ctx = buildAssertionContext(matched, transcripts, metricRows, toolRows, usageRows);
 				for (let j = 0; j < assertions.length; j++) {
 					const assertion = assertions[j];
 					if (assertion === undefined) continue;
@@ -184,6 +201,14 @@ export function makeEvaluateReplayProcessor(
 				assertionsPassed === assertionOutcomes.length && judgesPassed === judgeOutcomes.length;
 
 			const advanced = store.db.transaction((tx) => {
+				// Idempotency guard — if the row is no longer in `analyzing`
+				// (operator PATCH, prior failed-stamp, completed by a
+				// concurrent worker) we must NOT overwrite the existing
+				// assertion / judge / evaluation rows. Read state first; bail
+				// out of the write phase before any DELETE runs.
+				const current = tx.select().from(replays).where(eq(replays.id, replayId)).get();
+				if (current?.lifecycleState !== "analyzing") return false;
+
 				tx.delete(assertionResults).where(eq(assertionResults.replayId, replayId)).run();
 				if (assertionRows.length > 0) tx.insert(assertionResults).values(assertionRows).run();
 				tx.delete(judgeResults).where(eq(judgeResults.replayId, replayId)).run();
@@ -206,10 +231,9 @@ export function makeEvaluateReplayProcessor(
 						analysisStep: null,
 						finishedAt: evaluatedAt,
 					})
-					.where(and(eq(replays.id, replayId), eq(replays.lifecycleState, "analyzing")))
+					.where(eq(replays.id, replayId))
 					.run();
-				const after = tx.select().from(replays).where(eq(replays.id, replayId)).get();
-				return after?.lifecycleState === "completed";
+				return true;
 			});
 
 			if (!advanced) {
@@ -244,30 +268,48 @@ export function makeEvaluateReplayProcessor(
 				judgesPassed,
 			};
 		} catch (cause) {
-			markReplayFailed(store, events, replayId, "evaluation_failed");
+			// Map typed evaluator errors to specific failure_reasons so the
+			// operator sees the right next step in `replays.failure_reason`.
+			// Default is `evaluation_failed` for the unclassified evaluator
+			// crash.
+			const reason = match(cause)
+				.with(P.instanceOf(SpecVadMismatchError), () => "spec_vad_mismatch" as const)
+				.with(P.instanceOf(MissingProviderCredentialError), () => "missing_credential" as const)
+				.otherwise(() => "evaluation_failed" as const);
+			markReplayFailed(store, events, replayId, reason);
 			const detail = cause instanceof Error ? cause.message : String(cause);
 			throw new JobProcessingError(replayId, `evaluation stage failed: ${detail}`, { cause });
 		}
 	};
 }
 
+/**
+ * Build the per-assertion context against a specific VAD-derived turn.
+ *
+ * All downstream lookups (`transcripts`, `metrics`, `tool_calls`,
+ * `model_usage`) are keyed on the VAD-row's `idx`, NOT the spec's turn
+ * position. The analyze-replay stage wrote those tables using VAD-derived
+ * indexes, and the calculate-metrics + OTLP backfill stages followed the
+ * same convention. Pairing here must use the matched VAD idx so the
+ * spec's `assertions[i]` sees the matched VAD turn's transcript, not the
+ * spec position's transcript (which doesn't exist when spec/VAD diverge).
+ */
 function buildAssertionContext(
-	turnIdx: number,
-	turnRows: readonly ReplayTurnRow[],
+	matched: ReplayTurnRow,
 	transcripts: readonly TurnTranscriptRow[],
 	metrics: readonly ReplayMetricRow[],
 	toolRows: readonly ToolCallRow[],
 	usageRows: readonly ModelUsageRow[],
 ): AssertionContext {
-	const turn = turnRows.find((t) => t.idx === turnIdx);
-	const transcript = transcripts.find((t) => t.turnIdx === turnIdx)?.text ?? null;
-	const metric = metrics.find((m) => m.turnIdx === turnIdx);
+	const vadIdx = matched.idx;
+	const transcript = transcripts.find((t) => t.turnIdx === vadIdx)?.text ?? null;
+	const metric = metrics.find((m) => m.turnIdx === vadIdx);
 	return {
-		turnIdx,
-		turnRole: turn?.role ?? "agent",
+		turnIdx: vadIdx,
+		turnRole: matched.role,
 		transcript,
-		toolCalls: toolRows.filter((tc) => tc.turnIdx === turnIdx),
-		modelUsage: usageRows.filter((mu) => mu.turnIdx === turnIdx),
+		toolCalls: toolRows.filter((tc) => tc.turnIdx === vadIdx),
+		modelUsage: usageRows.filter((mu) => mu.turnIdx === vadIdx),
 		metrics: {
 			agentResponseMs: metric?.agentResponseMs ?? null,
 			ttftMs: metric?.ttftMs ?? null,
@@ -322,6 +364,14 @@ async function runOneJudge(
 			)
 			.exhaustive();
 	} catch (cause) {
+		// `MissingProviderCredentialError` is not a transient per-judge failure
+		// — the entire stage can't run without the key. Re-throw it so the
+		// outer catch in the processor maps it to
+		// `failure_reason='missing_credential'`, which prompts the operator
+		// to set OPENAI_API_KEY rather than retry the run.
+		if (cause instanceof MissingProviderCredentialError) {
+			throw cause;
+		}
 		// Per-judge failures map to "errored" outcomes — they don't fail the
 		// whole stage. The processor's outer catch only fires for evaluator
 		// internals (e.g. malformed conversation spec).

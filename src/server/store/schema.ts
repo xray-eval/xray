@@ -7,6 +7,7 @@ import {
 	sqliteTable,
 	text,
 	unique,
+	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 import type {
@@ -31,8 +32,14 @@ import type {
 // encoding of the turns (including sha256 of per-turn RecordedAudio bytes).
 // The dev sets `name` as a free-form display label; renaming does NOT change
 // identity, so a re-POST with the same hash and a different name updates the
-// existing row's `name` (last-write-wins). `last_run_at` is denormalized from
-// `MAX(replays.started_at)` to power list ordering without a join.
+// existing row's `name` (last-write-wins). `last_run_at` is set to `now` on
+// every POST /v1/conversations — the SDK calls that endpoint at the start
+// of every run, so the timestamp tracks "most recent attempt" without a
+// join back to replays.
+//
+// (Older comments here described `last_run_at` as denormalized from
+// `MAX(replays.started_at)`; that was the design but never the
+// implementation — see `conversations.service.ts`.)
 export const conversations = sqliteTable(
 	"conversations",
 	{
@@ -90,7 +97,7 @@ export const replays = sqliteTable(
 		),
 		check(
 			"replays_failure_reason_ck",
-			sql`${t.failureReason} IS NULL OR ${t.failureReason} IN ('stalled', 'timeout', 'explicit_fail', 'max_attempts_exceeded', 'worker_lost', 'upload_failed', 'driver_aborted', 'agent_not_joined', 'audio_missing', 'transcription_failed', 'metrics_failed', 'evaluation_failed')`,
+			sql`${t.failureReason} IS NULL OR ${t.failureReason} IN ('stalled', 'timeout', 'explicit_fail', 'max_attempts_exceeded', 'worker_lost', 'upload_failed', 'driver_aborted', 'agent_not_joined', 'audio_missing', 'missing_credential', 'transcription_failed', 'metrics_failed', 'evaluation_failed', 'spec_vad_mismatch')`,
 		),
 	],
 );
@@ -137,7 +144,6 @@ export const replayTurns = sqliteTable(
 	},
 	(t) => [
 		primaryKey({ columns: [t.replayId, t.idx], name: "replay_turns_pk" }),
-		index("idx_replay_turns_replay_idx").on(t.replayId, t.idx),
 		check("replay_turns_role_ck", sql`${t.role} IN ('user', 'agent')`),
 	],
 );
@@ -274,6 +280,13 @@ export const assertionResults = sqliteTable(
 	},
 	(t) => [
 		index("idx_assertion_results_replay_turn").on(t.replayId, t.turnIdx),
+		// One outcome per (replay, turn, assertion). The evaluate-replay
+		// processor's delete-then-insert under the `analyzing` guard already
+		// covers app-level idempotency; this constraint is the schema-level
+		// belt-and-braces — a manual SQL write or a future code path that
+		// forgets the delete still can't double-count outcomes in the
+		// projection that powers `ReplayResult`.
+		uniqueIndex("uq_assertion_results_replay_turn_idx").on(t.replayId, t.turnIdx, t.assertionIdx),
 		check("assertion_results_status_ck", sql`${t.status} IN ('passed', 'failed', 'errored')`),
 	],
 );
@@ -300,6 +313,11 @@ export const judgeResults = sqliteTable(
 	},
 	(t) => [
 		index("idx_judge_results_replay").on(t.replayId),
+		// One outcome per (replay, judge). Same rationale as
+		// `uq_assertion_results_replay_turn_idx` — schema-level guard against
+		// duplicate rows that would inflate the judge counts in
+		// `replay_evaluations`.
+		uniqueIndex("uq_judge_results_replay_judge_idx").on(t.replayId, t.judgeIdx),
 		check("judge_results_status_ck", sql`${t.status} IN ('passed', 'failed', 'errored')`),
 		check(
 			"judge_results_score_ck",

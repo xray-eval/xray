@@ -1,11 +1,14 @@
 import * as v from "valibot";
 
+// Stereo WAV (48 kHz / int16 / L=user / R=agent) is the only format the
+// analyze-replay processor knows how to parse — `readStereoWav` assumes a
+// PCM WAV header, not a compressed container. We previously accepted
+// audio/opus, audio/ogg, audio/webm, and audio/mp3 here too, but the
+// processor only validated WAV format at the start of the analyze stage,
+// which meant the upload succeeded but the chain failed later with
+// `transcription_failed` (the wrong reason). Forcing WAV at the upload
+// boundary surfaces the mismatch as a 415 at the SDK's POST instead.
 export const CONTENT_TYPE_TO_EXTENSION = {
-	"audio/opus": "opus",
-	"audio/ogg": "ogg",
-	"audio/webm": "webm",
-	"audio/mp3": "mp3",
-	"audio/mpeg": "mp3",
 	"audio/wav": "wav",
 	"audio/x-wav": "wav",
 } as const satisfies Record<string, string>;
@@ -14,11 +17,6 @@ export type AudioContentType = keyof typeof CONTENT_TYPE_TO_EXTENSION;
 export type AudioExtension = (typeof CONTENT_TYPE_TO_EXTENSION)[AudioContentType];
 
 const ALL_CONTENT_TYPES = [
-	"audio/opus",
-	"audio/ogg",
-	"audio/webm",
-	"audio/mp3",
-	"audio/mpeg",
 	"audio/wav",
 	"audio/x-wav",
 ] as const satisfies readonly AudioContentType[];
@@ -39,10 +37,6 @@ export const AudioContentTypeSchema = v.picklist(ALL_CONTENT_TYPES);
 export const AudioExtensionSchema = v.picklist(ALL_EXTENSIONS);
 
 export const EXTENSION_TO_RESPONSE_CONTENT_TYPE: Record<AudioExtension, string> = {
-	opus: "audio/opus",
-	ogg: "audio/ogg",
-	webm: "audio/webm",
-	mp3: "audio/mpeg",
 	wav: "audio/wav",
 };
 

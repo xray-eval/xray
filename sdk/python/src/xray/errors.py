@@ -33,9 +33,11 @@ FailureReason = Literal[
     "driver_aborted",
     "agent_not_joined",
     "audio_missing",
+    "missing_credential",
     "transcription_failed",
     "metrics_failed",
     "evaluation_failed",
+    "spec_vad_mismatch",
 ]
 
 # Runtime-side mirror of the picklist for membership checks. Frozen so a
@@ -45,9 +47,11 @@ FAILURE_REASONS: Final[frozenset[FailureReason]] = frozenset(
         "driver_aborted",
         "agent_not_joined",
         "audio_missing",
+        "missing_credential",
         "transcription_failed",
         "metrics_failed",
         "evaluation_failed",
+        "spec_vad_mismatch",
     }
 )
 

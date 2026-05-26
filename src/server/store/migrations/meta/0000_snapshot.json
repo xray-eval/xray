@@ -79,6 +79,15 @@
             "turn_idx"
           ],
           "isUnique": false
+        },
+        "uq_assertion_results_replay_turn_idx": {
+          "name": "uq_assertion_results_replay_turn_idx",
+          "columns": [
+            "replay_id",
+            "turn_idx",
+            "assertion_idx"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -251,6 +260,14 @@
             "replay_id"
           ],
           "isUnique": false
+        },
+        "uq_judge_results_replay_judge_idx": {
+          "name": "uq_judge_results_replay_judge_idx",
+          "columns": [
+            "replay_id",
+            "judge_idx"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -598,16 +615,7 @@
           "autoincrement": false
         }
       },
-      "indexes": {
-        "idx_replay_turns_replay_idx": {
-          "name": "idx_replay_turns_replay_idx",
-          "columns": [
-            "replay_id",
-            "idx"
-          ],
-          "isUnique": false
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "replay_turns_replay_id_replays_id_fk": {
           "name": "replay_turns_replay_id_replays_id_fk",
@@ -759,7 +767,7 @@
         },
         "replays_failure_reason_ck": {
           "name": "replays_failure_reason_ck",
-          "value": "\"replays\".\"failure_reason\" IS NULL OR \"replays\".\"failure_reason\" IN ('stalled', 'timeout', 'explicit_fail', 'max_attempts_exceeded', 'worker_lost', 'upload_failed', 'driver_aborted', 'agent_not_joined', 'audio_missing', 'transcription_failed', 'metrics_failed', 'evaluation_failed')"
+          "value": "\"replays\".\"failure_reason\" IS NULL OR \"replays\".\"failure_reason\" IN ('stalled', 'timeout', 'explicit_fail', 'max_attempts_exceeded', 'worker_lost', 'upload_failed', 'driver_aborted', 'agent_not_joined', 'audio_missing', 'missing_credential', 'transcription_failed', 'metrics_failed', 'evaluation_failed', 'spec_vad_mismatch')"
         }
       }
     },

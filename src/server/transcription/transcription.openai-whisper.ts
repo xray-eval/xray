@@ -1,3 +1,5 @@
+import * as v from "valibot";
+
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
 
 import {
@@ -10,9 +12,47 @@ import type {
 	TranscriptionResult,
 } from "./transcription.types.ts";
 
+/**
+ * Strip OpenAI-style API key prefixes ("sk-...") from any string we're
+ * about to embed in an error message or log line. OpenAI's 401 response
+ * echoes a truncated key prefix into its error body — without this
+ * helper, every "wrong key" error sprays partial credential material into
+ * the operator's stdout / log aggregator (Datadog, Loki, etc.). The
+ * regex covers both project keys (`sk-proj-...`) and classic ones.
+ *
+ * Defined in the transcription slice (rather than a shared utility) so
+ * `judges.openai.ts` keeps its existing one-way import on this module
+ * (`FetchLike` already crosses this seam); avoids a cycle.
+ */
+export function redactProviderSecrets(text: string): string {
+	return text.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***");
+}
+
 const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
 const DEFAULT_MODEL = "whisper-1";
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+// Whisper `verbose_json` response shape, validated at the provider boundary.
+// Per `.claude/rules/boundary-validation.md`, every byte from an external
+// system passes through Valibot before any other code reads it. We model
+// only the fields we read; unknown keys are dropped (default `v.object`).
+//
+// `text`, `language`, and `duration` are all marked optional because OpenAI
+// has historically returned them missing on edge cases (zero-duration
+// inputs, certain error fall-throughs that still produced a 200). Coerce
+// missing/null values to safe defaults at the call site so the row insert
+// still has the columns it needs.
+const WhisperWordSchema = v.object({
+	word: v.optional(v.string()),
+	start: v.optional(v.number()),
+	end: v.optional(v.number()),
+});
+const WhisperResponseSchema = v.object({
+	text: v.optional(v.string()),
+	language: v.optional(v.union([v.string(), v.null()])),
+	duration: v.optional(v.union([v.number(), v.null()])),
+	words: v.optional(v.union([v.array(WhisperWordSchema), v.null()])),
+});
 
 /**
  * Minimal subset of `fetch` we depend on. Bun's `typeof fetch` includes a
@@ -29,6 +69,18 @@ export interface OpenAIWhisperOptions {
 	readonly model?: string;
 	readonly fetchImpl?: FetchLike;
 	readonly timeoutMs?: number;
+}
+
+/**
+ * Combine an external AbortSignal (e.g. shared by sibling Promise.all
+ * Whisper calls) with the internal per-request timeout. When either fires,
+ * the merged signal aborts — so a failing sibling cancels the in-flight
+ * siblings instead of letting them keep burning the API quota.
+ */
+function mergeAbortSignals(external: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+	const timeoutSignal = AbortSignal.timeout(timeoutMs);
+	if (external === undefined) return timeoutSignal;
+	return AbortSignal.any([external, timeoutSignal]);
 }
 
 /**
@@ -66,13 +118,15 @@ export function createOpenAIWhisperProvider(opts: OpenAIWhisperOptions): Transcr
 					method: "POST",
 					headers: { authorization: `Bearer ${key}` },
 					body: form,
-					signal: AbortSignal.timeout(timeoutMs),
+					signal: mergeAbortSignals(input.signal, timeoutMs),
 				});
 			} catch (cause) {
 				const message =
 					cause instanceof Error && cause.name === "TimeoutError"
 						? `fetch timed out after ${timeoutMs}ms`
-						: "fetch failed";
+						: cause instanceof Error && cause.name === "AbortError"
+							? "fetch aborted by caller"
+							: "fetch failed";
 				throw new TranscriptionProviderError("openai-whisper", message, null, { cause });
 			}
 
@@ -85,7 +139,7 @@ export function createOpenAIWhisperProvider(opts: OpenAIWhisperOptions): Transcr
 				}
 				throw new TranscriptionProviderError(
 					"openai-whisper",
-					`HTTP ${response.status}: ${detail.slice(0, 512)}`,
+					`HTTP ${response.status}: ${redactProviderSecrets(detail).slice(0, 512)}`,
 					response.status,
 				);
 			}
@@ -106,50 +160,34 @@ export function createOpenAIWhisperProvider(opts: OpenAIWhisperOptions): Transcr
 	};
 }
 
-interface WhisperRawResponse {
-	text?: unknown;
-	language?: unknown;
-	duration?: unknown;
-	words?: unknown;
-}
-
-interface WhisperRawWord {
-	word?: unknown;
-	start?: unknown;
-	end?: unknown;
-}
-
 function parseWhisperResponse(raw: unknown): TranscriptionResult {
-	if (!isWhisperRawResponse(raw)) {
-		throw new TranscriptionProviderError("openai-whisper", "response body was not an object");
+	const result = v.safeParse(WhisperResponseSchema, raw);
+	if (!result.success) {
+		throw new TranscriptionProviderError(
+			"openai-whisper",
+			`response body failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
+		);
 	}
-	const text = typeof raw.text === "string" ? raw.text : "";
-	const language = typeof raw.language === "string" ? raw.language : null;
-	const durationSec = typeof raw.duration === "number" ? raw.duration : 0;
+	const parsed = result.output;
+	const text = parsed.text ?? "";
+	const language = parsed.language ?? null;
+	const durationSec = parsed.duration ?? 0;
 	const durationMs = Math.max(0, Math.round(durationSec * 1000));
-	const words = Array.isArray(raw.words)
-		? raw.words
-				.map(parseWhisperWord)
-				.filter((w): w is { text: string; startMs: number; endMs: number } => w !== null)
-		: null;
+	const wordsRaw = parsed.words ?? null;
+	const words =
+		wordsRaw !== null
+			? wordsRaw
+					.map((w) => {
+						if (w.word === undefined || w.start === undefined || w.end === undefined) {
+							return null;
+						}
+						return {
+							text: w.word,
+							startMs: Math.max(0, Math.round(w.start * 1000)),
+							endMs: Math.max(0, Math.round(w.end * 1000)),
+						};
+					})
+					.filter((w): w is { text: string; startMs: number; endMs: number } => w !== null)
+			: null;
 	return { text, language, durationMs, words: words && words.length > 0 ? words : null };
-}
-
-function parseWhisperWord(w: unknown): { text: string; startMs: number; endMs: number } | null {
-	if (!isWhisperRawWord(w)) return null;
-	if (typeof w.word !== "string") return null;
-	if (typeof w.start !== "number" || typeof w.end !== "number") return null;
-	return {
-		text: w.word,
-		startMs: Math.max(0, Math.round(w.start * 1000)),
-		endMs: Math.max(0, Math.round(w.end * 1000)),
-	};
-}
-
-function isWhisperRawResponse(value: unknown): value is WhisperRawResponse {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isWhisperRawWord(value: unknown): value is WhisperRawWord {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

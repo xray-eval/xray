@@ -47,7 +47,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.context.context import Context
 from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel, Field, ValidationError
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, assert_never
 
 from xray._json import JsonObject
 from xray.config import RunConfig
@@ -105,11 +105,11 @@ class _ReplayCreateResponse(BaseModel):
 
 class ReplayPatchBody(TypedDict):
     """PATCH /v1/replays/:id body. Mirrors the server's
-    ``UpdateReplayRequestSchema`` exactly."""
+    ``UpdateReplayRequestSchema``: every field is optional and the server
+    rejects updates that don't change at least one column."""
 
-    lifecycle_state: ReplayLifecycleState
+    lifecycle_state: NotRequired[ReplayLifecycleState]
     failure_reason: NotRequired[FailureReason]
-    finished_at: NotRequired[str]
 
 
 # ─── Public entrypoint ────────────────────────────────────────────────
@@ -177,16 +177,22 @@ async def run(
         )
 
         # 4. Run the runtime.
-        driver_failure: FailureReason | None = None
+        # We capture the typed XrayError instance (not just its
+        # `failure_reason`) so we can re-raise the SAME subclass after the
+        # PATCH below — the dev's `except AgentNotJoinedError` /
+        # `except AudioMissingError` block has to fire, not a bare base
+        # XrayError. Untyped runtime exceptions (TypeError, KeyError, …)
+        # become a fresh `XrayError(failure_reason='driver_aborted')`.
+        driver_error: XrayError | None = None
         runtime_result: RuntimeResult | None = None
         try:
             runtime_result = await runtime.run(conversation)
         except XrayError as e:
             logger.exception("typed runtime failure on replay %s", replay_id)
-            driver_failure = e.failure_reason
-        except Exception:
+            driver_error = e
+        except Exception as e:
             logger.exception("unclassified runtime failure on replay %s", replay_id)
-            driver_failure = "driver_aborted"
+            driver_error = XrayError(f"runtime failed: {e}")
         finally:
             await runtime.aclose()
             # Flush driver-side spans + detach baggage before /analyze so
@@ -196,7 +202,7 @@ async def run(
 
         # 5. Upload mixdown if produced and driver didn't fail.
         if (
-            driver_failure is None
+            driver_error is None
             and runtime_result is not None
             and runtime_result.full_audio_path is not None
         ):
@@ -206,20 +212,19 @@ async def run(
                 )
             except XrayError as e:
                 logger.exception("audio upload failed on replay %s", replay_id)
-                driver_failure = e.failure_reason
-            except Exception:
+                driver_error = e
+            except Exception as e:
                 logger.exception("audio upload errored on replay %s", replay_id)
-                driver_failure = "driver_aborted"
+                driver_error = XrayError(f"audio upload failed: {e}")
 
         # If anything driver-side failed, PATCH the row to `failed` with the
-        # right reason and raise — the server's chain can't run without the
-        # audio anyway. The original typed XrayError was already caught at the
-        # runtime/upload boundaries above; we re-raise a generic XrayError that
-        # carries the failure_reason so the dev's pytest sees a typed raise
-        # rather than a successful ReplayResult.
-        if driver_failure is not None:
-            await _patch_driver_failure(client, replay_id, driver_failure)
-            raise XrayError(f"replay {replay_id!r} aborted driver-side: {driver_failure}")
+        # right reason and re-raise the ORIGINAL typed subclass — the dev's
+        # `except AgentNotJoinedError as e: print(e.room)` only works if the
+        # raised exception is the AgentNotJoinedError, not a bare XrayError
+        # wrapping its `failure_reason` string.
+        if driver_error is not None:
+            await _patch_driver_failure(client, replay_id, driver_error.failure_reason)
+            raise driver_error
 
         # 6. Kick off the server-side analyze chain.
         r = await client.post(f"/v1/replays/{replay_id}/analyze")
@@ -227,11 +232,19 @@ async def run(
 
         # 7. Stream events until evaluation_complete or failed.
         outcome = await _wait_for_evaluation(client, replay_id)
-        if outcome.kind == "failed":
-            raise ReplayEvaluationError(replay_id, outcome.failure_reason)
-
-        # 8. Translate the SSE payload into ReplayResult.
-        return _result_from_payload(outcome.payload, replay_id=replay_id)
+        # Match exhaustively on the discriminated union so adding a third
+        # `_EvalOutcome` variant in future (e.g. `_EvalCancelled`)
+        # statically forces every consumer to handle it —
+        # `assert_never(outcome)` turns the missing arm into a pyright
+        # error rather than a silent fall-through.
+        match outcome:
+            case _EvalFailed(failure_reason=reason):
+                raise ReplayEvaluationError(replay_id, reason)
+            case _EvalCompleted(payload=payload):
+                # 8. Translate the SSE payload into ReplayResult.
+                return _result_from_payload(payload, replay_id=replay_id)
+            case _:
+                assert_never(outcome)
 
 
 # ─── Result translation ──────────────────────────────────────────────
@@ -360,7 +373,7 @@ async def _wait_for_evaluation(
         timeout=timeout_s,
         headers={"accept": "text/event-stream"},
     ) as response:
-        response.raise_for_status()
+        _raise_for_status_typed(response, f"GET /v1/replays/{replay_id}/events")
         event_type: str | None = None
         async for raw_line in response.aiter_lines():
             line = raw_line.rstrip("\r")
@@ -471,7 +484,7 @@ async def _upload_replay_audio(
         content=bytes_,
         headers={"content-type": "audio/wav"},
     )
-    response.raise_for_status()
+    _raise_for_status_typed(response, f"POST /v1/replays/{replay_id}/audio")
 
 
 def _check_recorded_audio_exists(conversation: Conversation) -> None:

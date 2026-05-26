@@ -46,7 +46,14 @@ export type AnalysisStep = (typeof ANALYSIS_STEPS)[number];
 //   3. Pipeline-stage failures stamped by each chained job
 //      (`transcription_failed`, `metrics_failed`, `evaluation_failed`).
 //      The job that failed names itself so the driver can decide whether
-//      to retry the run vs. flag a flaky provider.
+//      to retry the run vs. flag a flaky provider. `spec_vad_mismatch` is
+//      a sub-class of evaluation failure: the conversation spec's turn
+//      sequence can't be aligned to the VAD-derived turn sequence (e.g.
+//      spec expects 3 turns but VAD detected 1, or roles diverge by
+//      position). `missing_credential` is the analyze chain's "operator
+//      forgot to set OPENAI_API_KEY" signal — distinct from
+//      `transcription_failed` / `evaluation_failed` so the README pointer
+//      surfaces cleanly.
 //
 // The SDK's `xray.errors.FailureReason` literal MUST be a subset of this
 // list — enforced by the contract test at
@@ -61,9 +68,11 @@ export const REPLAY_FAILURE_REASONS = [
 	"driver_aborted",
 	"agent_not_joined",
 	"audio_missing",
+	"missing_credential",
 	"transcription_failed",
 	"metrics_failed",
 	"evaluation_failed",
+	"spec_vad_mismatch",
 ] as const;
 export type ReplayFailureReason = (typeof REPLAY_FAILURE_REASONS)[number];
 
