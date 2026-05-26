@@ -1,5 +1,7 @@
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
+import type { StyleProps } from "react-json-view-lite";
+import { JsonView } from "react-json-view-lite";
 import { match } from "ts-pattern";
 
 import { BackLink } from "@/client/components/back-link.tsx";
@@ -7,17 +9,26 @@ import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableFooter,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/client/components/ui/table.tsx";
 import { shortHash } from "@/client/format.ts";
+import { cn } from "@/client/lib/utils.ts";
 
 import { getConversation, getReplay, replayAudioUrl } from "../api/api.ts";
 import type {
 	ModelUsageResponse,
 	ReplayDetailResponse,
-	ReplayTurnResponse,
 	SpanResponse,
 	ToolCallResponse,
 } from "../api/api.types.ts";
-import { AudioWithCaptions } from "../audio/audio-with-captions.tsx";
+import { StereoTurnPlayer } from "../audio/stereo-turn-player.tsx";
 import { formatTimestamp } from "../format.ts";
 import { RunStatusBadge } from "../replay-status/replay-status.tsx";
 
@@ -72,9 +83,30 @@ export function Inspector() {
 						/>
 					)}
 				</div>
-				<div className="space-y-1.5">
-					<h2 className="text-2xl font-semibold tracking-tight">Replay</h2>
-					<p className="font-mono text-xs text-muted-foreground">{replayId}</p>
+				<div className="space-y-2">
+					<div className="flex flex-wrap items-center gap-3">
+						<h2 className="text-2xl font-semibold tracking-tight">Replay</h2>
+						{query.data && <RunStatusBadge replay={query.data} />}
+					</div>
+					<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-xs text-muted-foreground tabular-nums">
+						<span>{replayId}</span>
+						{query.data && (
+							<>
+								<span aria-hidden="true" className="text-border">
+									·
+								</span>
+								<span>Started {formatTimestamp(query.data.started_at)}</span>
+								{query.data.finished_at !== null && (
+									<>
+										<span aria-hidden="true" className="text-border">
+											·
+										</span>
+										<span>Finished {formatTimestamp(query.data.finished_at)}</span>
+									</>
+								)}
+							</>
+						)}
+					</div>
 				</div>
 			</div>
 
@@ -99,82 +131,56 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<div className="grid gap-6 lg:grid-cols-3">
 			<div className="grid gap-6 lg:col-span-2">
-				<HeaderCard replay={replay} />
 				<TurnsCard replay={replay} />
 				<SpansCard spans={replay.spans} />
 			</div>
 			<aside className="grid gap-6">
-				<RunConfigCard replay={replay} />
-				<ToolCallsCard toolCalls={replay.tool_calls} />
-				<ModelUsageCard usage={replay.model_usage} />
+				<RunDetailsCard replay={replay} />
 			</aside>
 		</div>
 	);
 }
 
 function TurnsCard({ replay }: { replay: ReplayDetailResponse }) {
+	const audioUploaded = replay.audio_path !== null;
 	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+		<Card className="gap-0 overflow-hidden p-0">
+			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
+				<CardTitle className="text-base font-semibold tracking-tight text-foreground">
 					Turns
 				</CardTitle>
 			</CardHeader>
-			<CardContent>
-				{replay.turns.length === 0 ? (
-					<p className="text-sm text-muted-foreground">
-						No turns derived yet. Server-side VAD analysis populates this list after the audio
-						upload completes.
-					</p>
+			<CardContent className={cn("px-5 py-4", audioUploaded && "space-y-3")}>
+				{audioUploaded ? (
+					<>
+						<StereoTurnPlayer audioUrl={replayAudioUrl(replay.id)} turns={replay.turns} />
+						{replay.turns.length === 0 && (
+							<p className="text-xs text-muted-foreground">
+								Audio uploaded. Server-side VAD analysis hasn't published turns yet. They'll appear
+								on the waveform once analysis completes.
+							</p>
+						)}
+					</>
 				) : (
-					<ol className="grid gap-3">
-						{replay.turns.map((turn) => (
-							<li key={`${turn.idx}-${turn.role}`}>
-								<TurnBlock turn={turn} />
-							</li>
-						))}
-					</ol>
+					<p className="text-sm text-muted-foreground">
+						Awaiting audio upload. Server-side VAD analysis populates turns after the stereo WAV
+						lands.
+					</p>
 				)}
 			</CardContent>
 		</Card>
 	);
 }
 
-// VAD-derived turn idx is independent of script turn idx — `deriveTurns`
-// merges consecutive same-role VAD segments into one turn, so a silent
-// agent or VAD-merged user utterances drop the script alignment. Show
-// only what the VAD actually measured; the script lives on the
-// conversation page.
-function TurnBlock({ turn }: { turn: ReplayTurnResponse }) {
-	return (
-		<div className="rounded-md border border-border/60 bg-muted/20 p-4">
-			<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-				<Badge variant={turn.role === "user" ? "secondary" : "default"} className="font-normal">
-					{turn.role}
-				</Badge>
-				<span className="font-mono">#{turn.idx}</span>
-				<span className="tabular-nums">
-					· {formatMsRange(turn.voice_start_ms, turn.voice_end_ms)}
-				</span>
-			</div>
-		</div>
-	);
-}
-
-function formatMsRange(startMs: number, endMs: number): string {
-	const fmt = (ms: number) => (ms / 1000).toFixed(2);
-	return `${fmt(startMs)}s → ${fmt(endMs)}s`;
-}
-
 function SpansCard({ spans }: { spans: SpanResponse[] }) {
 	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+		<Card className="gap-0 overflow-hidden p-0">
+			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
+				<CardTitle className="text-base font-semibold tracking-tight text-foreground">
 					Span tree
 				</CardTitle>
 			</CardHeader>
-			<CardContent>
+			<CardContent className="px-5 py-4">
 				{spans.length === 0 ? (
 					<p className="text-sm text-muted-foreground">
 						No trace spans recorded. Decorate your agent code with{" "}
@@ -208,112 +214,228 @@ function SpansCard({ spans }: { spans: SpanResponse[] }) {
 	);
 }
 
-function RunConfigCard({ replay }: { replay: ReplayDetailResponse }) {
-	if (replay.run_config === null || replay.run_config === undefined) return null;
+function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
+	const hasUsage = replay.model_usage.length > 0;
+	const hasTools = replay.tool_calls.length > 0;
+	const hasConfig = replay.run_config !== null && replay.run_config !== undefined;
+	if (!hasUsage && !hasTools && !hasConfig) return null;
 	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-					Run config
+		<Card className="gap-0 overflow-hidden p-0">
+			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
+				<CardTitle className="text-base font-semibold tracking-tight text-foreground">
+					Run details
 				</CardTitle>
 			</CardHeader>
-			<CardContent>
-				<pre className="overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/60 bg-muted/20 p-3 font-mono text-xs leading-relaxed">
-					{JSON.stringify(replay.run_config, null, 2)}
-				</pre>
+			<CardContent className="divide-y divide-border/50 p-0">
+				{hasUsage && <ModelUsageSection usage={replay.model_usage} />}
+				{hasTools && <ToolCallsSection toolCalls={replay.tool_calls} />}
+				{hasConfig && <RunConfigSection runConfig={replay.run_config} />}
 			</CardContent>
 		</Card>
 	);
 }
 
-function ToolCallsCard({ toolCalls }: { toolCalls: ToolCallResponse[] }) {
-	if (toolCalls.length === 0) return null;
+function SectionHeader({ label, meta }: { label: string; meta?: string | null }) {
 	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-					Tool calls
-				</CardTitle>
-			</CardHeader>
-			<CardContent>
-				<ul className="grid gap-2 text-xs">
-					{toolCalls.map((tc) => (
-						<li
-							key={tc.id}
-							className="rounded-md border border-border/60 bg-muted/20 p-2.5 font-mono"
-						>
-							<div className="font-medium">{tc.name}</div>
-							{tc.args_json !== null && (
-								<div className="mt-1 truncate text-muted-foreground">args: {tc.args_json}</div>
-							)}
-							{tc.result_json !== null && (
-								<div className="truncate text-muted-foreground">result: {tc.result_json}</div>
-							)}
-							{tc.latency_ms !== null && (
-								<div className="text-muted-foreground tabular-nums">{tc.latency_ms}ms</div>
-							)}
-						</li>
-					))}
-				</ul>
-			</CardContent>
-		</Card>
+		<div className="mb-3 flex items-baseline justify-between gap-3">
+			<h3 className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-foreground/70">
+				{label}
+			</h3>
+			{meta !== null && meta !== undefined && (
+				<span className="font-mono text-[10px] tracking-wide text-muted-foreground/70 tabular-nums">
+					{meta}
+				</span>
+			)}
+		</div>
 	);
 }
 
-function ModelUsageCard({ usage }: { usage: ModelUsageResponse[] }) {
-	if (usage.length === 0) return null;
+function ModelUsageSection({ usage }: { usage: ModelUsageResponse[] }) {
+	const totals = usage.reduce(
+		(acc, u) => ({
+			input: acc.input + (u.input_tokens ?? 0),
+			output: acc.output + (u.output_tokens ?? 0),
+			total: acc.total + (u.total_tokens ?? 0),
+		}),
+		{ input: 0, output: 0, total: 0 },
+	);
+	const showTotalRow = usage.length > 1;
 	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-					Model usage
-				</CardTitle>
-			</CardHeader>
-			<CardContent>
-				<ul className="grid gap-2 text-xs">
+		<section className="px-5 py-4">
+			<SectionHeader
+				label="Model usage"
+				meta={`${usage.length} call${usage.length === 1 ? "" : "s"}`}
+			/>
+			<Table className="w-full table-fixed font-mono text-xs tabular-nums">
+				<TableHeader>
+					<TableRow className="hover:bg-transparent">
+						<TableHead className={cn(USAGE_HEAD, "pl-0")}>model</TableHead>
+						<TableHead className={cn(USAGE_HEAD, "w-12 text-right")}>in</TableHead>
+						<TableHead className={cn(USAGE_HEAD, "w-12 text-right")}>out</TableHead>
+						<TableHead className={cn(USAGE_HEAD, "w-14 pr-0 text-right")}>total</TableHead>
+					</TableRow>
+				</TableHeader>
+				<TableBody>
 					{usage.map((u) => (
-						<li key={u.id} className="rounded-md border border-border/60 bg-muted/20 p-2.5">
-							<div className="flex items-center justify-between gap-2">
-								<span className="font-mono">{u.model ?? "(unknown)"}</span>
-								<Badge variant="outline" className="font-normal">
-									{u.provider ?? "?"}
-								</Badge>
-							</div>
-							<div className="mt-1 text-muted-foreground tabular-nums">
-								in: {u.input_tokens ?? "?"} · out: {u.output_tokens ?? "?"} · total:{" "}
-								{u.total_tokens ?? "?"}
-							</div>
-						</li>
+						<TableRow key={u.id} className="border-border/40">
+							<TableCell className="overflow-hidden pl-0">
+								<div className="truncate">
+									<span className="text-foreground">{u.model ?? "—"}</span>
+									{u.provider !== null && (
+										<span className="ml-1.5 text-muted-foreground">/{u.provider}</span>
+									)}
+								</div>
+							</TableCell>
+							<TableCell className="text-right text-foreground/80">
+								{formatTokens(u.input_tokens)}
+							</TableCell>
+							<TableCell className="text-right text-foreground/80">
+								{formatTokens(u.output_tokens)}
+							</TableCell>
+							<TableCell className="pr-0 text-right font-semibold text-foreground">
+								{formatTokens(u.total_tokens)}
+							</TableCell>
+						</TableRow>
 					))}
-				</ul>
-			</CardContent>
-		</Card>
+				</TableBody>
+				{showTotalRow && (
+					<TableFooter className="bg-transparent">
+						<TableRow className="border-t border-border/40 hover:bg-transparent">
+							<TableCell className="pl-0 text-[10px] uppercase tracking-wider text-muted-foreground">
+								Total
+							</TableCell>
+							<TableCell className="text-right text-foreground/80">
+								{totals.input.toLocaleString()}
+							</TableCell>
+							<TableCell className="text-right text-foreground/80">
+								{totals.output.toLocaleString()}
+							</TableCell>
+							<TableCell className="pr-0 text-right text-foreground">
+								{totals.total.toLocaleString()}
+							</TableCell>
+						</TableRow>
+					</TableFooter>
+				)}
+			</Table>
+		</section>
 	);
 }
 
-function HeaderCard({ replay }: { replay: ReplayDetailResponse }) {
+const USAGE_HEAD = "h-7 text-[10px] uppercase tracking-wider text-muted-foreground/70 font-normal";
+
+function formatTokens(value: number | null): string {
+	return value === null ? "—" : value.toLocaleString();
+}
+
+function ToolCallsSection({ toolCalls }: { toolCalls: ToolCallResponse[] }) {
 	return (
-		<Card className="gap-4">
-			<CardHeader>
-				<CardTitle className="flex items-center justify-between gap-3 text-sm font-medium uppercase tracking-wider text-muted-foreground">
-					<span>Status</span>
-					<RunStatusBadge replay={replay} />
-				</CardTitle>
-			</CardHeader>
-			<CardContent className="space-y-1.5 text-sm text-muted-foreground tabular-nums">
-				<div>Started {formatTimestamp(replay.started_at)}</div>
-				{replay.finished_at !== null && <div>Finished {formatTimestamp(replay.finished_at)}</div>}
-				{replay.audio_path !== null && (
-					<div className="mt-4">
-						<AudioWithCaptions
-							src={replayAudioUrl(replay.id)}
-							captionText={null}
-							className="w-full"
-							label="Full replay audio"
-						/>
-					</div>
-				)}
-			</CardContent>
-		</Card>
+		<section className="px-5 py-4">
+			<SectionHeader label="Tool calls" meta={`${toolCalls.length}`} />
+			<ul className="space-y-2.5">
+				{toolCalls.map((tc) => (
+					<li key={tc.id} className="font-mono text-xs">
+						<div className="flex items-baseline justify-between gap-3">
+							<span className="truncate font-medium text-foreground">{tc.name}</span>
+							{tc.latency_ms !== null && (
+								<span className="shrink-0 tabular-nums text-muted-foreground">
+									{tc.latency_ms}ms
+								</span>
+							)}
+						</div>
+						{(tc.args_json !== null || tc.result_json !== null) && (
+							<dl className="mt-1 space-y-1 border-l border-border/40 pl-2.5 text-[11px] text-muted-foreground">
+								{tc.args_json !== null && <ToolCallJsonField label="Args" raw={tc.args_json} />}
+								{tc.result_json !== null && (
+									<ToolCallJsonField label="Result" raw={tc.result_json} />
+								)}
+							</dl>
+						)}
+					</li>
+				))}
+			</ul>
+		</section>
 	);
 }
+
+function ToolCallJsonField({ label, raw }: { label: string; raw: string }) {
+	const parsed = safeParseJson(raw);
+	if (parsed.ok && isJsonContainer(parsed.value)) {
+		return (
+			<div className="flex gap-2">
+				<dt className="shrink-0 text-muted-foreground/60">{label}</dt>
+				<dd className="min-w-0 flex-1 overflow-auto">
+					<JsonView
+						data={parsed.value}
+						style={JSON_VIEW_STYLE}
+						shouldExpandNode={(level) => level < 1}
+					/>
+				</dd>
+			</div>
+		);
+	}
+	return (
+		<div className="flex gap-2">
+			<dt className="shrink-0 text-muted-foreground/60">{label}</dt>
+			<dd className="min-w-0 truncate text-foreground/80">{raw}</dd>
+		</div>
+	);
+}
+
+function safeParseJson(raw: string): { ok: true; value: unknown } | { ok: false } {
+	try {
+		const value: unknown = JSON.parse(raw);
+		return { ok: true, value };
+	} catch {
+		return { ok: false };
+	}
+}
+
+function RunConfigSection({ runConfig }: { runConfig: unknown }) {
+	return (
+		<section className="px-5 py-4">
+			<SectionHeader label="Run config" />
+			{isJsonContainer(runConfig) ? (
+				<div className="max-h-64 overflow-auto rounded-md border border-border/40 bg-muted/30 p-3">
+					<JsonView
+						data={runConfig}
+						style={JSON_VIEW_STYLE}
+						shouldExpandNode={(level) => level < 2}
+					/>
+				</div>
+			) : (
+				<pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/40 bg-muted/30 p-3 font-mono text-[11px] leading-relaxed text-foreground/90">
+					{JSON.stringify(runConfig)}
+				</pre>
+			)}
+		</section>
+	);
+}
+
+function isJsonContainer(value: unknown): value is object {
+	return typeof value === "object" && value !== null;
+}
+
+/**
+ * Style props for `react-json-view-lite`. Built entirely with our Tailwind
+ * tokens so we don't have to import the library's bundled CSS (the package
+ * ships hashed class names that would collide with our design system).
+ */
+const JSON_VIEW_STYLE: StyleProps = {
+	container: "font-mono text-[11px] leading-relaxed text-foreground/90",
+	basicChildStyle: "ml-3",
+	label: "mr-1.5 text-sky-400",
+	clickableLabel: "mr-1.5 cursor-pointer text-sky-400",
+	nullValue: "text-destructive",
+	undefinedValue: "text-destructive",
+	numberValue: "text-orange-400",
+	stringValue: "text-emerald-400",
+	booleanValue: "text-orange-400",
+	otherValue: "text-foreground",
+	punctuation: "mr-1 text-muted-foreground/60",
+	expandIcon: "mr-1 inline-block w-3 select-none text-muted-foreground before:content-['▸']",
+	collapseIcon: "mr-1 inline-block w-3 select-none text-muted-foreground before:content-['▾']",
+	collapsedContent: "mx-1 text-muted-foreground/60 before:content-['…']",
+	childFieldsContainer: "ml-1 border-l border-border/30 pl-2",
+	ariaLables: { collapseJson: "Collapse", expandJson: "Expand" },
+	stringifyStringValues: false,
+};
