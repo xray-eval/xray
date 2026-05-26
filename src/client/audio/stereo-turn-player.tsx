@@ -6,9 +6,18 @@ import type WaveSurfer from "wavesurfer.js";
 import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js";
 
 import type { ReplayTurnResponse } from "@/client/api/api.types.ts";
+import type { PlayerControls } from "@/client/audio/player-provider.tsx";
+import { useRegisterPlayer } from "@/client/audio/player-provider.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Button } from "@/client/components/ui/button.tsx";
 import { cn } from "@/client/lib/utils.ts";
+
+// Yellow-tinted so the selected range stays distinguishable from the
+// played-position wash (`bg-white/15` below). White-on-white merges into
+// one continuous overlay and the selection becomes invisible against
+// already-played audio.
+const HIGHLIGHT_FILL = "rgba(250, 204, 21, 0.38)";
+const HIGHLIGHT_REGION_ID = "xray-trace-highlight";
 
 /**
  * Hex / rgba color literals live INSIDE the wavesurfer config only — they
@@ -106,14 +115,81 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 		return unsubscribe;
 	}, [regions]);
 
+	const controls = useMemo<PlayerControls | null>(() => {
+		if (!isReady || !wavesurfer) return null;
+		const removeHighlight = () => {
+			const existing = regions.getRegions().find((r) => r.id === HIGHLIGHT_REGION_ID);
+			existing?.remove();
+		};
+		return {
+			seek: (seconds) => {
+				const safe = Math.max(0, seconds);
+				wavesurfer.setTime(safe);
+			},
+			highlight: (start, end) => {
+				if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+				// Zero-duration spans (e.g. xray.stage.tts emitted as an
+				// instant event) need a visible marker — wavesurfer renders
+				// a zero-width region as zero pixels, which silently looks
+				// identical to "no highlight changed". Any span below the
+				// minimum is centered on its timestamp so the marker
+				// doesn't visually extend past the actual event time.
+				const MIN_WIDTH_SEC = 0.05;
+				const span = Math.max(end - start, 0);
+				const width = Math.max(span, MIN_WIDTH_SEC);
+				const renderStart = Math.max(0, span < MIN_WIDTH_SEC ? start - width / 2 : start);
+				const renderEnd = renderStart + width;
+				removeHighlight();
+				regions.addRegion({
+					id: HIGHLIGHT_REGION_ID,
+					start: renderStart,
+					end: renderEnd,
+					color: HIGHLIGHT_FILL,
+					drag: false,
+					resize: false,
+				});
+			},
+			clearHighlight: removeHighlight,
+		};
+	}, [isReady, regions, wavesurfer]);
+
+	useRegisterPlayer(controls);
+
+	// User clicks on the waveform (not on a turn region) → clear the
+	// trace-tree highlight. The highlight only makes sense while the
+	// audio cursor matches a selected span; once the user scrubs to
+	// somewhere else, the highlight is stale.
+	useEffect(() => {
+		if (!wavesurfer) return;
+		const unsubscribe = wavesurfer.on("interaction", () => {
+			const existing = regions.getRegions().find((r) => r.id === HIGHLIGHT_REGION_ID);
+			existing?.remove();
+		});
+		return unsubscribe;
+	}, [regions, wavesurfer]);
+
 	return (
 		<div
+			// Opt the entire audio player out of the trace-tree's
+			// "click anywhere → clear highlight" listener. Scrubbing the
+			// waveform already clears via wavesurfer's `interaction` event;
+			// other player surfaces (play/pause, badges, header) should NOT
+			// drop the selection because the user is still working with the
+			// region they just selected.
+			data-keep-trace-highlight="true"
 			className={cn(
 				"group relative overflow-hidden rounded-xl border border-border/70 bg-card/60 shadow-sm backdrop-blur-sm transition-colors",
 				className,
 			)}
 		>
 			<div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-sky-400/70 via-transparent to-orange-400/70" />
+
+			<div className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-4">
+				<h3 className="text-base font-semibold tracking-tight text-foreground">Audio</h3>
+				<span className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+					Stereo · {turns.length} {turns.length === 1 ? "turn" : "turns"}
+				</span>
+			</div>
 
 			<div className="flex items-center justify-between gap-4 px-5 pt-4 pb-3">
 				<div className="flex items-center gap-2">
@@ -132,12 +208,9 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 						agent
 					</Badge>
 				</div>
-				<span className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-					Stereo · {turns.length} {turns.length === 1 ? "turn" : "turns"}
-				</span>
 			</div>
 
-			<section className="px-2 pb-1" aria-label="Replay waveform">
+			<section aria-label="Replay waveform">
 				<div className="relative">
 					<div ref={containerRef} className="w-full" />
 					{match(waveState)

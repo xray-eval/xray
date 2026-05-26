@@ -1,12 +1,12 @@
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
+import { useState } from "react";
 import type { StyleProps } from "react-json-view-lite";
 import { JsonView } from "react-json-view-lite";
 import { match } from "ts-pattern";
 
 import { BackLink } from "@/client/components/back-link.tsx";
 import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
-import { Badge } from "@/client/components/ui/badge.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import {
@@ -20,14 +20,15 @@ import {
 } from "@/client/components/ui/table.tsx";
 import { shortHash } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
+import { TraceTree, ZoomControls } from "@/client/trace-tree/trace-tree.tsx";
 
 import { getConversation, getReplay, replayAudioUrl } from "../api/api.ts";
 import type {
 	ModelUsageResponse,
 	ReplayDetailResponse,
-	SpanResponse,
 	ToolCallResponse,
 } from "../api/api.types.ts";
+import { PlayerProvider } from "../audio/player-provider.tsx";
 import { StereoTurnPlayer } from "../audio/stereo-turn-player.tsx";
 import { formatTimestamp } from "../format.ts";
 import { RunStatusBadge } from "../replay-status/replay-status.tsx";
@@ -129,86 +130,76 @@ export function Inspector() {
 
 function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
-		<div className="grid gap-6 lg:grid-cols-3">
-			<div className="grid gap-6 lg:col-span-2">
-				<TurnsCard replay={replay} />
-				<SpansCard spans={replay.spans} />
+		<PlayerProvider>
+			<div className="grid gap-6 lg:grid-cols-3">
+				<div className="grid gap-6 lg:col-span-2">
+					<AudioSection replay={replay} />
+					<TraceCard replay={replay} />
+				</div>
+				<aside className="grid gap-6">
+					<RunDetailsCard replay={replay} />
+				</aside>
 			</div>
-			<aside className="grid gap-6">
-				<RunDetailsCard replay={replay} />
-			</aside>
-		</div>
+		</PlayerProvider>
 	);
 }
 
-function TurnsCard({ replay }: { replay: ReplayDetailResponse }) {
-	const audioUploaded = replay.audio_path !== null;
-	return (
-		<Card className="gap-0 overflow-hidden p-0">
-			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
-				<CardTitle className="text-base font-semibold tracking-tight text-foreground">
-					Turns
-				</CardTitle>
-			</CardHeader>
-			<CardContent className={cn("px-5 py-4", audioUploaded && "space-y-3")}>
-				{audioUploaded ? (
-					<>
-						<StereoTurnPlayer audioUrl={replayAudioUrl(replay.id)} turns={replay.turns} />
-						{replay.turns.length === 0 && (
-							<p className="text-xs text-muted-foreground">
-								Audio uploaded. Server-side VAD analysis hasn't published turns yet. They'll appear
-								on the waveform once analysis completes.
-							</p>
-						)}
-					</>
-				) : (
+function AudioSection({ replay }: { replay: ReplayDetailResponse }) {
+	if (replay.audio_path === null) {
+		return (
+			<Card className="gap-0 overflow-hidden p-0">
+				<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
+					<CardTitle className="text-base font-semibold tracking-tight text-foreground">
+						Audio
+					</CardTitle>
+				</CardHeader>
+				<CardContent className="px-5 py-4">
 					<p className="text-sm text-muted-foreground">
 						Awaiting audio upload. Server-side VAD analysis populates turns after the stereo WAV
 						lands.
 					</p>
-				)}
-			</CardContent>
-		</Card>
+				</CardContent>
+			</Card>
+		);
+	}
+	return (
+		<div className="space-y-3">
+			<StereoTurnPlayer audioUrl={replayAudioUrl(replay.id)} turns={replay.turns} />
+			{replay.turns.length === 0 && (
+				<p className="text-xs text-muted-foreground">
+					Audio uploaded. Server-side VAD analysis hasn't published turns yet. They'll appear on
+					the waveform once analysis completes.
+				</p>
+			)}
+		</div>
 	);
 }
 
-function SpansCard({ spans }: { spans: SpanResponse[] }) {
+function TraceCard({ replay }: { replay: ReplayDetailResponse }) {
+	const [zoom, setZoom] = useState(1);
 	return (
 		<Card className="gap-0 overflow-hidden p-0">
 			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
-				<CardTitle className="text-base font-semibold tracking-tight text-foreground">
-					Span tree
-				</CardTitle>
+				<div className="flex items-center justify-between gap-3">
+					<div className="flex items-center gap-3">
+						<CardTitle className="text-base font-semibold tracking-tight text-foreground">
+							Span tree
+						</CardTitle>
+						<span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground/70">
+							{replay.turns.length} {replay.turns.length === 1 ? "turn" : "turns"} ·{" "}
+							{replay.spans.length} {replay.spans.length === 1 ? "span" : "spans"}
+						</span>
+					</div>
+					{replay.spans.length > 0 && <ZoomControls zoom={zoom} onChange={setZoom} />}
+				</div>
 			</CardHeader>
-			<CardContent className="px-5 py-4">
-				{spans.length === 0 ? (
-					<p className="text-sm text-muted-foreground">
-						No trace spans recorded. Decorate your agent code with{" "}
-						<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-							@xray.trace.stage(...)
-						</code>{" "}
-						to populate this panel — see <code className="font-mono text-xs">docs/SDK.md</code>.
-					</p>
-				) : (
-					<ul className="grid gap-2 text-xs">
-						{spans.map((s) => (
-							<li
-								key={s.id}
-								className="rounded-md border border-border/60 bg-muted/20 p-2.5 font-mono"
-							>
-								<div className="flex items-center justify-between gap-2">
-									<span className="truncate">{s.name}</span>
-									<Badge variant="outline" className="shrink-0 font-normal">
-										{s.vocabulary}
-									</Badge>
-								</div>
-								<div className="mt-1 text-muted-foreground tabular-nums">
-									{formatTimestamp(s.started_at)} → {formatTimestamp(s.ended_at)}
-								</div>
-							</li>
-						))}
-					</ul>
-				)}
+			<CardContent className="h-[560px] px-0 py-0">
+				<TraceTree
+					turns={replay.turns}
+					spans={replay.spans}
+					replayStartIso={replay.started_at}
+					zoom={zoom}
+				/>
 			</CardContent>
 		</Card>
 	);
