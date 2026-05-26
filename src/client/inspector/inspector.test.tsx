@@ -62,9 +62,10 @@ describe("Inspector empty states", () => {
 		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
 		render(ui);
 
-		const empty = await waitFor(() => screen.getByText(/No trace spans recorded/i));
-		expect(empty.textContent).toMatch(/@xray\.trace\.stage/);
-		expect(empty.textContent).toMatch(/docs\/SDK\.md/);
+		await waitFor(() => screen.getByText(/No spans recorded/i));
+		const region = screen.getByText(/No spans recorded/i).closest("div");
+		expect(region?.textContent).toMatch(/@xray\.trace\.stage/);
+		expect(region?.textContent).toMatch(/docs\/SDK\.md/);
 	});
 
 	it("explains that VAD will populate the Turns card before audio is uploaded", async () => {
@@ -136,5 +137,33 @@ describe("Inspector TurnsCard", () => {
 		await waitFor(() => screen.getByText(/Stereo · 0 turns/i));
 		const note = screen.getByText(/Audio uploaded\./i);
 		expect(note.textContent).toMatch(/VAD analysis/);
+	});
+});
+
+describe("Inspector TraceCard", () => {
+	it("renders span nodes attributed to their turn", async () => {
+		mockReplay(
+			buildReplay({
+				started_at: "2026-05-25T10:00:00.000Z",
+				spans: [
+					{
+						id: 1,
+						trace_id: "trace",
+						span_id: "s-1",
+						parent_span_id: null,
+						name: "stt.transcribe",
+						vocabulary: "xray",
+						started_at: "2026-05-25T10:00:00.200Z",
+						ended_at: "2026-05-25T10:00:01.400Z",
+						attributes_json: "{}",
+					},
+				],
+			}),
+		);
+		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
+		render(ui);
+
+		await waitFor(() => screen.getByText(/stt\.transcribe/));
+		expect(screen.getByLabelText(/Seek to xray span stt\.transcribe$/i)).toBeTruthy();
 	});
 });

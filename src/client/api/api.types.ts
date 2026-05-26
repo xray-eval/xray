@@ -20,3 +20,4 @@ export type {
 	ToolCallResponse,
 	UpdateReplayRequest,
 } from "@/server/replays/replays.types.ts";
+export type { SpanVocabulary, TurnRole } from "@/server/store/types.ts";
