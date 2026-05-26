@@ -185,6 +185,7 @@ class XraySession:
         finally:
             context.detach(token)
 
+
 # ─── xray.attach(ctx, …) — async context manager ──────────────────────
 
 
