@@ -51,9 +51,10 @@ export type AnalysisStep = (typeof ANALYSIS_STEPS)[number];
 //      sequence can't be aligned to the VAD-derived turn sequence (e.g.
 //      spec expects 3 turns but VAD detected 1, or roles diverge by
 //      position). `missing_credential` is the analyze chain's "operator
-//      forgot to set OPENAI_API_KEY" signal — distinct from
-//      `transcription_failed` / `evaluation_failed` so the README pointer
-//      surfaces cleanly.
+//      forgot to set the configured provider's API key" signal
+//      (`OPENAI_API_KEY` / `GOOGLE_API_KEY` depending on selector) —
+//      distinct from `transcription_failed` / `evaluation_failed` so the
+//      README pointer surfaces cleanly.
 //
 // The SDK's `xray.errors.FailureReason` literal MUST be a subset of this
 // list — enforced by the contract test at

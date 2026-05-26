@@ -27,11 +27,21 @@ const EnvSchema = v.object({
 	BUNQUEUE_DATA_PATH: v.optional(v.pipe(v.string(), v.nonEmpty())),
 	// Provider credentials are read at call time by the transcription +
 	// judge providers, not at boot — an operator running a smoke test
-	// without OPENAI_API_KEY should boot cleanly and only fail on the
+	// without any provider key should boot cleanly and only fail on the
 	// first replay that hits a stage that needs the key.
 	OPENAI_API_KEY: v.optional(v.pipe(v.string(), v.nonEmpty())),
-	// Override the judge LLM model. Defaults to gpt-4o inside the judge
-	// provider when unset.
+	GOOGLE_API_KEY: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// Selectors per stage. When unset, main.ts infers from which key is
+	// present (Google if only GOOGLE_API_KEY, OpenAI if only OPENAI_API_KEY,
+	// errors at boot when both are set + selector unset — explicit beats
+	// ambiguous default).
+	XRAY_TRANSCRIPTION_PROVIDER: v.optional(v.picklist(["openai-whisper", "google-gemini"])),
+	XRAY_JUDGE_PROVIDER: v.optional(v.picklist(["openai", "google-gemini"])),
+	// Override the transcription model. Defaults to whisper-1 (OpenAI) or
+	// gemini-2.5-flash (Google) inside the respective provider when unset.
+	XRAY_TRANSCRIPTION_MODEL: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// Override the judge LLM model. Defaults to gpt-4o-2024-08-06 (OpenAI)
+	// or gemini-2.5-pro (Google) inside the respective provider when unset.
 	XRAY_JUDGE_MODEL: v.optional(v.pipe(v.string(), v.nonEmpty())),
 });
 
