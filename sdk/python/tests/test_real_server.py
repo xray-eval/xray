@@ -70,7 +70,7 @@ def _make_stereo_wav(path: Path, *, sample_rate: int = 48000, seconds: float = 1
         wf.setnchannels(2)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
-        frames = b"".join(struct.pack("<hh", l, r) for (l, r) in samples)
+        frames = b"".join(struct.pack("<hh", left, right) for (left, right) in samples)
         wf.writeframes(frames)
 
 
@@ -149,9 +149,7 @@ async def xray_server(tmp_path: Path) -> AsyncIterator[str]:
             proc.kill()
 
 
-async def test_run_against_real_server_returns_conversation_hash(
-    xray_server: str, tmp_path: Path
-):
+async def test_run_against_real_server_returns_conversation_hash(xray_server: str, tmp_path: Path):
     conv = Conversation(
         name="integration test",
         turns=[Turn.user("hello", key="u0"), Turn.agent(key="a0")],

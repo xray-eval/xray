@@ -463,7 +463,9 @@ def format_failures(result: ReplayResult) -> str:
         if a.status == "passed":
             continue
         msg = a.message or "(no message)"
-        lines.append(f"  turn {a.turn_idx} assertion[{a.assertion_idx}] {a.kind}: {a.status} — {msg}")
+        lines.append(
+            f"  turn {a.turn_idx} assertion[{a.assertion_idx}] {a.kind}: {a.status} — {msg}"
+        )
     for j in result.judges:
         if j.status == "passed":
             continue
