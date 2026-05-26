@@ -1,0 +1,11 @@
+[project]
+name = "xray-example-voice-agent"
+version = "0.0.0"
+description = "Minimal LiveKit Agents worker wired to xray (example)."
+requires-python = ">=3.10"
+dependencies = [
+  "livekit-agents==1.5.9",
+  "livekit-plugins-google==1.5.9",
+  "langfuse==3.9.3",
+  # xray-py installed editable from ../../sdk/python in the Dockerfile.
+]

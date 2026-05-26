@@ -27,7 +27,7 @@ The two paths are coupled by trust: the OTLP receiver doesn't create Conversatio
 
 ## Replay = one execution of one Conversation
 
-There is only one meaning of "replay" in this repo now. The old "agent replay" vs "seed replay" split is gone — `scripts/seed.ts` exercises the same wire as a real run by POSTing a Conversation, then N Replays, then a handful of OTLP batches.
+There is only one meaning of "replay" in this repo now. The old "agent replay" vs "seed replay" split is gone — every Replay is produced by a real driver run against a real agent. A committed snapshot of one such run lives at `snapshot/` so the inspector has authentic data to render without re-executing the example.
 
 ## API documentation
 

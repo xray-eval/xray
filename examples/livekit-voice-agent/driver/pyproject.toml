@@ -1,0 +1,14 @@
+[project]
+name = "xray-example-driver"
+version = "0.0.0"
+description = "E2E test harness for the LiveKit voice-agent example."
+requires-python = ">=3.10"
+dependencies = [
+  "pytest==9.0.3",
+  "pytest-asyncio==1.3.0",
+  "httpx==0.28.1",
+  # xray-py installed editable from ../../sdk/python in the Dockerfile.
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

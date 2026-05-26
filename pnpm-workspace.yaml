@@ -86,6 +86,20 @@ overrides:
   # resolution and we re-evaluate then. Remove once happy-dom ships a release
   # that bumps ws. Added 2026-05-19.
   "happy-dom>ws": "^8.20.1"
+  # GHSA-q8mj-m7cp-5q26 — qs >=6.11.1 <=6.15.1 has a remotely triggerable DoS
+  # via `qs.stringify` crashing with TypeError on null/undefined entries in
+  # comma-format arrays when encodeValuesOnly is set. qs is pulled in
+  # transitively via bunqueue>@modelcontextprotocol/sdk>express (and
+  # body-parser, express-rate-limit) — all using express@5.2.1 which still
+  # resolves qs@6.15.1. The MCP SDK is the embedded server bunqueue exposes;
+  # we never call `qs.stringify` with the affected option set, so the
+  # practical risk is nil — but `pnpm audit --audit-level=moderate` blocks
+  # merge. Surgical pins on the express/body-parser parents so the override
+  # disappears once the upstream chain bumps. qs@6.15.2 was published
+  # 2026-05-16, past the 7-day cooldown. Remove once express ships a release
+  # that bumps qs. Added 2026-05-24.
+  "express>qs": "^6.15.2"
+  "body-parser>qs": "^6.15.2"
 
 # CVE-driven exception to the 7-day cooldown. ws@8.20.1 was published
 # 2026-05-12T15:54Z — ~10 hours short of the 168-hour cooldown at the time

@@ -1,0 +1,10 @@
+# Used instead of `--dev` to control key length (SDK rejects secrets < 32 chars).
+port: 7880
+log_level: info
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+
+keys:
+  devkey: devsecret32charsminimumlengthxyz123

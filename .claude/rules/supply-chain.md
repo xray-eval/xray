@@ -103,6 +103,22 @@ Bulk upgrades: `pnpm dlx pin-github-action` or Renovate's `helpers:pinGitHubActi
 
 ---
 
+## 6 · Python deps (examples + SDK image deps)
+
+`pnpm-workspace.yaml#minimumReleaseAge` only covers npm. PyPI carries the same Shai-Hulud-class threat surface but has no equivalent registry-side cooldown, and `pip install` inside a Docker layer resolves whatever PyPI serves at build time. Treat PyPI as actively hostile too.
+
+Until a hash-pinned `requirements.txt` (via `uv pip compile --generate-hashes`) is wired into CI, every PyPI dependency referenced from a `Dockerfile` or `pyproject.toml` in this repo MUST be:
+
+- **Exact-pinned** — `livekit-agents==1.5.9`, never `livekit-agents>=1.5,<2`. Ranges resolve at build time and re-introduce the cooldown gap.
+- **Manually cooldown-checked** at the time of pinning — only pin a version whose PyPI upload date is at least 7 days before today. The same rationale as `minimumReleaseAge=10080`.
+- **Audited as a pair** — the same exact pins appear in both the `pyproject.toml` and the `Dockerfile` of the slice. The Dockerfile is what actually runs in CI/prod; the `pyproject.toml` is what local dev resolves. Drift between them means one of the two is unaudited.
+
+When bumping a Python pin, re-run the cooldown check against PyPI's JSON API (`https://pypi.org/pypi/<pkg>/json` → `releases[v][0].upload_time`) and update both files in one commit.
+
+This is a stricter posture than what `pip` enforces by default — there's no `--require-cooldown` flag. The rule is the audit; CI doesn't catch a regression here yet. Adding a CI check that greps `requires-python` / `pip install` lines for `>=` / `<` /  `~=` is a tractable follow-up.
+
+---
+
 ## What's not yet covered
 
 - **GHCR publish workflow.** Target registry is `ghcr.io/xray-eval/xray`. Add `publish.yml` triggered on tag push: build the multi-stage Dockerfile, push to GHCR using the workflow's `GITHUB_TOKEN` (no static PAT), sign with cosign keyless (OIDC, no static cosign key), attach build-provenance attestation via `actions/attest-build-provenance`, optionally an SBOM via `actions/attest-sbom`. Pin every action to a SHA per section 4.

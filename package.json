@@ -19,7 +19,6 @@
 		"dev": "UID=$(id -u) GID=$(id -g) docker compose -f compose.dev.yaml up --build",
 		"dev:down": "docker compose -f compose.dev.yaml down -v",
 		"build": "bun run scripts/build.ts",
-		"seed": "bun run scripts/seed.ts",
 		"start": "bun src/server/main.ts",
 		"docker:build": "docker build -t xray:local .",
 		"docker:run": "docker run --rm -p 8080:8080 --env-file .env xray:local",

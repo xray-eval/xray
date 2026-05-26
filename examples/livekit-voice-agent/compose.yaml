@@ -1,0 +1,89 @@
+services:
+  livekit:
+    # livekit/livekit-server:v1.7.2 — pinned per `.claude/rules/supply-chain.md` §4.
+    image: livekit/livekit-server@sha256:27d72fa264baa4db4e635b3b6df12d185b4a95fee5f2ddce03e06d150d599e0e
+    container_name: example-livekit
+    command: --config /etc/livekit.yaml --bind 0.0.0.0
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    # LiveKit 1.7.2 calls out to public STUN at boot regardless of YAML config;
+    # restricting DNS to Docker's embedded resolver blocks the lookup. No srflx leak.
+    dns:
+      - 127.0.0.11
+    dns_opt:
+      - ndots:0
+    ports:
+      # Loopback-only; remapped from 7880/7881 to avoid colliding with a local LiveKit.
+      - "127.0.0.1:7890:7880"
+      - "127.0.0.1:7891:7881"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7880/ || exit 1"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
+
+  xray:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: example-xray
+    environment:
+      PORT: "8080"
+      HOST: "0.0.0.0"
+      XRAY_DATA_DIR: "/data"
+      XRAY_AUDIO_ROOT: "/data/audio"
+    volumes:
+      - xray-data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "bun", "--eval", "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
+
+  agent:
+    build:
+      context: ../..
+      dockerfile: examples/livekit-voice-agent/agent/Dockerfile
+    container_name: example-agent
+    depends_on:
+      livekit:
+        condition: service_healthy
+      xray:
+        condition: service_healthy
+    environment:
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "devsecret32charsminimumlengthxyz123"
+      XRAY_OTLP_ENDPOINT: "http://xray:8080"
+      GOOGLE_API_KEY: "${GEMINI_API_KEY:?GEMINI_API_KEY must be set in examples/livekit-voice-agent/.env}"
+      # Langfuse v3 refuses to init `@observe` without keys; fake values + non-routable
+      # host let spans emit locally while skipping the cloud upload.
+      LANGFUSE_PUBLIC_KEY: "pk-lf-example-public-key"
+      LANGFUSE_SECRET_KEY: "sk-lf-example-secret-key"
+      LANGFUSE_HOST: "http://127.0.0.1:1"
+
+  driver:
+    profiles: [test]
+    build:
+      context: ../..
+      dockerfile: examples/livekit-voice-agent/driver/Dockerfile
+    container_name: example-driver
+    depends_on:
+      livekit:
+        condition: service_healthy
+      xray:
+        condition: service_healthy
+      agent:
+        condition: service_started
+    environment:
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "devsecret32charsminimumlengthxyz123"
+      XRAY_URL: "http://xray:8080"
+
+volumes:
+  xray-data:

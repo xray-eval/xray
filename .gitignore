@@ -31,6 +31,10 @@ __pycache__/
 *.log
 pnpm-debug.log*
 
+# SQLite transient WAL files next to committed snapshot DB
+snapshot/*.db-shm
+snapshot/*.db-wal
+
 # Editor / OS
 .DS_Store
 Thumbs.db

@@ -33,6 +33,10 @@
 
 # Docs / meta — image doesn't need them at runtime.
 **/README.md
+# Exception: hatchling reads `readme = "README.md"` from sdk/python/pyproject.toml
+# during `pip install -e sdk/python` in the examples' agent + driver images.
+# Without this re-include, the build fails with "Readme file does not exist".
+!sdk/python/README.md
 **/CONTRIBUTING.md
 **/CHANGELOG.md
 **/LICENSE
