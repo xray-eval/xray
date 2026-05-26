@@ -12,7 +12,6 @@ from collections.abc import AsyncIterable
 from pathlib import Path
 
 import xray
-from google import genai
 from google.genai import types as genai_types
 from langfuse import observe
 from livekit import rtc
@@ -27,16 +26,13 @@ _tracer = trace.get_tracer("example-voice-agent")
 
 # Gemini 3.1 Live's `generate_reply()` is warn-and-ignored by the
 # realtime plugin, so the agent can't speak first via the LLM path.
-# Instead, synthesize the greeting once via Gemini's standalone TTS
-# model and publish the resulting PCM through `session.say(audio=...)`.
+# Pre-recorded greeting (24kHz mono int16 PCM, generated once via
+# Gemini standalone TTS) is published through `session.say(audio=...)`.
 # `add_to_chat_ctx=True` (the default) records the greeting text in
 # the chat history so the realtime model knows it already greeted.
 _GREETING_TEXT = "Hello there! How can I help you today?"
 _GREETING_VOICE = "Puck"
-_GREETING_TTS_MODEL = "gemini-2.5-flash-preview-tts"
-# Gemini standalone TTS returns 24kHz signed-16 LE mono PCM.
-_GREETING_SAMPLE_RATE = 24_000
-_GREETING_CACHE_PATH = Path("/tmp/agent_greeting.wav")
+_GREETING_WAV_PATH = Path(__file__).resolve().parent.parent / "fixtures" / "agent_greeting.wav"
 
 
 @observe(as_type="generation", name="example_langfuse_step")
@@ -55,36 +51,6 @@ async def get_current_year() -> dict[str, int]:
         result = {"year": 2026}
         span.set_attribute("gen_ai.tool.result", json.dumps(result))
         return result
-
-
-def _synthesize_greeting() -> Path:
-    """Generate the greeting WAV via Gemini standalone TTS. Cached on
-    disk so subsequent boots skip the API call."""
-    if _GREETING_CACHE_PATH.exists():
-        return _GREETING_CACHE_PATH
-    client = genai.Client()
-    response = client.models.generate_content(
-        model=_GREETING_TTS_MODEL,
-        contents=_GREETING_TEXT,
-        config=genai_types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=genai_types.SpeechConfig(
-                voice_config=genai_types.VoiceConfig(
-                    prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
-                        voice_name=_GREETING_VOICE,
-                    ),
-                ),
-            ),
-        ),
-    )
-    pcm = response.candidates[0].content.parts[0].inline_data.data
-    with wave.open(str(_GREETING_CACHE_PATH), "wb") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(_GREETING_SAMPLE_RATE)
-        f.writeframes(pcm)
-    logger.info("greeting WAV synthesized + cached", extra={"path": str(_GREETING_CACHE_PATH)})
-    return _GREETING_CACHE_PATH
 
 
 async def _wav_audio_frames(path: Path, frame_ms: int = 20) -> AsyncIterable[rtc.AudioFrame]:
@@ -149,16 +115,11 @@ async def entrypoint(ctx: JobContext) -> None:
                 room=ctx.room,
             )
 
-            greeting_wav = await asyncio.to_thread(_synthesize_greeting)
-
-            with _tracer.start_as_current_span("xray.stage.tts") as span:
-                span.set_attribute("xray.stage.tts.provider", "gemini-tts")
-                span.set_attribute("xray.stage.tts.model", _GREETING_TTS_MODEL)
-                await session.say(
-                    text=_GREETING_TEXT,
-                    audio=_wav_audio_frames(greeting_wav),
-                    allow_interruptions=False,
-                )
+            await session.say(
+                text=_GREETING_TEXT,
+                audio=_wav_audio_frames(_GREETING_WAV_PATH),
+                allow_interruptions=False,
+            )
 
             _langfuse_step(model_id)
 
