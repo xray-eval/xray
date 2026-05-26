@@ -142,23 +142,7 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 }
 
 function TurnsCard({ replay }: { replay: ReplayDetailResponse }) {
-	if (replay.audio_path === null) {
-		return (
-			<Card className="gap-0 overflow-hidden p-0">
-				<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
-					<CardTitle className="text-base font-semibold tracking-tight text-foreground">
-						Turns
-					</CardTitle>
-				</CardHeader>
-				<CardContent className="px-5 py-4">
-					<p className="text-sm text-muted-foreground">
-						Awaiting audio upload. Server-side VAD analysis populates turns after the stereo WAV
-						lands.
-					</p>
-				</CardContent>
-			</Card>
-		);
-	}
+	const audioUploaded = replay.audio_path !== null;
 	return (
 		<Card className="gap-0 overflow-hidden p-0">
 			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
@@ -166,12 +150,21 @@ function TurnsCard({ replay }: { replay: ReplayDetailResponse }) {
 					Turns
 				</CardTitle>
 			</CardHeader>
-			<CardContent className="space-y-3 px-5 py-4">
-				<StereoTurnPlayer audioUrl={replayAudioUrl(replay.id)} turns={replay.turns} />
-				{replay.turns.length === 0 && (
-					<p className="text-xs text-muted-foreground">
-						Audio uploaded — server-side VAD analysis hasn't published turns yet. They'll appear on
-						the waveform once analysis completes.
+			<CardContent className={cn("px-5 py-4", audioUploaded && "space-y-3")}>
+				{audioUploaded ? (
+					<>
+						<StereoTurnPlayer audioUrl={replayAudioUrl(replay.id)} turns={replay.turns} />
+						{replay.turns.length === 0 && (
+							<p className="text-xs text-muted-foreground">
+								Audio uploaded. Server-side VAD analysis hasn't published turns yet. They'll appear
+								on the waveform once analysis completes.
+							</p>
+						)}
+					</>
+				) : (
+					<p className="text-sm text-muted-foreground">
+						Awaiting audio upload. Server-side VAD analysis populates turns after the stereo WAV
+						lands.
 					</p>
 				)}
 			</CardContent>
@@ -221,14 +214,6 @@ function SpansCard({ spans }: { spans: SpanResponse[] }) {
 	);
 }
 
-/**
- * One sidebar panel that consolidates the three "metadata" cards the
- * inspector used to stack: model usage, tool calls, and the raw run-config
- * JSON. The aesthetic is a single data sheet — sections divided by hairline
- * rules instead of card chrome, mono uppercase micro-labels, dense type.
- * Each section omits itself when empty; the whole card disappears when
- * nothing has data.
- */
 function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
 	const hasUsage = replay.model_usage.length > 0;
 	const hasTools = replay.tool_calls.length > 0;

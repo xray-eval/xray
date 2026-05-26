@@ -1,6 +1,7 @@
 import { useWavesurfer } from "@wavesurfer/react";
 import { PauseIcon, PlayIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { match } from "ts-pattern";
 import type WaveSurfer from "wavesurfer.js";
 import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js";
 
@@ -72,7 +73,8 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 		plugins,
 	});
 
-	const { duration, loadError } = useWaveState(wavesurfer);
+	const waveState = useWaveState(wavesurfer);
+	const duration = waveState.kind === "ready" ? waveState.duration : 0;
 
 	// Refresh regions when audio loads or the turns prop changes. clearRegions
 	// is a no-op pre-load, so guarding on isReady avoids drawing regions onto
@@ -94,9 +96,12 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 	}, [isReady, regions, turns]);
 
 	useEffect(() => {
+		// Pass `true` so wavesurfer emits a stop time at region.end. Without
+		// the argument the regions plugin emits "play" with no end and the
+		// audio keeps running past the clicked turn.
 		const unsubscribe = regions.on("region-clicked", (region, event) => {
 			event.stopPropagation();
-			region.play();
+			region.play(true);
 		});
 		return unsubscribe;
 	}, [regions]);
@@ -135,19 +140,24 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 			<section className="px-2 pb-1" aria-label="Replay waveform">
 				<div className="relative">
 					<div ref={containerRef} className="w-full" />
-					<div
-						aria-hidden="true"
-						className="pointer-events-none absolute inset-y-0 left-0 bg-white/15"
-						style={{ width: `${Math.min(playedFraction(currentTime, duration) * 100, 100)}%` }}
-					/>
-					{loadError !== null && (
-						<p
-							role="alert"
-							className="absolute inset-0 flex items-center justify-center bg-card/80 text-xs text-destructive backdrop-blur-sm"
-						>
-							Couldn't load audio. {loadError}
-						</p>
-					)}
+					{match(waveState)
+						.with({ kind: "ready" }, (s) => (
+							<div
+								aria-hidden="true"
+								className="pointer-events-none absolute inset-y-0 left-0 bg-white/15"
+								style={{ width: `${playedFraction(currentTime, s.duration) * 100}%` }}
+							/>
+						))
+						.with({ kind: "error" }, (s) => (
+							<p
+								role="alert"
+								className="absolute inset-0 flex items-center justify-center bg-card/80 text-xs text-destructive backdrop-blur-sm"
+							>
+								Couldn't load audio. {s.message}
+							</p>
+						))
+						.with({ kind: "idle" }, () => null)
+						.exhaustive()}
 				</div>
 			</section>
 
@@ -172,48 +182,48 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 	);
 }
 
+type WaveState =
+	| { kind: "idle" }
+	| { kind: "ready"; duration: number }
+	| { kind: "error"; message: string };
+
 /**
- * Track the two pieces of wavesurfer state the hook doesn't expose:
- *   - `duration` — `getDuration()` only returns non-zero after "ready", so
- *      we sync via the "ready" event.
- *   - `loadError` — when the fetch / decode fails, "ready" never fires and
- *     `isReady` stays false forever; without this we'd render a permanently
- *     disabled player with no feedback. The "error" payload from wavesurfer
- *     is `unknown` (Event | Error | string); we surface the human-readable
- *     part and let CSS overlay the error message on the empty canvas.
+ * Wavesurfer's hook doesn't expose duration or the load-error message, so
+ * we subscribe to the "ready" and "error" events ourselves. The shape is a
+ * discriminated union so "ready" and "error" can never be true at once.
+ *
+ * The wavesurfer "error" payload is typed as `unknown` (Event | Error |
+ * string) so we surface the human-readable part.
  */
-function useWaveState(wavesurfer: WaveSurfer | null): {
-	duration: number;
-	loadError: string | null;
-} {
-	const [duration, setDuration] = useState(0);
-	const [loadError, setLoadError] = useState<string | null>(null);
+function useWaveState(wavesurfer: WaveSurfer | null): WaveState {
+	const [state, setState] = useState<WaveState>({ kind: "idle" });
 	useEffect(() => {
 		if (!wavesurfer) {
-			setDuration(0);
-			setLoadError(null);
+			setState({ kind: "idle" });
 			return;
 		}
-		setDuration(wavesurfer.getDuration());
-		setLoadError(null);
+		const initialDuration = wavesurfer.getDuration();
+		setState(initialDuration > 0 ? { kind: "ready", duration: initialDuration } : { kind: "idle" });
 		const offReady = wavesurfer.on("ready", () => {
-			setDuration(wavesurfer.getDuration());
-			setLoadError(null);
+			setState({ kind: "ready", duration: wavesurfer.getDuration() });
 		});
 		const offError = wavesurfer.on("error", (err: unknown) => {
-			setLoadError(err instanceof Error ? err.message : String(err));
+			setState({
+				kind: "error",
+				message: err instanceof Error ? err.message : String(err),
+			});
 		});
 		return () => {
 			offReady();
 			offError();
 		};
 	}, [wavesurfer]);
-	return { duration, loadError };
+	return state;
 }
 
 function playedFraction(currentTime: number, duration: number): number {
 	if (!(duration > 0) || !Number.isFinite(currentTime)) return 0;
-	return Math.max(0, currentTime / duration);
+	return Math.max(0, Math.min(1, currentTime / duration));
 }
 
 function formatClock(seconds: number): string {

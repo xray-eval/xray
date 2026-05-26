@@ -36,12 +36,18 @@ describe("formatAbsolute", () => {
 describe("formatTimestamp", () => {
 	it("renders a non-empty, year-less, second-precise timestamp", () => {
 		const out = formatTimestamp("2026-05-16T12:00:42.000Z");
-		// Locale and tz vary by runtime; assert the shape, not the exact text:
+		// Locale and tz vary by runtime; assert the shape, not the exact text.
 		expect(out.length).toBeGreaterThan(0);
-		// Year omitted by design — `formatAbsolute` is the year-bearing variant.
+		// Year omitted by design. `formatAbsolute` is the year-bearing variant.
 		expect(out).not.toContain("2026");
-		// Second-precision: the `42` from the input should survive into the output.
-		expect(out).toContain("42");
+		// Second-precision: the `42` from the input should survive into the
+		// output. Locales like ar-EG / fa-IR render `٤٢` / `۴۲` instead of ASCII
+		// digits, so format `42` the same way the timestamp formatter would.
+		const localized42 = new Intl.NumberFormat(undefined, {
+			minimumIntegerDigits: 2,
+			useGrouping: false,
+		}).format(42);
+		expect(out).toContain(localized42);
 	});
 });
 

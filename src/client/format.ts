@@ -15,11 +15,9 @@ export function formatAbsolute(iso: string): string {
 }
 
 /**
- * Locale-aware short timestamp — `May 24, 22:53:12` in en-US, `24 May,
- * 22:53:12` in en-GB. Year is intentionally omitted: every UI site pairs
- * this with a "Started"/"Finished"/range label, so the recent-relative
- * reading is what matters. 24-hour format reads cleaner than AM/PM at
- * second-precision. Use `formatAbsolute` when year disambiguation matters.
+ * Locale-aware short timestamp with no year. Every UI site pairs this with
+ * a "Started"/"Finished"/range label, so the recent-relative reading is
+ * what matters. Use `formatAbsolute` when year disambiguation matters.
  *
  * Cached at module scope because `Intl.DateTimeFormat` construction is
  * not cheap and we call this once per row in trace-heavy views.
