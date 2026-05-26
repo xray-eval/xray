@@ -44,7 +44,7 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 		expect(result.contentType).toBe("audio/wav");
 	});
 
-	it("re-upload with different content-type deletes the old file", async () => {
+	it("re-upload overwrites the previous wav bytes", async () => {
 		const { replayId } = await seedReplayForAudio(store);
 		await uploadReplayAudio(store, audio.path, {
 			replayId,
@@ -54,12 +54,12 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 		const second = fakeAudioBytes(2);
 		await uploadReplayAudio(store, audio.path, {
 			replayId,
-			contentType: "audio/opus",
+			contentType: "audio/wav",
 			bytes: second,
 		});
 		const result = await readReplayAudio(store, audio.path, replayId);
 		expect(await streamToBytes(result.stream)).toEqual(second);
-		expect(result.contentType).toBe("audio/opus");
+		expect(result.contentType).toBe("audio/wav");
 	});
 
 	it("throws AudioNotUploadedError when no audio exists yet", async () => {

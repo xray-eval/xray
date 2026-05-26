@@ -1,7 +1,8 @@
+import type { Judge } from "@/server/judges/judges.types.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import {
-	canonicalizeAndHashTurns,
+	canonicalizeAndHashSpec,
 	canonicalStringify,
 	ensureConversation,
 	getConversationByHash,
@@ -10,15 +11,20 @@ import {
 	toConversationResponse,
 } from "./conversations.service.ts";
 import { makeTurns } from "./conversations.test-utils.ts";
+import type { ConversationTurn } from "./conversations.types.ts";
 import { describe, expect, it } from "bun:test";
 
-async function hashOf(turns: Parameters<typeof canonicalizeAndHashTurns>[0]): Promise<string> {
-	return (await canonicalizeAndHashTurns(turns)).hash;
+async function hashOf(
+	turns: readonly ConversationTurn[],
+	judges: readonly Judge[] = [],
+): Promise<string> {
+	return (await canonicalizeAndHashSpec(turns, judges)).hash;
 }
 async function canonicalize(
-	turns: Parameters<typeof canonicalizeAndHashTurns>[0],
+	turns: readonly ConversationTurn[],
+	judges: readonly Judge[] = [],
 ): Promise<string> {
-	return (await canonicalizeAndHashTurns(turns)).json;
+	return (await canonicalizeAndHashSpec(turns, judges)).json;
 }
 
 describe("ensureConversation", () => {
@@ -164,8 +170,8 @@ describe("toConversationResponse", () => {
 	});
 });
 
-describe("canonicalizeAndHashTurns", () => {
-	it("is deterministic for the same turns", async () => {
+describe("canonicalizeAndHashSpec", () => {
+	it("is deterministic for the same spec", async () => {
 		const turns = makeTurns();
 		const a = await hashOf(turns);
 		const b = await hashOf(turns);
@@ -193,13 +199,77 @@ describe("canonicalizeAndHashTurns", () => {
 		expect(a).not.toBe(b);
 	});
 
-	it("rejects numeric values in the canonical input", () => {
-		expect(() => canonicalStringify([{ role: "user", text: "hi", key: "u0", score: 1 }])).toThrow(
-			/Cannot canonicalize a number/,
+	it("changes when an assertion is added to a turn", async () => {
+		const baseTurns = makeTurns({
+			turns: [
+				{ role: "user", text: "hi", key: "u0" },
+				{ role: "agent", key: "a0" },
+			],
+		});
+		const withAssertion = makeTurns({
+			turns: [
+				{ role: "user", text: "hi", key: "u0" },
+				{
+					role: "agent",
+					key: "a0",
+					assertions: [{ kind: "contains", text: "hello", case_insensitive: true }],
+				},
+			],
+		});
+		const a = await hashOf(baseTurns);
+		const b = await hashOf(withAssertion);
+		expect(a).not.toBe(b);
+	});
+
+	it("changes when a conversation-level judge is added", async () => {
+		const turns = makeTurns();
+		const a = await hashOf(turns, []);
+		const b = await hashOf(turns, [
+			{ kind: "text_match", reference: "agent confirms booking", pass_score: 70 },
+		]);
+		expect(a).not.toBe(b);
+	});
+
+	it("accepts integer numbers (assertion params like max_ms) round-trip in the hash", async () => {
+		const turnsLow = makeTurns({
+			turns: [
+				{ role: "user", text: "hi", key: "u0" },
+				{
+					role: "agent",
+					key: "a0",
+					assertions: [{ kind: "max_latency_ms", max_ms: 1000 }],
+				},
+			],
+		});
+		const turnsHigh = makeTurns({
+			turns: [
+				{ role: "user", text: "hi", key: "u0" },
+				{
+					role: "agent",
+					key: "a0",
+					assertions: [{ kind: "max_latency_ms", max_ms: 2000 }],
+				},
+			],
+		});
+		const a = await hashOf(turnsLow);
+		const b = await hashOf(turnsHigh);
+		expect(a).not.toBe(b);
+	});
+
+	it("rejects non-integer numeric values in the canonical input", () => {
+		expect(() => canonicalStringify({ x: 1.5 })).toThrow(/non-integer number/);
+		expect(() => canonicalStringify({ nested: { deep: [{ x: 0.1 }] } })).toThrow(
+			/non-integer number/,
 		);
-		expect(() =>
-			canonicalStringify([{ role: "user", text: "hi", key: "u0", nested: { deep: [{ x: 1.5 }] } }]),
-		).toThrow(/Cannot canonicalize a number/);
+	});
+
+	it("rejects NaN / Infinity", () => {
+		expect(() => canonicalStringify({ x: Number.NaN })).toThrow(/NaN/);
+		expect(() => canonicalStringify({ x: Number.POSITIVE_INFINITY })).toThrow(/NaN/);
+	});
+
+	it("normalizes -0 to 0", () => {
+		expect(canonicalStringify({ a: -0 })).toBe(canonicalStringify({ a: 0 }));
 	});
 
 	it("accepts booleans (true/false roundtrip cleanly)", () => {
@@ -215,8 +285,13 @@ describe("materializeRequestTurns", () => {
 		const map = new Map<string, Uint8Array<ArrayBuffer>>([["audio_0", bytes]]);
 		const { canonicalTurns, audioWrites } = await materializeRequestTurns(
 			[
-				{ role: "user", text: "hi", audio: { kind: "recorded", upload_key: "audio_0" } },
-				{ role: "agent" },
+				{
+					role: "user",
+					text: "hi",
+					audio: { kind: "recorded", upload_key: "audio_0" },
+					assertions: [],
+				},
+				{ role: "agent", assertions: [] },
 			],
 			map,
 		);
@@ -231,7 +306,14 @@ describe("materializeRequestTurns", () => {
 	it("throws if a RecordedAudio turn references an upload_key with no matching bytes", async () => {
 		await expect(
 			materializeRequestTurns(
-				[{ role: "user", text: "hi", audio: { kind: "recorded", upload_key: "audio_0" } }],
+				[
+					{
+						role: "user",
+						text: "hi",
+						audio: { kind: "recorded", upload_key: "audio_0" },
+						assertions: [],
+					},
+				],
 				new Map(),
 			),
 		).rejects.toThrow(/upload_key/);
@@ -240,7 +322,7 @@ describe("materializeRequestTurns", () => {
 	it("throws if a multipart part is uploaded that no turn references", async () => {
 		await expect(
 			materializeRequestTurns(
-				[{ role: "user", text: "hi" }],
+				[{ role: "user", text: "hi", assertions: [] }],
 				new Map<string, Uint8Array<ArrayBuffer>>([["orphan", new Uint8Array([0])]]),
 			),
 		).rejects.toThrow(/orphan/);
@@ -248,7 +330,15 @@ describe("materializeRequestTurns", () => {
 
 	it("passes through TTS audio turns unchanged", async () => {
 		const { canonicalTurns } = await materializeRequestTurns(
-			[{ role: "user", text: "hi", audio: { kind: "tts", voice_id: "nova" } }, { role: "agent" }],
+			[
+				{
+					role: "user",
+					text: "hi",
+					audio: { kind: "tts", voice_id: "nova" },
+					assertions: [],
+				},
+				{ role: "agent", assertions: [] },
+			],
 			new Map(),
 		);
 		expect(canonicalTurns[0]?.audio).toEqual({ kind: "tts", voice_id: "nova" });

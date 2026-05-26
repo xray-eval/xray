@@ -18,7 +18,7 @@ The `[livekit]` extra pulls in the `livekit` Python client. Drop it if you imple
 import asyncio
 import os
 
-from xray import Conversation, RunConfig, Turn, run
+from xray import Assertion, Conversation, Judge, RunConfig, Turn, format_failures, run
 from xray.conversation import TtsAudio
 from xray.runtime.livekit import LiveKitRuntime
 
@@ -34,10 +34,14 @@ async def main() -> None:
             ),
             Turn.agent(
                 key="a0",
-                assertion=lambda agent: "confirmed" in agent.transcript.lower(),
-                assertion_name="confirms_booking",
+                assertions=(
+                    Assertion.contains("confirmed"),
+                    Assertion.tool_called("reserve_table"),
+                    Assertion.max_latency_ms(2_000),
+                ),
             ),
         ],
+        judges=(Judge.text_match("agent confirms a reservation for two", pass_score=80),),
     )
 
     runtime = LiveKitRuntime(
@@ -53,17 +57,19 @@ async def main() -> None:
         xray_url="http://localhost:8080",
         run_config=RunConfig(model="gpt-4o", temperature=0.5),
     )
-    print(f"replay {result.id} status={result.status} — {result.url}")
+    assert result.passed, format_failures(result)
 
 
 asyncio.run(main())
 ```
 
-`Conversation` identity is a SHA-256 content hash over the turn array (including per-turn `RecordedAudio` bytes). `name` is a free-form display label — renaming the same spec attaches another Replay to the same Conversation row; editing any turn or WAV forks a new Conversation.
+`Conversation` identity is a SHA-256 content hash over the canonical spec (turns + per-turn `Assertion`s + conversation-level `Judge`s, with per-turn `RecordedAudio` bytes substituted in by sha256). `name` is a free-form display label — renaming the same spec attaches another Replay to the same Conversation row; editing any turn, assertion, judge, or WAV forks a new Conversation.
 
 The runtime produces **one stereo WAV per replay** (left = user, right = agent); `run(...)` uploads it to `POST /v1/replays/:id/audio`. The inspector slices it per-turn using the `replay_turns` timestamps.
 
-When a user `Turn` uses `TtsAudio()` (or has no `audio` + a text fallback), the runtime calls OpenAI's `/v1/audio/speech` directly using `OPENAI_API_KEY` from your environment — xray never sees the key — and caches the result per-turn keyed on `(text, voice, model)` so re-runs reuse the bytes. Changing any of those invalidates the cache for that turn.
+When a user `Turn` uses `TtsAudio()` (or has no `audio` + a text fallback), the runtime calls OpenAI's `/v1/audio/speech` directly using `OPENAI_API_KEY` from the SDK process's environment, and caches the result per-turn keyed on `(text, voice, model)` so re-runs reuse the bytes. Changing any of those invalidates the cache for that turn.
+
+> **Note:** the xray *server* also needs `OPENAI_API_KEY` set in its own environment — it uses the key for Whisper (per-turn transcription) and the judge LLM during `/analyze`. The SDK and server hold the same env var name; both need it for their respective stages.
 
 ## Three modules
 
@@ -78,7 +84,7 @@ The LiveKit runtime reads:
 | Var | Required? | Default | Purpose |
 |---|---|---|---|
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | yes | — | LiveKit credentials |
-| `OPENAI_API_KEY` | only for TTS turns | — | OpenAI key used directly — xray never holds it |
+| `OPENAI_API_KEY` | only for TTS turns | — | OpenAI key used directly by the SDK runtime for TTS. **xray's server also reads this var from its own env** for Whisper + judge. |
 | `OPENAI_TTS_MODEL` | no | `gpt-4o-mini-tts` | TTS model |
 | `OPENAI_TTS_VOICE` | no | `alloy` | Voice; per-turn `TtsAudio(voice_id=...)` overrides |
 
@@ -86,11 +92,11 @@ Recorded audio must be **48 kHz mono 16-bit WAV** (`ffmpeg -i in.wav -ar 48000 -
 
 ## How it wires to xray
 
-1. `run(...)` POSTs a Replay to `POST /v1/replays` carrying the full Conversation spec. The server hashes the turns to derive `conversation_hash`, upserts the conversation row by hash (last-write-wins on `name`), inserts the replay, and returns `{id, conversation_hash}`.
-2. The runtime joins the LiveKit room with `replay_id` + `conversation_hash` encoded as a JWT participant attribute (LiveKit `participant.attributes` ≥ v1.7) — *not* room metadata, so no `can_update_own_metadata` grant is needed.
-3. `xray.attach(ctx, ...)` reads the attribute from `participant.attributes`, sets OTEL baggage on the agent side, and the `XrayBaggageSpanProcessor` lifts it onto every span.
-4. xray's OTLP receiver routes spans by `xray.replay.id` and persists what it recognizes (xray.*, OTel GenAI semconv, Langfuse).
-5. `run(...)` uploads the mixdown WAV to `POST /v1/replays/:id/audio`.
-6. `run(...)` evaluates per-turn assertions and PATCHes the Replay row with the final status.
+1. `run(...)` POSTs the Conversation to `/v1/conversations` (multipart with the canonical `spec` JSON + one file part per `RecordedAudio` turn). The server hashes the spec and upserts the conversation row by hash; assertions and judges are part of the hashed identity. It returns `{hash}`.
+2. `run(...)` POSTs the Replay to `/v1/replays` referencing the hash. The server returns `{id}`.
+3. The runtime joins the LiveKit room with `replay_id` + `conversation_hash` encoded as a JWT participant attribute (LiveKit `participant.attributes` ≥ v1.7).
+4. `xray.attach(ctx, ...)` reads the attribute, sets OTEL baggage, and the `XrayBaggageSpanProcessor` lifts it onto every span. xray's OTLP receiver routes spans by `xray.replay.id` and persists what it recognizes (`xray.*`, OTel GenAI semconv, Langfuse).
+5. `run(...)` uploads the mixdown WAV to `/v1/replays/:id/audio` and triggers `/v1/replays/:id/analyze`. The server runs VAD + Whisper transcription + per-turn metrics + every declared `Assertion` and `Judge`, then emits `evaluation_complete` over SSE.
+6. `run(...)` reads the SSE event and returns `ReplayResult` with `passed` plus per-assertion / per-judge outcomes. Assertion failures don't raise — `assert result.passed` is the pytest idiom.
 
-See `docs/SDK.md` and `docs/WIRE.md` in the main repo for the contract.
+See `docs/integrate.md` and `docs/architecture.md` in the main repo for the contract.

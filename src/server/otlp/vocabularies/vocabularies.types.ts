@@ -29,9 +29,10 @@ export interface ExtractedModelUsage {
  * one or more downstream extracted rows (tool_calls, model_usage) AND should
  * be persisted as a raw span.
  *
- * xray.turn / xray.judge / xray.assertion / xray.stage spans are accepted
- * (no rejection) but no longer produce structured rows — turn/judge/assertion
- * truth lives elsewhere in the audio-ground-truth model.
+ * xray.turn / xray.stage.* spans are accepted (no rejection) but produce no
+ * structured rows. xray.assertion / xray.judge were dropped from the
+ * recognized set in spec 0001 — assertion + judge results live in their own
+ * tables, written by the evaluate-replay job.
  */
 export interface VocabularyExtraction {
 	vocabulary: SpanVocabulary;

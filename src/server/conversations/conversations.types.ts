@@ -1,5 +1,8 @@
 import * as v from "valibot";
 
+import { AssertionsArraySchema } from "@/server/assertions/assertions.types.ts";
+import { JudgeSchema, JudgesArraySchema } from "@/server/judges/judges.types.ts";
+
 // Caps for the JSON `spec` part of POST /v1/replays — the multipart body's
 // raw audio file parts have their own much larger cap (see MAX_AUDIO_BYTES).
 // A 100-turn script with long text and a few KB of overhead is the worst
@@ -62,12 +65,15 @@ const RecordedAudioUploadSchema = v.object({
 const TurnAudioUploadSchema = v.variant("kind", [RecordedAudioUploadSchema, TtsAudioRefSchema]);
 
 /** One step as it arrives in the request body; `RecordedAudio` carries an
- *  `upload_key` pointing at a multipart file part. */
+ *  `upload_key` pointing at a multipart file part. `assertions` declares
+ *  what the server should check against this turn's transcript / tool calls
+ *  / metrics after the run completes. */
 export const ConversationTurnRequestSchema = v.object({
 	role: TurnRoleSchema,
 	text: v.optional(v.pipe(v.string(), v.maxLength(MAX_TURN_TEXT))),
 	key: v.optional(v.pipe(v.string(), v.nonEmpty(), v.maxLength(MAX_TURN_KEY))),
 	audio: v.optional(TurnAudioUploadSchema),
+	assertions: v.optional(AssertionsArraySchema, []),
 });
 export type ConversationTurnRequest = v.InferOutput<typeof ConversationTurnRequestSchema>;
 
@@ -88,6 +94,11 @@ export const TurnsRequestArraySchema = v.pipe(
 export const CreateConversationRequestSchema = v.object({
 	name: ConversationNameSchema,
 	turns: TurnsRequestArraySchema,
+	// Conversation-level judges. Run once per replay against the full
+	// transcript by the evaluate-replay job. Adding/removing/reordering
+	// judges changes the conversation hash — judges are part of the test
+	// identity, not metadata.
+	judges: v.optional(JudgesArraySchema, []),
 });
 export type CreateConversationRequest = v.InferOutput<typeof CreateConversationRequestSchema>;
 
@@ -101,12 +112,15 @@ const RecordedAudioRefSchema = v.object({
 const TurnAudioRefSchema = v.variant("kind", [RecordedAudioRefSchema, TtsAudioRefSchema]);
 
 /** Canonical/stored form of one turn. Lives in `conversations.turns_json` and
- *  is the input to the conversation hash. */
+ *  is the input to the conversation hash. `assertions` is part of the
+ *  canonical form because the test identity must change when its checks
+ *  change — same turn structure + different assertions = different test. */
 export const ConversationTurnSchema = v.object({
 	role: TurnRoleSchema,
 	text: v.optional(v.pipe(v.string(), v.maxLength(MAX_TURN_TEXT))),
 	key: v.optional(v.pipe(v.string(), v.nonEmpty(), v.maxLength(MAX_TURN_KEY))),
 	audio: v.optional(TurnAudioRefSchema),
+	assertions: v.optional(AssertionsArraySchema, []),
 });
 export type ConversationTurn = v.InferOutput<typeof ConversationTurnSchema>;
 
@@ -116,6 +130,18 @@ export const TurnsArraySchema = v.pipe(
 	v.maxLength(MAX_TURNS_PER_CONVERSATION),
 );
 
+/**
+ * Canonical conversation spec stored in `conversations.turns_json`. Wraps
+ * the turn array + the conversation-level judges into one object so the
+ * single `turns_json` column can carry both. The column name predates
+ * judges; the *contents* are the full spec.
+ */
+export const StoredConversationSpecSchema = v.object({
+	turns: TurnsArraySchema,
+	judges: v.optional(v.array(JudgeSchema), []),
+});
+export type StoredConversationSpec = v.InferOutput<typeof StoredConversationSpecSchema>;
+
 /** Response of `GET /v1/conversations/:hash`. */
 export const ConversationResponseSchema = v.object({
 	hash: v.string(),
@@ -123,6 +149,7 @@ export const ConversationResponseSchema = v.object({
 	created_at: v.string(),
 	last_run_at: v.nullable(v.string()),
 	turns: v.array(ConversationTurnSchema),
+	judges: v.array(JudgeSchema),
 });
 export type ConversationResponse = v.InferOutput<typeof ConversationResponseSchema>;
 

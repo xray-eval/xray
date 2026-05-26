@@ -34,6 +34,7 @@ import {
 	enqueueAnalysis,
 	findReplay,
 	getReplay,
+	getReplayResult,
 	updateReplay,
 } from "./replays.service.ts";
 import {
@@ -45,6 +46,7 @@ import {
 	CreateReplayRequestSchema,
 	ReplayDetailResponseSchema,
 	ReplayIdSchema,
+	ReplayResultSchema,
 	UpdateReplayRequestSchema,
 } from "./replays.types.ts";
 
@@ -287,12 +289,78 @@ export function createReplaysRouter(
 	);
 
 	router.get(
+		"/replays/:id/result",
+		describeRoute({
+			tags: ["Replays"],
+			summary: "Get the evaluation result for a completed replay",
+			description:
+				"Returns the `ReplayResult` payload (passed/failed verdict + per-assertion outcomes + per-judge outcomes + per-turn metrics). Same shape as the `evaluation_complete` SSE event — late SSE subscribers fall back to this. 409 when the replay hasn't reached evaluation yet.",
+			parameters: [
+				{
+					in: "path",
+					name: "id",
+					required: true,
+					schema: openApiSchemaFromValibot(ReplayIdSchema),
+				},
+			],
+			responses: {
+				"200": {
+					description: "Evaluation result payload.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ReplayResultSchema) },
+					},
+				},
+				"400": {
+					description: "Id failed validation.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description: "Replay not found.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ReplayNotFoundResponseSchema) },
+					},
+				},
+				"409": {
+					description: "Replay hasn't completed evaluation yet.",
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								properties: {
+									error: { type: "string", enum: ["replay_not_evaluated"] },
+									lifecycle_state: { type: "string" },
+								},
+								required: ["error", "lifecycle_state"],
+							},
+						},
+					},
+				},
+			},
+		}),
+		(c) => {
+			const id = parseReplayId(c.req.param("id"));
+			const replay = findReplay(store, id);
+			if (replay === undefined) throw new ReplayNotFoundError(id);
+			const result = getReplayResult(store, id);
+			if (result === undefined) {
+				return c.json(
+					{ error: "replay_not_evaluated", lifecycle_state: replay.lifecycleState },
+					409,
+				);
+			}
+			return c.json(result);
+		},
+	);
+
+	router.get(
 		"/replays/:id/events",
 		describeRoute({
 			tags: ["Replays"],
 			summary: "Server-sent events for analysis progress",
 			description:
-				"Streams `state`, `progress`, `completed`, and `failed` SSE events for one replay. The handler sends an initial `state` event with the current lifecycle, then forwards every transition until the replay reaches a terminal state. A `: heartbeat\\n\\n` line lands every 15s to keep proxies from idling out the connection.",
+				"Streams `state`, `progress`, `evaluation_complete`, and `failed` SSE events for one replay. The handler sends an initial `state` event with the current lifecycle, then forwards every transition until the replay reaches a terminal state. The `evaluation_complete` event carries the full `ReplayResult` payload — SDKs read it and return immediately, no follow-up GET needed. A `: heartbeat\\n\\n` line lands every 15s to keep proxies from idling out the connection.",
 			parameters: [
 				{
 					in: "path",
@@ -322,8 +390,8 @@ export function createReplaysRouter(
 		}),
 		async (c) => {
 			const id = parseReplayId(c.req.param("id"));
-			const replay = findReplay(store, id);
-			if (replay === undefined) throw new ReplayNotFoundError(id);
+			const initial = findReplay(store, id);
+			if (initial === undefined) throw new ReplayNotFoundError(id);
 			return streamSSE(c, async (stream) => {
 				let heartbeat: ReturnType<typeof setInterval> | undefined;
 
@@ -335,9 +403,23 @@ export function createReplaysRouter(
 				};
 
 				const done = Promise.withResolvers<void>();
+
+				// Subscribe BEFORE the re-read so a terminal-state flip that
+				// lands between findReplay() at the request boundary and the
+				// re-read below isn't lost. The `terminalEmitted` flag
+				// guards against the second race: when the writer commits +
+				// emits between subscribe() and the re-read, BOTH the
+				// listener path and the fallback re-read path would write
+				// `evaluation_complete` — the flag lets only the first
+				// arriver through.
+				let terminalEmitted = false;
 				const unsubscribe = events.subscribe(id, (event) => {
+					if (event.type === "evaluation_complete" || event.type === "failed") {
+						if (terminalEmitted) return;
+						terminalEmitted = true;
+					}
 					void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).then(() => {
-						if (event.type === "completed" || event.type === "failed") {
+						if (event.type === "evaluation_complete" || event.type === "failed") {
 							done.resolve();
 						}
 					});
@@ -347,6 +429,7 @@ export function createReplaysRouter(
 					done.resolve();
 				});
 
+				const replay = findReplay(store, id) ?? initial;
 				const initialState: {
 					type: "state";
 					lifecycle_state: string;
@@ -358,7 +441,35 @@ export function createReplaysRouter(
 				};
 				await stream.writeSSE({ event: "state", data: JSON.stringify(initialState) });
 
-				if (replay.lifecycleState === "completed" || replay.lifecycleState === "failed") {
+				if (replay.lifecycleState === "completed" && !terminalEmitted) {
+					terminalEmitted = true;
+					const result = getReplayResult(store, id);
+					if (result !== undefined) {
+						await stream.writeSSE({
+							event: "evaluation_complete",
+							data: JSON.stringify({ type: "evaluation_complete", result }),
+						});
+					}
+					cleanup();
+					unsubscribe();
+					return;
+				}
+				if (replay.lifecycleState === "failed" && !terminalEmitted) {
+					terminalEmitted = true;
+					await stream.writeSSE({
+						event: "failed",
+						data: JSON.stringify({
+							type: "failed",
+							reason: replay.failureReason ?? "evaluation_failed",
+						}),
+					});
+					cleanup();
+					unsubscribe();
+					return;
+				}
+				if (terminalEmitted) {
+					// Live listener already wrote the terminal event during the
+					// re-read window; nothing more for us to do.
 					cleanup();
 					unsubscribe();
 					return;

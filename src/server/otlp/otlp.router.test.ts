@@ -27,11 +27,10 @@ describe("POST /v1/otlp/v1/traces", () => {
 			replayId,
 			spans: [
 				{
-					name: "xray.assertion",
+					name: "xray.turn",
 					attributes: {
 						"xray.turn.idx": 0,
-						"xray.assertion.name": "n",
-						"xray.assertion.status": "passed",
+						"xray.turn.role": "agent",
 					},
 				},
 			],
@@ -53,7 +52,7 @@ describe("POST /v1/otlp/v1/traces", () => {
 
 	it("returns 415 for an unsupported content-type", async () => {
 		const { app, replayId } = await makeApp();
-		const body = makeOtlpRequest({ replayId, spans: [{ name: "xray.assertion" }] });
+		const body = makeOtlpRequest({ replayId, spans: [{ name: "xray.turn" }] });
 		const res = await app.request("/v1/otlp/v1/traces", {
 			method: "POST",
 			headers: { "content-type": "text/plain" },
@@ -91,11 +90,10 @@ describe("POST /v1/otlp/v1/traces", () => {
 	it("returns 400 with too_many_spans_per_request shape when > MAX_SPANS_PER_REQUEST spans are sent", async () => {
 		const { app, replayId } = await makeApp();
 		const spans = Array.from({ length: MAX_SPANS_PER_REQUEST + 1 }, (_, i) => ({
-			name: "xray.assertion",
+			name: "xray.turn",
 			attributes: {
-				"xray.turn.idx": 0,
-				"xray.assertion.name": `n-${i}`,
-				"xray.assertion.status": "passed",
+				"xray.turn.idx": i,
+				"xray.turn.role": "agent",
 			},
 		}));
 		const body = makeOtlpRequest({ replayId, spans });

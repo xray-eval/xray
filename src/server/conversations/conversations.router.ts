@@ -27,7 +27,7 @@ import {
 	RecordedAudioUploadKeyError,
 } from "./conversations.errors.ts";
 import {
-	canonicalizeAndHashTurns,
+	canonicalizeAndHashSpec,
 	ensureConversation,
 	getConversationByHash,
 	listConversations,
@@ -110,7 +110,10 @@ export function createConversationsRouter(store: Store, audioRoot: string): Hono
 				parsed.output.turns,
 				audioBytesByKey,
 			);
-			const { json: turnsJson, hash } = await canonicalizeAndHashTurns(canonicalTurns);
+			const { json: turnsJson, hash } = await canonicalizeAndHashSpec(
+				canonicalTurns,
+				parsed.output.judges,
+			);
 
 			// Write audio files BEFORE the upsert. Content-addressed
 			// (`recorded/<sha256>.wav`) — a partial write followed by a failed

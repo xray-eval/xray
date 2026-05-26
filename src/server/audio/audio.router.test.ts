@@ -89,10 +89,24 @@ describe("POST /v1/replays/:id/audio — rejections", () => {
 		expect(res.status).toBe(415);
 	});
 
+	it("rejects audio/opus (and other non-WAV containers) with 415", async () => {
+		// Server-side analyze chain only knows how to parse stereo WAV;
+		// surface the mismatch at upload time, not at analyze time.
+		const { replayId } = await seedReplayForAudio(store);
+		for (const ct of ["audio/opus", "audio/ogg", "audio/webm", "audio/mp3", "audio/mpeg"]) {
+			const res = await app.request(replayAudioUrl(replayId), {
+				method: "POST",
+				headers: { "Content-Type": ct },
+				body: fakeAudioBytes(),
+			});
+			expect(res.status).toBe(415);
+		}
+	});
+
 	it("rejects a non-uuid replay id with 400", async () => {
 		const res = await app.request("http://test.local/v1/replays/not-a-uuid/audio", {
 			method: "POST",
-			headers: { "Content-Type": "audio/opus" },
+			headers: { "Content-Type": "audio/wav" },
 			body: fakeAudioBytes(),
 		});
 		expect(res.status).toBe(400);

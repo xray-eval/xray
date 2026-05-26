@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { JobRunner } from "./jobs.bunqueue.ts";
-import type { AnalyzeReplayPayload } from "./jobs.types.ts";
+import type { JobName, JobPayload } from "./jobs.types.ts";
 
 export function makeTempJobsPath(): { path: string; dispose(): void } {
 	const dir = mkdtempSync(join(tmpdir(), "xray-jobs-test-"));
@@ -15,9 +15,7 @@ export function makeTempJobsPath(): { path: string; dispose(): void } {
 	};
 }
 
-export function makeAnalyzePayload(
-	overrides: Partial<AnalyzeReplayPayload> = {},
-): AnalyzeReplayPayload {
+export function makeAnalyzePayload(overrides: Partial<JobPayload> = {}): JobPayload {
 	return {
 		replayId: "00000000-0000-0000-0000-000000000001",
 		...overrides,
@@ -26,7 +24,7 @@ export function makeAnalyzePayload(
 
 /**
  * Poll-wait until `predicate()` returns true, with a hard timeout. Used in
- * the bunqueue round-trip test where the worker runs asynchronously inside
+ * bunqueue round-trip tests where the worker runs asynchronously inside
  * the same process — we can't `await` the job directly, so we wait on the
  * side-effect that the listener observes.
  */
@@ -44,25 +42,31 @@ export async function waitFor(
 	}
 }
 
+export interface EnqueuedJob {
+	name: JobName;
+	payload: JobPayload;
+}
+
 /**
- * Stub `JobRunner` for tests that need to mount the replays router but don't
- * exercise the bunqueue path. Records each enqueue so the caller can assert
- * what was scheduled without spinning up a real worker.
+ * Stub `JobRunner` for tests that need to mount the replays router but
+ * don't exercise the bunqueue path. Records every (job name, payload) tuple
+ * so the caller can assert exactly what got scheduled, including which
+ * stage the chain reached.
  */
 export interface FakeJobRunner extends JobRunner {
-	readonly enqueued: readonly AnalyzeReplayPayload[];
+	readonly enqueued: readonly EnqueuedJob[];
 }
 
 export function makeFakeJobRunner(): FakeJobRunner {
-	const enqueued: AnalyzeReplayPayload[] = [];
+	const enqueued: EnqueuedJob[] = [];
 	let counter = 0;
 	return {
 		get enqueued() {
 			return enqueued;
 		},
-		async enqueue(payload) {
+		async enqueue(name, payload) {
 			counter += 1;
-			enqueued.push(payload);
+			enqueued.push({ name, payload });
 			return `fake-job-${counter}`;
 		},
 		async close() {

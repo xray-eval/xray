@@ -124,7 +124,7 @@ flowchart TB
         CP3["POST /v1/replays/:id/audio<br/><i>stereo WAV → XRAY_AUDIO_ROOT<br/>lifecycle_state='recording_uploaded'</i>"]
         CP4["POST /v1/replays/:id/analyze<br/><i>enqueue bunqueue job<br/>lifecycle_state='analyzing'<br/>analysis_step='vad'</i>"]
         CP5["PATCH /v1/replays/:id<br/><i>lifecycle_state / failure_reason / finished_at</i>"]
-        CP6["analyze-replay worker<br/><i>VAD per channel → speech_segments<br/>derive turns → replay_turns<br/>lifecycle_state='completed' on success</i>"]
+        CP6["analyze-chain workers<br/><i>analyze-replay: VAD + Whisper → speech_segments + replay_turns + turn_transcripts<br/>calculate-metrics: agent_response_ms + ttft + interrupted → replay_metrics<br/>evaluate-replay: assertions + judges → assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed' on chain success</i>"]
       end
       subgraph RX["OTLP receiver — filters, not gates"]
         RX1["POST /v1/otlp/v1/traces<br/>JSON or protobuf<br/><br/>Routes by xray.replay.id resource attr.<br/>Unknown replay_id → silent drop.<br/>Unknown vocabulary → silent drop.<br/><br/>Vocabularies in src/server/otlp/vocabularies/:<br/>• xray.ts (xray.* recognized, raw spans only)<br/>• gen-ai-semconv.ts (gen_ai.* per OTel)<br/>• langfuse.ts (Langfuse-flavoured GenAI)"]
@@ -140,6 +140,11 @@ flowchart TB
       T_TC[("tool_calls")]
       T_MU[("model_usage")]
       T_S[("spans")]
+      T_TT[("turn_transcripts")]
+      T_RM[("replay_metrics")]
+      T_AR[("assertion_results")]
+      T_JR[("judge_results")]
+      T_RE[("replay_evaluations")]
     end
 
     CP1 --> T_C
@@ -182,13 +187,18 @@ in order:
    `lifecycle_state='analyzing'` with `analysis_step='vad'`. Returns
    `202 Accepted` with the bunqueue job id.
 5. `GET /v1/replays/:id/events` (SSE) — the SDK streams `state`,
-   `progress`, `completed`, and `failed` events. Heartbeat `:` line
-   every 15s keeps proxies from idling out. SDK closes the stream when
-   `lifecycle_state` hits a terminal value.
-6. `PATCH /v1/replays/:id` — final SDK-side fields (the SDK's local
-   judge / assertion eval is informational only in v0.2; the server
-   accepts `lifecycle_state` / `failure_reason` / `finished_at` and
-   silently strips other keys).
+   `progress`, `evaluation_complete`, and `failed` events. The
+   `evaluation_complete` payload carries the full `ReplayResult`
+   (passed/failed verdict + per-assertion + per-judge + per-turn
+   metrics) so the SDK can return immediately without a follow-up GET.
+   Heartbeat `:` line every 15s keeps proxies from idling out. SDK
+   closes the stream when `lifecycle_state` hits a terminal value.
+6. `GET /v1/replays/:id/result` — same `ReplayResult` payload outside
+   the SSE stream for late subscribers / inspector hydration.
+7. `PATCH /v1/replays/:id` — only used by the SDK for driver-side
+   failures (`failure_reason='driver_aborted'` / `audio_missing` /
+   `agent_not_joined`). Lifecycle transitions during the analyze chain
+   are server-owned.
 
 ### OTLP receiver (both sides)
 
@@ -206,15 +216,20 @@ line in `registry.ts`. The receiver is a **filter, not a gate**:
   production, where there is no replay context, doesn't write rows).
 
 **xray vocabulary** (`src/server/otlp/vocabularies/xray.ts`) — recognized
-span names: `xray.turn`, `xray.assertion`, `xray.judge`, `xray.stage.stt`,
-`xray.stage.tts`. In v0.2 these are accepted (so they land in the raw
-`spans` table for the inspector's timeline) but no longer produce
-structured rows — turn boundaries come from server-side VAD; assertion
-+ judge are SDK-side evaluations until the server-side eval flow ships
-in a follow-up PR. `xray.turn` is emitted by the **driver** (LiveKitDriver
-wraps each played user turn and each captured agent turn in an `xray.turn`
-span) — useful for the inspector's per-turn timeline view, redundant with
-the VAD-derived turn boundaries the server writes to `replay_turns`.
+span names: `xray.turn`, `xray.stage.stt`, `xray.stage.tts`. They land
+in the raw `spans` table for the inspector's timeline but produce no
+structured rows — turn boundaries come from server-side VAD, and
+assertion + judge outcomes come from the server's evaluate-replay job
+walking the declared catalog. `xray.assertion` and `xray.judge` are no
+longer recognized: the spec-0001 server reads its checks from the
+`Assertion` / `Judge` variants declared on the conversation, not from
+driver-emitted spans.
+
+**Tool / model → turn attribution** is timestamp-based, not span-tag
+based. The OTLP receiver writes `tool_calls.turn_idx` /
+`model_usage.turn_idx` as `NULL`; the `analyze-replay` job backfills
+those values from the VAD-derived `replay_turns.voice_start_ms..voice_end_ms`
+window in the same transaction that writes the turn rows.
 
 **gen_ai semconv** (`gen-ai-semconv.ts`) — `gen_ai.tool` → `tool_calls`,
 `gen_ai.client.operation` → `model_usage`. **Langfuse** vocabulary
@@ -255,12 +270,18 @@ sequenceDiagram
     D->>D: assemble stereo WAV<br/>(L = user PCM, R = agent PCM,<br/>wall-clock-aligned)
     D->>X: POST /v1/replays/:id/audio<br/>→ lifecycle_state='recording_uploaded'
     D->>X: POST /v1/replays/:id/analyze<br/>→ lifecycle_state='analyzing'
-    X->>W: bunqueue enqueue job
-    W->>W: read WAV, downsample to 16k,<br/>VAD per channel,<br/>derive turn boundaries
-    W->>X: insert speech_segments + replay_turns<br/>lifecycle_state='completed'
-    X-->>D: SSE 'completed' event
-    D->>X: GET /v1/replays/:id<br/>(detail: turns + segments +<br/>tool_calls + model_usage + spans)
-    D->>X: PATCH /v1/replays/:id<br/>(finalize from SDK side)
+    X->>W: bunqueue enqueue analyze-replay
+    W->>W: read WAV, downsample to 16k,<br/>VAD per channel,<br/>derive turn boundaries,<br/>backfill tool_calls/model_usage turn_idx
+    W->>X: insert speech_segments + replay_turns<br/>analysis_step='transcribe'
+    W->>W: slice per-turn audio, call Whisper<br/>(Promise.all over turns)
+    W->>X: insert turn_transcripts<br/>enqueue calculate-metrics
+    X->>W: bunqueue enqueue calculate-metrics
+    W->>W: compute agent_response_ms + ttft_ms<br/>+ interrupted per turn
+    W->>X: insert replay_metrics<br/>analysis_step='evaluate'<br/>enqueue evaluate-replay
+    X->>W: bunqueue enqueue evaluate-replay
+    W->>W: run each declared Assertion<br/>(pure ts-pattern dispatch)<br/>+ each declared Judge<br/>(OpenAI Chat Completions)
+    W->>X: insert assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed'
+    X-->>D: SSE 'evaluation_complete' event<br/>(full ReplayResult payload)
 ```
 
 Two things to notice in this diagram:
@@ -286,6 +307,11 @@ erDiagram
     replays ||--o{ tool_calls : "replay_id"
     replays ||--o{ model_usage : "replay_id"
     replays ||--o{ spans : "replay_id (raw OTLP)"
+    replays ||--o{ turn_transcripts : "replay_id (Whisper)"
+    replays ||--o{ replay_metrics : "replay_id (timing)"
+    replays ||--o{ assertion_results : "replay_id (evaluation)"
+    replays ||--o{ judge_results : "replay_id (evaluation)"
+    replays ||--|| replay_evaluations : "replay_id (verdict)"
 
     conversations {
         text hash PK "SHA-256 of canonical turn JSON (incl. sha256 of RecordedAudio bytes)"
@@ -344,12 +370,6 @@ The inspector (`src/client/inspector/` + slice folders under
 served by the same Bun process that owns the API. There is **no
 client-side build step in CI**; Bun builds it at request time and at
 container start.
-
-> **Note (v0.2):** the inspector SPA is intentionally not yet updated
-> for the audio-ground-truth schema. The server endpoints return the
-> new shape, so the SPA currently shows broken state for replay
-> detail. A follow-up PR rebuilds the inspector against the new
-> `replay_turns` + `speech_segments` shape.
 
 ```mermaid
 flowchart LR

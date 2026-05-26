@@ -48,8 +48,8 @@ describe("GET /v1/conversations", () => {
 			makeCreateReplayRequest({
 				name: "alpha",
 				turns: [
-					{ role: "user", text: "hi", key: "u0" },
-					{ role: "agent", key: "a0" },
+					{ role: "user", text: "hi", key: "u0", assertions: [] },
+					{ role: "agent", key: "a0", assertions: [] },
 				],
 			}),
 		);
@@ -58,8 +58,8 @@ describe("GET /v1/conversations", () => {
 			makeCreateReplayRequest({
 				name: "beta",
 				turns: [
-					{ role: "user", text: "bye", key: "u0" },
-					{ role: "agent", key: "a0" },
+					{ role: "user", text: "bye", key: "u0", assertions: [] },
+					{ role: "agent", key: "a0", assertions: [] },
 				],
 			}),
 		);
@@ -268,8 +268,8 @@ describe("GET /v1/conversations/:hash/replays", () => {
 	it("returns replays attached to the hash", async () => {
 		const { app, store } = makeApp();
 		const turns = [
-			{ role: "user" as const, text: "hi", key: "u0" },
-			{ role: "agent" as const, key: "a0" },
+			{ role: "user" as const, text: "hi", key: "u0", assertions: [] },
+			{ role: "agent" as const, key: "a0", assertions: [] },
 		];
 		const first = await createReplayForTest(store, makeCreateReplayRequest({ name: "n", turns }));
 		await createReplayForTest(store, makeCreateReplayRequest({ name: "n", turns }));

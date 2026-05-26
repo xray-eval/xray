@@ -6,10 +6,19 @@ import { eq } from "drizzle-orm";
 import { makeTempAudioRoot, seedReplayForAudio } from "@/server/audio/audio.test-utils.ts";
 import type { StereoWav } from "@/server/audio/audio.types.ts";
 import { writeStereoWav } from "@/server/audio/audio.wav.ts";
+import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { makeReplayEvents } from "@/server/replays/replays.events.ts";
-import { replays, replayTurns, speechSegments } from "@/server/store/schema.ts";
+import {
+	modelUsage,
+	replays,
+	replayTurns,
+	speechSegments,
+	toolCalls,
+	turnTranscripts,
+} from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
+import { makeFakeTranscriptionProvider } from "@/server/transcription/transcription.test-utils.ts";
 
 import { makeAnalyzeProcessor } from "./analyze-replay.processor.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -67,8 +76,21 @@ afterEach(() => {
 	audio.dispose();
 });
 
+function makeProcessor() {
+	const runner = makeFakeJobRunner();
+	const transcription = makeFakeTranscriptionProvider({ text: "ok" });
+	const processor = makeAnalyzeProcessor(
+		store,
+		audio.path,
+		makeReplayEvents(),
+		runner,
+		transcription,
+	);
+	return { processor, runner, transcription };
+}
+
 describe("analyze-replay processor", () => {
-	it("populates speech_segments + replay_turns + flips replay to completed", async () => {
+	it("populates segments + turns, writes transcripts, leaves replay in 'analyzing' with step='transcribe', enqueues calculate-metrics", async () => {
 		const { replayId } = await seedReplayForAudio(store);
 		const wav = makeStereo({
 			userBlocks: [
@@ -86,20 +108,19 @@ describe("analyze-replay processor", () => {
 		const absPath = join(audio.path, relPath);
 		await mkdir(dirname(absPath), { recursive: true });
 		await writeFile(absPath, wavBytes);
-		// Mirror real production: enqueueAnalysis has already flipped the row
-		// to `analyzing` before the bunqueue worker invokes the processor.
 		store.db
 			.update(replays)
 			.set({ audioPath: relPath, lifecycleState: "analyzing", analysisStep: "vad" })
 			.where(eq(replays.id, replayId))
 			.run();
 
-		const processor = makeAnalyzeProcessor(store, audio.path, makeReplayEvents());
+		const { processor, runner } = makeProcessor();
 		const result = await processor({ replayId });
 
 		expect(result.ok).toBe(true);
 		expect(result.segmentsWritten).toBeGreaterThan(0);
 		expect(result.turnsWritten).toBeGreaterThan(0);
+		expect(result.transcribedTurns).toBeGreaterThan(0);
 
 		const segments = store.db
 			.select()
@@ -114,16 +135,112 @@ describe("analyze-replay processor", () => {
 			.where(eq(replayTurns.replayId, replayId))
 			.all();
 		expect(turns.length).toBeGreaterThan(0);
-		// Idx values should be 0..N-1, dense.
 		expect(turns.map((t) => t.idx).sort()).toEqual([...turns.keys()]);
 
+		const transcripts = store.db
+			.select()
+			.from(turnTranscripts)
+			.where(eq(turnTranscripts.replayId, replayId))
+			.all();
+		expect(transcripts.length).toBe(turns.length);
+		for (const t of transcripts) expect(t.text).toBe("ok");
+
 		const after = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
-		expect(after?.lifecycleState).toBe("completed");
-		expect(after?.analysisStep).toBeNull();
-		expect(after?.finishedAt).not.toBeNull();
+		expect(after?.lifecycleState).toBe("analyzing");
+		expect(after?.analysisStep).toBe("transcribe");
+
+		expect(runner.enqueued).toEqual([{ name: "calculate-metrics", payload: { replayId } }]);
 	});
 
-	it("skips the `completed` write when the row is no longer in `analyzing` (race guard)", async () => {
+	it("backfills tool_calls.turn_idx by timestamp window inside the VAD transaction", async () => {
+		const { replayId } = await seedReplayForAudio(store);
+		const wav = makeStereo({
+			userBlocks: [
+				{ durationMs: 100, voiced: false },
+				{ durationMs: 300, voiced: true },
+				{ durationMs: 100, voiced: false },
+			],
+			agentBlocks: [
+				{ durationMs: 500, voiced: false },
+				{ durationMs: 300, voiced: true },
+			],
+		});
+		const wavBytes = writeStereoWav(wav);
+		const relPath = `${replayId}/replay.wav`;
+		const absPath = join(audio.path, relPath);
+		await mkdir(dirname(absPath), { recursive: true });
+		await writeFile(absPath, wavBytes);
+		store.db
+			.update(replays)
+			.set({ audioPath: relPath, lifecycleState: "analyzing", analysisStep: "vad" })
+			.where(eq(replays.id, replayId))
+			.run();
+
+		const replayRow = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+		if (replayRow === undefined) throw new Error("replay row vanished");
+		// Tool call recorded mid-agent-turn (agent voice starts at ~500ms).
+		// 600ms after the replay's start should land in the agent turn.
+		const replayStartMs = Date.parse(replayRow.startedAt);
+		store.db
+			.insert(toolCalls)
+			.values({
+				replayId,
+				turnIdx: null,
+				spanId: "s1",
+				name: "lookup",
+				argsJson: null,
+				resultJson: null,
+				startedAt: new Date(replayStartMs + 600).toISOString(),
+				endedAt: new Date(replayStartMs + 700).toISOString(),
+				latencyMs: 100,
+			})
+			.run();
+
+		const { processor } = makeProcessor();
+		await processor({ replayId });
+
+		const tcRows = store.db.select().from(toolCalls).where(eq(toolCalls.replayId, replayId)).all();
+		expect(tcRows.length).toBe(1);
+		expect(tcRows[0]?.turnIdx).not.toBeNull();
+	});
+
+	it("stamps failed + failure_reason='transcription_failed' when the provider errors", async () => {
+		const { replayId } = await seedReplayForAudio(store);
+		const wav = makeStereo({
+			userBlocks: [{ durationMs: 300, voiced: true }],
+			agentBlocks: [{ durationMs: 300, voiced: true }],
+		});
+		const wavBytes = writeStereoWav(wav);
+		const relPath = `${replayId}/replay.wav`;
+		const absPath = join(audio.path, relPath);
+		await mkdir(dirname(absPath), { recursive: true });
+		await writeFile(absPath, wavBytes);
+		store.db
+			.update(replays)
+			.set({ audioPath: relPath, lifecycleState: "analyzing", analysisStep: "vad" })
+			.where(eq(replays.id, replayId))
+			.run();
+
+		const runner = makeFakeJobRunner();
+		const transcription = makeFakeTranscriptionProvider({
+			error: new Error("provider down"),
+		});
+		const processor = makeAnalyzeProcessor(
+			store,
+			audio.path,
+			makeReplayEvents(),
+			runner,
+			transcription,
+		);
+		await expect(processor({ replayId })).rejects.toThrow(/transcription stage failed/);
+
+		const after = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+		expect(after?.lifecycleState).toBe("failed");
+		expect(after?.failureReason).toBe("transcription_failed");
+		expect(runner.enqueued).toEqual([]);
+	});
+
+	it("skips the chain when the row is no longer in 'analyzing' (race guard)", async () => {
 		const { replayId } = await seedReplayForAudio(store);
 		const wav = makeStereo({
 			userBlocks: [{ durationMs: 100, voiced: true }],
@@ -134,8 +251,6 @@ describe("analyze-replay processor", () => {
 		const absPath = join(audio.path, relPath);
 		await mkdir(dirname(absPath), { recursive: true });
 		await writeFile(absPath, wavBytes);
-		// Park the row in `failed` (e.g. an out-of-band markReplayFailed
-		// landed first). The processor's tx must not silently overwrite.
 		store.db
 			.update(replays)
 			.set({
@@ -146,25 +261,30 @@ describe("analyze-replay processor", () => {
 			.where(eq(replays.id, replayId))
 			.run();
 
-		const processor = makeAnalyzeProcessor(store, audio.path, makeReplayEvents());
+		const { processor, runner } = makeProcessor();
 		const result = await processor({ replayId });
 		expect(result.ok).toBe(true);
 
 		const row = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
 		expect(row?.lifecycleState).toBe("failed");
 		expect(row?.failureReason).toBe("max_attempts_exceeded");
+		expect(runner.enqueued).toEqual([]);
 	});
 
 	it("throws when audio_path is null", async () => {
 		const { replayId } = await seedReplayForAudio(store);
-		const processor = makeAnalyzeProcessor(store, audio.path, makeReplayEvents());
+		const { processor } = makeProcessor();
 		await expect(processor({ replayId })).rejects.toThrow(/audio_path is null/);
 	});
 
 	it("throws when the replay doesn't exist", async () => {
-		const processor = makeAnalyzeProcessor(store, audio.path, makeReplayEvents());
+		const { processor } = makeProcessor();
 		await expect(processor({ replayId: "00000000-0000-0000-0000-000000000099" })).rejects.toThrow(
 			/replay row not found/,
 		);
 	});
 });
+
+// Silence the unused-import lint on modelUsage — kept for parity with the
+// implementation under test (turn_idx is backfilled on both tables).
+void modelUsage;

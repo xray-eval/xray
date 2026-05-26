@@ -33,3 +33,19 @@ export class JobEnqueueError extends JobError {
 		this.replayId = replayId;
 	}
 }
+
+export class UnknownJobNameError extends JobError {
+	readonly jobName: string;
+	constructor(jobName: string) {
+		super(`No processor registered for job name "${jobName}"`);
+		this.name = "UnknownJobNameError";
+		this.jobName = jobName;
+	}
+}
+
+export class JobRunnerNotInitializedError extends JobError {
+	constructor() {
+		super("Job runner used before initialization");
+		this.name = "JobRunnerNotInitializedError";
+	}
+}

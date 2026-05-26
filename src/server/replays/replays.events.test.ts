@@ -20,7 +20,17 @@ describe("ReplayEvents", () => {
 		events.subscribe("r1", (e) => {
 			seen.push(e);
 		});
-		events.emit("r2", { type: "completed", turns_written: 1, segments_written: 1 });
+		events.emit("r2", {
+			type: "evaluation_complete",
+			result: {
+				replay_id: "r2",
+				conversation_hash: "a".repeat(64),
+				passed: true,
+				assertions: [],
+				judges: [],
+				metrics: { turns: [] },
+			},
+		});
 		expect(seen).toEqual([]);
 	});
 

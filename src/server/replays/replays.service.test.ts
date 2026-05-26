@@ -228,10 +228,13 @@ describe("enqueueAnalysis — atomic claim", () => {
 		const runner = makeFakeJobRunner();
 		const gatedRunner = {
 			...runner,
-			async enqueue(payload: { replayId: string }) {
+			async enqueue(
+				name: "analyze-replay" | "calculate-metrics" | "evaluate-replay",
+				payload: { replayId: string },
+			) {
 				enqueuedCount += 1;
 				await gate.promise;
-				return runner.enqueue(payload);
+				return runner.enqueue(name, payload);
 			},
 		};
 

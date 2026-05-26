@@ -32,7 +32,7 @@ sequenceDiagram
     participant Worker as bunqueue worker
 
     SDK->>Xray: POST /v1/conversations (multipart spec + audio_N)
-    Note over Xray: hash = sha256(canonical turns), upsert by hash
+    Note over Xray: hash = sha256(canonical spec), upsert by hash
     Xray-->>SDK: 200 hash
 
     SDK->>Xray: POST /v1/replays (JSON conversation_hash)
@@ -44,18 +44,16 @@ sequenceDiagram
 
     SDK->>Xray: POST /v1/replays/:id/audio (stereo WAV)
     SDK->>Xray: POST /v1/replays/:id/analyze
-    Xray->>Worker: enqueue
+    Xray->>Worker: enqueue analyze-replay
     Xray-->>SDK: 202 job_id
 
     SDK->>Xray: GET /v1/replays/:id/events (SSE)
-    Worker->>Xray: VAD, speech_segments, replay_turns
-    Xray-->>SDK: state / progress / completed
-
-    SDK->>Xray: GET /v1/replays/:id
-    Xray-->>SDK: turns + tool_calls + model_usage + spans
-
-    SDK->>Xray: PATCH /v1/replays/:id (lifecycle_state)
-    Xray-->>SDK: 200
+    Worker->>Xray: vad → transcribe (writes replay_turns + turn_transcripts)
+    Worker->>Worker: enqueue calculate-metrics
+    Worker->>Xray: metrics (writes replay_metrics)
+    Worker->>Worker: enqueue evaluate-replay
+    Worker->>Xray: evaluate (writes assertion_results + judge_results + replay_evaluations)
+    Xray-->>SDK: evaluation_complete (full ReplayResult payload)
 ```
 
 Two surfaces, one trust boundary: the **control plane** (the first
@@ -137,9 +135,10 @@ rows where the vocabulary supports it:
 - `gen_ai.tool` → `tool_calls` row.
 - `gen_ai.client.operation` (and Langfuse equivalents) → `model_usage`
   row.
-- `xray.*` spans land in the raw `spans` table only in v0.2 — no
-  structured extraction (assertion / judge eval moves to the server in
-  a follow-up PR).
+- `xray.turn` / `xray.stage.*` spans land in the raw `spans` table for
+  the inspector's timeline. They carry no structured payload — server
+  evaluation runs from the declared `Assertion` / `Judge` variants, not
+  from driver-emitted spans.
 
 Spans from unrecognized vocabularies are dropped silently — that's the
 "filter, not a gate" design so noisy framework spans don't fill the DB.
@@ -155,13 +154,14 @@ land in xray automatically. No xray-specific code required.
 ```python
 import asyncio
 import xray
+from xray import Assertion, Judge
 from xray.conversation import RecordedAudio
 from xray.runtime.livekit import LiveKitDriver
 
 
 async def main():
     conv = xray.Conversation(
-        id="booking-happy-path",
+        name="booking-happy-path",
         turns=[
             xray.Turn.agent(key="a-greeting"),
             xray.Turn.user(
@@ -171,10 +171,20 @@ async def main():
             ),
             xray.Turn.agent(
                 key="a-answer",
-                assertion=lambda a: "confirmed" in a.transcript.lower(),
-                assertion_name="confirms_booking",
+                assertions=(
+                    Assertion.contains("confirmed"),
+                    Assertion.tool_called("reserve_table"),
+                    Assertion.tool_args_match("reserve_table", {"party_size": 2}),
+                    Assertion.max_latency_ms(2_000),
+                ),
             ),
         ],
+        judges=(
+            Judge.text_match(
+                "The agent confirms a reservation for two at 7pm.",
+                pass_score=80,
+            ),
+        ),
     )
 
     driver = LiveKitDriver(
@@ -190,13 +200,22 @@ async def main():
         xray_url="http://localhost:8080",
         run_config=xray.RunConfig(model="gpt-4o", temperature=0.5),
     )
-    print(f"replay: {result.url}")
-    print(f"status: {result.status}")
+    print(f"replay: {result.replay_id} passed={result.passed}")
     for a in result.assertions:
-        print(f"  {a.name}: {a.status}")
+        print(f"  turn {a.turn_idx} [{a.kind}]: {a.status} {a.message or ''}")
+    for j in result.judges:
+        print(f"  judge {j.judge_idx} [{j.kind}]: {j.status} score={j.score} — {j.reason}")
 
 
 asyncio.run(main())
+```
+
+In pytest the same call is one assertion:
+
+```python
+async def test_booking_happy_path():
+    result = await xray.run(conversation=conv, runtime=driver, xray_url=XRAY_URL)
+    assert result.passed, format_failures(result)
 ```
 
 `xray.run` is async — wrap in `asyncio.run` for sync test harnesses.
@@ -205,22 +224,24 @@ already-running loops (pytest-asyncio, Jupyter, LiveKit Agents).
 
 What `xray.run` does:
 
-1. POST the Conversation (idempotent upsert).
+1. POST the Conversation (idempotent upsert; assertions + judges
+   are part of the canonical spec the server hashes).
 2. POST the Replay row eagerly (`lifecycle_state='pending'`).
 3. Bind the driver, attach replay baggage, run the driver — playing
    user audio + capturing agent audio + transcripts.
-4. Assemble a 48kHz int16 **stereo WAV** (L = user, R = agent,
+4. Assemble a 48 kHz int16 **stereo WAV** (L = user, R = agent,
    wall-clock-aligned) and POST it to `/v1/replays/:id/audio`.
-5. POST `/v1/replays/:id/analyze` — server enqueues the
-   `analyze-replay` bunqueue job which runs VAD per channel + derives
-   turn boundaries.
-6. Stream SSE on `/v1/replays/:id/events` until `lifecycle_state` hits
-   `completed` or `failed`.
-7. Fetch the final replay detail (turns + speech_segments +
-   tool_calls + model_usage + spans).
-8. Evaluate per-turn assertions + per-replay judge locally (SDK-side
-   in v0.2; server-side in a follow-up PR).
-9. PATCH the replay with the final state.
+5. POST `/v1/replays/:id/analyze` — server enqueues the three-stage
+   analyze chain (`analyze-replay` → `calculate-metrics` →
+   `evaluate-replay`).
+6. Stream SSE on `/v1/replays/:id/events` until `evaluation_complete`
+   (chain finished) or `failed` (chain stopped).
+7. Translate the `evaluation_complete` payload into
+   `xray.ReplayResult` and return it.
+
+Failure model: assertion failures don't raise — they're outcomes on
+`result.assertions`. Infrastructure failures (transcription provider
+down, judge LLM unavailable) raise `xray.ReplayEvaluationError`.
 
 User-turn audio formats:
 
@@ -231,29 +252,33 @@ User-turn audio formats:
 
 For Cartesia / 11Labs / Deepgram, synthesize externally and pass the
 output as `RecordedAudio` — multi-provider TTS Protocol is on the
-v0.2 roadmap.
+roadmap.
 
 ---
 
 ## 5. Read the result
 
-`AgentResponse` (handed to per-turn assertions) carries the
-server-side view:
+`xray.run(...)` returns `xray.ReplayResult`:
 
-- `transcript` — published `rtc.Transcription` segments (your agent
-  must publish them; see your provider's docs).
-- `tool_calls` — `tuple[ToolCall]` of `gen_ai.tool` spans for this turn.
-- `model_usage` — `tuple[ModelUsage]` of `gen_ai.usage.*` rollups.
-- `stage_timings` — `dict[str, float]` of `xray.stage.*` durations.
+- `passed: bool` — `True` iff every assertion *and* every judge ran to
+  a `passed` status. `errored` counts as not-passed.
+- `assertions: tuple[AssertionOutcome, ...]` — one entry per declared
+  assertion, in the order they appear on each turn. Each carries
+  `turn_idx`, `assertion_idx`, `kind`, `status` (`passed`/`failed`/
+  `errored`), and `message` (the reason on non-passed).
+- `judges: tuple[JudgeOutcome, ...]` — one entry per declared judge.
+  Each carries `judge_idx`, `kind`, `status`, the LLM's 0..100
+  `score`, and the LLM's natural-language `reason`.
+- `metrics: tuple[TurnMetrics, ...]` — per-turn timing computed
+  server-side: `agent_response_ms`, `ttft_ms`, `interrupted`.
+- `replay_id` + `conversation_hash` — pointers back to the server-side
+  rows for follow-up inspection.
 
-`ReplayResult` (handed to the per-replay judge) carries the same view
-across all turns plus the full transcript.
-
-The final `RunResult.status` reflects whether the driver-side run
-completed; turn boundaries derived by the server's VAD pipeline are
-available via `GET /v1/replays/:id` (under `turns` + `speech_segments`
-in the response) — the inspector will render these once it's updated
-in a follow-up PR.
+If you need the live audio + turn boundaries the server derived (for a
+custom UI, ad-hoc analysis), `GET /v1/replays/:id` carries the full
+detail; `GET /v1/replays/:id/result` returns the same `ReplayResult`
+payload outside of the SSE stream so late subscribers can fetch it
+directly.
 
 ---
 
@@ -264,7 +289,7 @@ Production-shape compose:
 ```yaml
 services:
   xray:
-    image: ghcr.io/xray-eval/xray:0.2.0
+    image: ghcr.io/xray-eval/xray:latest
     restart: unless-stopped
     ports: ["8080:8080"]
     volumes: ["xray-data:/data"]
@@ -287,47 +312,42 @@ mounted volume:
 - `/data/bunqueue.db` — bunqueue's job queue + DLQ (the
   `analyze-replay` worker runs embedded in the same Bun process).
 
-Inspector UI at `http://localhost:8080`. (Note for v0.2: the SPA is
-not yet rebuilt against the new schema; expect rendering glitches
-until the inspector follow-up PR.)
+Inspector UI at `http://localhost:8080`.
 
 ---
 
 ## What changed from earlier alphas
 
-xray-py is at **v0.2.0** — server is now the analyzer:
+This release moves assertion + judge evaluation onto the server.
 
-- The server runs server-side VAD on the driver's uploaded stereo WAV
-  and derives turn boundaries. `replay_turns` rows have
-  `turn_start_ms` / `turn_end_ms` / `voice_start_ms` / `voice_end_ms`
-  instead of the old `started_at` / `ended_at` / `transcript` /
-  `audio_path` shape.
-- Replay row gains `lifecycle_state` (`pending` | `running` |
-  `recording_uploaded` | `analyzing` | `completed` | `failed`),
-  `analysis_step`, and `job_id`.
-- New endpoints: `POST /v1/replays/:id/analyze`, `GET
-  /v1/replays/:id/events` (SSE).
-- Driver writes a wall-clock-aligned stereo WAV (left = user, right =
-  agent), not the turn-sequential mixdown the alpha used. Barge-in /
-  agent latency are now representable in the file.
-- Dropped: `replay_meta` table (judge fields) and `assertions` table.
-  `xray.assertion` + `xray.judge` OTLP spans still land in the raw
-  `spans` table; SDK still evaluates the dev's lambda assertions
-  client-side; structured assertion / judge storage returns in a
-  follow-up PR.
-- `xray.run` is async-only. No more sync `run()` collision with
-  running loops.
-- `Turn.user(...)` + `Turn.agent(...)`. `expect_agent_turn` is gone.
-- `LiveKitDriver` (not `LiveKitRuntime`) — name reflects user-side
-  test driver, not a LiveKit Agents runtime.
-- `xray.attach(ctx)` async-CM is the single entry point on the agent
-  side.
-- Replay context propagates via the JWT's `xray` attribute
-  (LiveKit `participant.attributes` ≥ v1.7), not via participant
-  metadata.
-- Wire is snake_case end-to-end. `conversation_hash`,
-  `lifecycle_state`, `failure_reason`, `started_at`. Both OTLP/JSON
-  and OTLP/Protobuf are accepted on the receiver.
-- `RunConfig` is a typed dataclass (`model`, `temperature`, `extra`).
-- Failure classification is typed-error-only. No more substring
-  matching on `str(exception)`.
+- **Declarative assertions + judges.** Replace per-turn lambdas with
+  `Assertion.contains(...)`, `Assertion.tool_called(...)`,
+  `Assertion.max_latency_ms(...)`, etc. Replace per-replay judge
+  callables with `Judge.text_match(reference, pass_score=...)`. Both
+  ship on the wire and run server-side — every SDK (Python today,
+  others tomorrow) speaks the same shape.
+- **`xray.run(...)` returns `ReplayResult`** with `passed` + per-
+  assertion / per-judge / per-turn-metrics. Assertion failures don't
+  raise — `assert result.passed, format_failures(result)` is the
+  pytest idiom. Only infrastructure failures (transcription provider
+  down, judge crashing) raise `ReplayEvaluationError`.
+- **Three-stage server chain.** `/analyze` now enqueues
+  `analyze-replay` (VAD + per-turn Whisper transcription), which
+  enqueues `calculate-metrics` (agent_response_ms, ttft_ms,
+  interrupted), which enqueues `evaluate-replay` (runs all assertions
+  + judges, emits `evaluation_complete` SSE).
+- **SSE event renamed.** The `completed` event is gone; the chain
+  emits `evaluation_complete` with the full `ReplayResult` payload.
+- **`GET /v1/replays/:id/result`** — fetches the same payload outside
+  the SSE stream for late subscribers.
+- **Server requires `OPENAI_API_KEY`** at runtime for Whisper +
+  judge calls. Set `XRAY_JUDGE_MODEL` to override the default
+  (`gpt-4o`).
+- **No more SDK-side enrichment fetch / final PATCH.** The SDK only
+  PATCHes when the driver itself fails (mixdown error, missing audio
+  file).
+- **Schema reset.** If you're upgrading an existing volume, drop
+  `xray.db` and `bunqueue.db` before starting the new container —
+  the column shape of `replays` + the new `turn_transcripts` /
+  `replay_metrics` / `assertion_results` / `judge_results` /
+  `replay_evaluations` tables aren't migration-compatible.
