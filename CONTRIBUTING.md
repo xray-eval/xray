@@ -33,6 +33,18 @@ curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitlea
 
 Why: see [`.claude/rules/public-repo.md`](./.claude/rules/public-repo.md) §4. The pre-commit hook is the *only* layer that prevents a leak rather than mitigating one — Push Protection and CI both run after the commit exists.
 
+### Python SDK (only if you touch `sdk/python/`)
+
+The pre-commit `ruff` step calls `sdk/python/.venv/bin/ruff` directly to match the CI invocation in [`.github/workflows/test-python-sdk.yml`](./.github/workflows/test-python-sdk.yml). Bootstrap the venv once:
+
+```bash
+cd sdk/python
+uv venv
+uv pip install -e '.[dev]'
+```
+
+`uv` itself is pinned via `.tool-versions` (install: `curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`).
+
 ## Daily loop
 
 ```bash

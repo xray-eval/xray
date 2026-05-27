@@ -13,6 +13,23 @@ pre-commit:
       glob: "*.{ts,tsx}"
       run: pnpm exec tsc --noEmit
 
+    # Match CI's invocation in .github/workflows/test-python-sdk.yml exactly
+    # (project venv binary, not `uvx`) so a passing pre-commit means a passing
+    # CI ruff job. Bootstrap one-time via: cd sdk/python && uv venv && uv pip
+    # install -e '.[dev]' — see CONTRIBUTING.md.
+    - name: ruff (Python format + lint, staged only, auto-fix)
+      glob: "sdk/python/**/*.py"
+      run: |
+        if [ ! -x sdk/python/.venv/bin/ruff ]; then
+          echo "ruff not found at sdk/python/.venv/bin/ruff."
+          echo "Bootstrap (one-time): cd sdk/python && uv venv && uv pip install -e '.[dev]'"
+          echo "See CONTRIBUTING.md."
+          exit 1
+        fi
+        sdk/python/.venv/bin/ruff check --fix {staged_files}
+        sdk/python/.venv/bin/ruff format {staged_files}
+      stage_fixed: true
+
     # The single layer that can PREVENT (not mitigate) a leak per
     # .claude/rules/public-repo.md §4. Push Protection + CI run later — they
     # block the PR but the blob is already public by then.
