@@ -557,9 +557,7 @@ def load_livekit_modules(
         lk_rtc_mod: object = importlib.import_module("livekit.rtc")
         lk_api_mod: object = importlib.import_module("livekit.api")
     except ImportError as e:
-        raise LiveKitDependencyError(
-            "This runtime requires `pip install xray-py[livekit]`."
-        ) from e
+        raise LiveKitDependencyError("This runtime requires `pip install xray-py[livekit]`.") from e
     if not isinstance(lk_rtc_mod, LkRtcModule):
         raise LiveKitDependencyError(
             "livekit.rtc is missing one of the required attributes "

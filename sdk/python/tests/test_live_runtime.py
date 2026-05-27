@@ -70,7 +70,9 @@ class _FakeRoomFactory:
 
 
 class _FakeAudioFrame:
-    def __init__(self, *, data: bytes, sample_rate: int, num_channels: int, samples_per_channel: int) -> None:
+    def __init__(
+        self, *, data: bytes, sample_rate: int, num_channels: int, samples_per_channel: int
+    ) -> None:
         self.data = data
         self.sample_rate = sample_rate
         self.num_channels = num_channels
@@ -292,9 +294,7 @@ async def test_agent_audio_played_to_speaker(tmp_path: Path):
     """Every captured agent frame must also be played to the speaker — this
     is what lets the user actually hear the agent and converse."""
     agent_pcm = [_silence(20), _silence(20), _silence(20)]
-    rtc = _build_fake_lk_rtc(
-        staged_events=[_stage_agent_join(), _stage_agent_track(agent_pcm)]
-    )
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join(), _stage_agent_track(agent_pcm)])
     api = _build_fake_lk_api()
     speaker = _FakeSpeaker()
     rt = _runtime(tmp_path, rtc, api, mic_frames=[_silence(20)], speaker=speaker)

@@ -58,7 +58,9 @@ def _replay_response(replay_id: str) -> dict[str, object]:
     return {"id": replay_id, "conversation_hash": _HASH, "lifecycle_state": "pending"}
 
 
-def _eval_complete(replay_id: str, turns: list[dict[str, object]] | None = None) -> dict[str, object]:
+def _eval_complete(
+    replay_id: str, turns: list[dict[str, object]] | None = None
+) -> dict[str, object]:
     return {
         "replay_id": replay_id,
         "conversation_hash": _HASH,
@@ -182,13 +184,20 @@ async def test_run_live_defaults_name_to_live_timestamp(tmp_path: Path):
             return_value=httpx.Response(
                 200,
                 content=_sse(
-                    [("evaluation_complete", {"type": "evaluation_complete", "result": _eval_complete(replay_id)})]
+                    [
+                        (
+                            "evaluation_complete",
+                            {"type": "evaluation_complete", "result": _eval_complete(replay_id)},
+                        )
+                    ]
                 ),
                 headers={"content-type": "text/event-stream"},
             )
         )
 
-        await run_live(runtime=StubLiveRuntime(full_audio_path=str(wav)), xray_url="http://test.local")
+        await run_live(
+            runtime=StubLiveRuntime(full_audio_path=str(wav)), xray_url="http://test.local"
+        )
 
     body = _conv_request_body(post_conv)
     assert '"name":"live-' in body
@@ -203,7 +212,9 @@ async def test_run_live_driver_failure_patches_and_raises():
         mock.post("/v1/replays").mock(
             return_value=httpx.Response(201, json=_replay_response(replay_id))
         )
-        patch = mock.patch(f"/v1/replays/{replay_id}").mock(return_value=httpx.Response(200, json={}))
+        patch = mock.patch(f"/v1/replays/{replay_id}").mock(
+            return_value=httpx.Response(200, json={})
+        )
 
         runtime = StubLiveRuntime(raise_on_run=AgentNotJoinedError("room-1", 30.0))
         with pytest.raises(AgentNotJoinedError):
@@ -240,5 +251,7 @@ async def test_run_live_server_chain_failure_raises(tmp_path: Path):
         )
 
         with pytest.raises(ReplayEvaluationError) as exc:
-            await run_live(runtime=StubLiveRuntime(full_audio_path=str(wav)), xray_url="http://test.local")
+            await run_live(
+                runtime=StubLiveRuntime(full_audio_path=str(wav)), xray_url="http://test.local"
+            )
     assert exc.value.failure_reason == "transcription_failed"
