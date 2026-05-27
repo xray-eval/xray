@@ -1,13 +1,13 @@
 import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
+import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 
 import {
 	MissingProviderCredentialError,
 	TranscriptionProviderError,
 } from "./transcription.errors.ts";
-import type { FetchLike } from "./transcription.openai-whisper.ts";
 import type {
 	TranscriptionProvider,
 	TranscriptionRequest,
@@ -15,9 +15,12 @@ import type {
 } from "./transcription.types.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-// Audio understanding is supported on 2.5-flash. Pinned snapshot so a
-// silent re-pointing of the floating alias doesn't drift transcription
-// quality between runs. Operators override via XRAY_TRANSCRIPTION_MODEL.
+// Floating alias, not a pinned snapshot — Gemini exposes no dated flash
+// snapshot, so Google may re-point this to newer builds and transcription
+// output can drift over time. Operators pin a specific model via
+// XRAY_TRANSCRIPTION_MODEL. The split vs. the judge is deliberate: the
+// judge defaults to the newer `gemini-3.5-flash` (`judges.google-gemini.ts`)
+// for verdict quality; transcription stays on 2.5-flash.
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_TIMEOUT_MS = 120_000;
 

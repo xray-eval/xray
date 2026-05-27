@@ -1,8 +1,8 @@
 import * as v from "valibot";
 
+import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
-import type { FetchLike } from "@/server/transcription/transcription.openai-whisper.ts";
 
 import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import type { JudgeProvider, JudgeProviderResponse } from "./judges.types.ts";

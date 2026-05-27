@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
+import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 
 import {
@@ -38,14 +39,6 @@ const WhisperResponseSchema = v.object({
 	duration: v.optional(v.union([v.number(), v.null()])),
 	words: v.optional(v.union([v.array(WhisperWordSchema), v.null()])),
 });
-
-/**
- * Minimal subset of `fetch` we depend on. Bun's `typeof fetch` includes a
- * `preconnect` static method we don't use, and matching it would force
- * every test stub to ship a stub `preconnect` for no reason. Accepting
- * `FetchLike` keeps the seam thin and the tests honest.
- */
-export type FetchLike = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 
 export interface OpenAIWhisperOptions {
 	/** Read at call time, not at construction — env can be loaded between server

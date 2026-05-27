@@ -1,16 +1,21 @@
 import * as v from "valibot";
 
+import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
-import type { FetchLike } from "@/server/transcription/transcription.openai-whisper.ts";
 
 import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import type { JudgeProvider, JudgeProviderResponse } from "./judges.types.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-// Pinned snapshot for verdict stability — a floating alias would re-point
-// under us and drift scores between runs. Operators override via
-// XRAY_JUDGE_MODEL.
+// Latest flash alias, chosen for verdict quality. Unlike `judges.openai.ts`
+// (which pins a dated snapshot, `gpt-4o-2024-08-06`), Gemini exposes no
+// dated flash snapshot — this is a floating alias, so Google may re-point
+// it to newer builds and scores can drift over time. Operators pin a
+// specific model via XRAY_JUDGE_MODEL. The split vs. transcription is
+// deliberate: transcription defaults to `gemini-2.5-flash`
+// (`transcription.google-gemini.ts`), the judge runs a newer generation
+// for stronger verdict reasoning.
 const DEFAULT_MODEL = "gemini-3.5-flash";
 const DEFAULT_TIMEOUT_MS = 60_000;
 

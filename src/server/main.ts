@@ -1,13 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { match } from "ts-pattern";
-
 // `import index from "*.html"` triggers Bun's HTML bundler: Bun walks the
 // shell's `<script type="module">` tags and bundles the React entry on boot.
 // With `bun --hot` the bundle is rebuilt + HMR'd on file change.
 import index from "../../index.html";
-import type { Env } from "./env/env.ts";
 import { loadEnv } from "./env/env.ts";
 import { makeAnalyzeProcessor } from "./jobs/analyze-replay/analyze-replay.processor.ts";
 import { makeCalculateMetricsProcessor } from "./jobs/calculate-metrics/calculate-metrics.processor.ts";
@@ -15,16 +12,11 @@ import { makeEvaluateReplayProcessor } from "./jobs/evaluate-replay/evaluate-rep
 import type { JobRunner } from "./jobs/jobs.bunqueue.ts";
 import { createJobRunner } from "./jobs/jobs.bunqueue.ts";
 import { JobRunnerNotInitializedError } from "./jobs/jobs.errors.ts";
-import { createGoogleGeminiJudgeProvider } from "./judges/judges.google-gemini.ts";
-import { createOpenAIJudgeProvider } from "./judges/judges.openai.ts";
-import type { JudgeProvider } from "./judges/judges.types.ts";
+import { buildJudgeProvider, buildTranscriptionProvider } from "./providers/providers.ts";
 import { makeReplayEvents } from "./replays/replays.events.ts";
 import { markReplayFailed } from "./replays/replays.service.ts";
 import { createApp } from "./server.ts";
 import { openStoreFromEnv } from "./store/store.ts";
-import { createGoogleGeminiTranscriptionProvider } from "./transcription/transcription.google-gemini.ts";
-import { createOpenAIWhisperProvider } from "./transcription/transcription.openai-whisper.ts";
-import type { TranscriptionProvider } from "./transcription/transcription.types.ts";
 
 const env = loadEnv();
 const store = openStoreFromEnv(env);
@@ -38,92 +30,10 @@ const events = makeReplayEvents();
 // only fails when a stage actually needs them — boot stays cheap, and
 // the failure surfaces as `MissingProviderCredentialError` with the env
 // var name, not as a generic 500. Tests substitute fake providers with
-// their own apiKey closures and don't go through `loadEnv()`.
+// their own apiKey closures and don't go through `loadEnv()`. The
+// selection logic + its branch tests live in `providers/providers.ts`.
 const transcriptionProvider = buildTranscriptionProvider(env);
 const judgeProvider = buildJudgeProvider(env);
-
-/**
- * Resolve which provider kind to construct for a stage.
- *
- * Precedence:
- *   1. Explicit selector (`XRAY_*_PROVIDER`) wins.
- *   2. Otherwise infer from which API key is set. Exactly one key set →
- *      that provider. Both set + no selector → boot-time error (silent
- *      defaulting hides the operator's actual intent).
- *   3. Neither key set → fall back to the OpenAI kind; the lazy apiKey
- *      resolver will throw `MissingProviderCredentialError("OPENAI_API_KEY")`
- *      on the first stage that needs a credential. Boot still succeeds so
- *      operators can run smoke flows that don't touch the LLM stages.
- */
-function resolveProviderKind<K extends string>(
-	explicit: K | undefined,
-	envVarName: string,
-	hasOpenAI: boolean,
-	hasGoogle: boolean,
-	openAIKind: K,
-	googleKind: K,
-): K {
-	if (explicit !== undefined) return explicit;
-	if (hasOpenAI && hasGoogle) {
-		throw new Error(
-			`Both OPENAI_API_KEY and GOOGLE_API_KEY are set — set ${envVarName} to pick one explicitly`,
-		);
-	}
-	if (hasGoogle) return googleKind;
-	return openAIKind;
-}
-
-function buildTranscriptionProvider(cfg: Env): TranscriptionProvider {
-	const kind = resolveProviderKind(
-		cfg.XRAY_TRANSCRIPTION_PROVIDER,
-		"XRAY_TRANSCRIPTION_PROVIDER",
-		cfg.OPENAI_API_KEY !== undefined,
-		cfg.GOOGLE_API_KEY !== undefined,
-		"openai-whisper" as const,
-		"google-gemini" as const,
-	);
-	const modelOverride = cfg.XRAY_TRANSCRIPTION_MODEL;
-	return match(kind)
-		.with("openai-whisper", () =>
-			createOpenAIWhisperProvider({
-				apiKey: () => cfg.OPENAI_API_KEY,
-				...(modelOverride !== undefined ? { model: modelOverride } : {}),
-			}),
-		)
-		.with("google-gemini", () =>
-			createGoogleGeminiTranscriptionProvider({
-				apiKey: () => cfg.GOOGLE_API_KEY,
-				...(modelOverride !== undefined ? { model: modelOverride } : {}),
-			}),
-		)
-		.exhaustive();
-}
-
-function buildJudgeProvider(cfg: Env): JudgeProvider {
-	const kind = resolveProviderKind(
-		cfg.XRAY_JUDGE_PROVIDER,
-		"XRAY_JUDGE_PROVIDER",
-		cfg.OPENAI_API_KEY !== undefined,
-		cfg.GOOGLE_API_KEY !== undefined,
-		"openai" as const,
-		"google-gemini" as const,
-	);
-	const modelOverride = cfg.XRAY_JUDGE_MODEL;
-	return match(kind)
-		.with("openai", () =>
-			createOpenAIJudgeProvider({
-				apiKey: () => cfg.OPENAI_API_KEY,
-				...(modelOverride !== undefined ? { model: modelOverride } : {}),
-			}),
-		)
-		.with("google-gemini", () =>
-			createGoogleGeminiJudgeProvider({
-				apiKey: () => cfg.GOOGLE_API_KEY,
-				...(modelOverride !== undefined ? { model: modelOverride } : {}),
-			}),
-		)
-		.exhaustive();
-}
 
 // bunqueue opens its own SQLite file alongside `xray.db` (see
 // `.claude/rules/single-image-distribution.md`'s "one volume, two files"

@@ -1,29 +1,11 @@
+import { makeFetch } from "@/server/core/test-utils.ts";
+
 import {
 	MissingProviderCredentialError,
 	TranscriptionProviderError,
 } from "./transcription.errors.ts";
 import { createGoogleGeminiTranscriptionProvider } from "./transcription.google-gemini.ts";
-import type { FetchLike } from "./transcription.openai-whisper.ts";
 import { describe, expect, it } from "bun:test";
-
-function makeFetch(
-	handler: (req: { url: string; headers: Headers; body: unknown }) => Response,
-): FetchLike {
-	return async (input, init) => {
-		const url =
-			typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-		const headers = new Headers(init?.headers ?? {});
-		let body: unknown = init?.body;
-		if (typeof body === "string") {
-			try {
-				body = JSON.parse(body);
-			} catch {
-				/* leave as string */
-			}
-		}
-		return handler({ url, headers, body });
-	};
-}
 
 interface GeminiBody {
 	systemInstruction?: unknown;

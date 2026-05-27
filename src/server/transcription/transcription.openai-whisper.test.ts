@@ -1,22 +1,11 @@
+import { makeFetch } from "@/server/core/test-utils.ts";
+
 import {
 	MissingProviderCredentialError,
 	TranscriptionProviderError,
 } from "./transcription.errors.ts";
-import type { FetchLike } from "./transcription.openai-whisper.ts";
 import { createOpenAIWhisperProvider } from "./transcription.openai-whisper.ts";
 import { describe, expect, it } from "bun:test";
-
-function makeFetch(
-	handler: (req: { url: string; headers: Headers; body?: FormData }) => Response,
-): FetchLike {
-	return async (input, init) => {
-		const url =
-			typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-		const headers = new Headers(init?.headers ?? {});
-		const body = init?.body instanceof FormData ? init.body : undefined;
-		return handler(body !== undefined ? { url, headers, body } : { url, headers });
-	};
-}
 
 describe("createOpenAIWhisperProvider", () => {
 	it("posts a multipart request to /v1/audio/transcriptions with the model + verbose_json format", async () => {
@@ -30,7 +19,7 @@ describe("createOpenAIWhisperProvider", () => {
 		const fetchImpl = makeFetch(({ url, headers, body }) => {
 			observed.url = url;
 			observed.auth = headers.get("authorization") ?? "";
-			if (body !== undefined) {
+			if (body instanceof FormData) {
 				observed.model = String(body.get("model") ?? "");
 				observed.format = String(body.get("response_format") ?? "");
 				const lang = body.get("language");
