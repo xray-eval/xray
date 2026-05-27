@@ -36,6 +36,11 @@ livekit = [
   "livekit>=1.0",
   "livekit-api>=1.0",
 ]
+# Live mic sessions (xray.run_live). Exact-pinned + cooldown-checked per
+# .claude/rules/supply-chain.md §6: 0.5.5 uploaded 2026-01-23 (>7d old).
+live = [
+  "sounddevice==0.5.5",
+]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.24",

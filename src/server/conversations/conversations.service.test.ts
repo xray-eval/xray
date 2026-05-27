@@ -6,6 +6,7 @@ import {
 	canonicalStringify,
 	ensureConversation,
 	getConversationByHash,
+	getConversationSpec,
 	listConversations,
 	materializeRequestTurns,
 	toConversationResponse,
@@ -276,6 +277,59 @@ describe("canonicalizeAndHashSpec", () => {
 		expect(() =>
 			canonicalStringify([{ role: "user", text: "hi", key: "u0", flag: true }]),
 		).not.toThrow();
+	});
+});
+
+describe("live conversations", () => {
+	it("salts the hash so two empty-turn live specs are distinct rows", async () => {
+		const a = await canonicalizeAndHashSpec([], [], true);
+		const b = await canonicalizeAndHashSpec([], [], true);
+		expect(a.hash).toHaveLength(64);
+		expect(a.hash).not.toBe(b.hash);
+		expect(a.json).toContain('"live":true');
+		expect(a.json).toContain('"live_salt":');
+	});
+
+	it("a live empty spec hashes differently from a non-live empty spec", async () => {
+		const live = await canonicalizeAndHashSpec([], [], true);
+		const nonLive = await canonicalizeAndHashSpec([], [], false);
+		expect(live.hash).not.toBe(nonLive.hash);
+		// Non-live empty spec carries neither the flag nor the salt.
+		expect(nonLive.json).not.toContain("live");
+	});
+
+	it("round-trips live=true + empty turns through storage", async () => {
+		const store = makeTempStore();
+		const { json, hash } = await canonicalizeAndHashSpec([], [], true);
+		const row = ensureConversation(store.db, {
+			hash,
+			name: "live-2026-05-26T00:00:00Z",
+			turnsJson: json,
+			now: "2026-05-26T00:00:00.000Z",
+		});
+		const response = toConversationResponse(row);
+		expect(response.live).toBe(true);
+		expect(response.turns).toEqual([]);
+
+		const spec = getConversationSpec(store, hash);
+		expect(spec?.live).toBe(true);
+		expect(spec?.turns).toEqual([]);
+		store.close();
+	});
+
+	it("a scripted conversation reads back live=false", async () => {
+		const store = makeTempStore();
+		const turns = makeTurns();
+		const { json, hash } = await canonicalizeAndHashSpec(turns, []);
+		const row = ensureConversation(store.db, {
+			hash,
+			name: "scripted",
+			turnsJson: json,
+			now: "2026-05-26T00:00:00.000Z",
+		});
+		expect(toConversationResponse(row).live).toBe(false);
+		expect(getConversationSpec(store, hash)?.live).toBe(false);
+		store.close();
 	});
 });
 

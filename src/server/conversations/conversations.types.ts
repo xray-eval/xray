@@ -77,9 +77,12 @@ export const ConversationTurnRequestSchema = v.object({
 });
 export type ConversationTurnRequest = v.InferOutput<typeof ConversationTurnRequestSchema>;
 
+// No array-level `minLength` here: a `live` session upserts an empty-turn
+// spec (its turns are observed at runtime, not scripted). The "at least one
+// turn" rule for ordinary scripted conversations is enforced at the
+// request-object level below, gated on `live === false`.
 export const TurnsRequestArraySchema = v.pipe(
 	v.array(ConversationTurnRequestSchema),
-	v.minLength(1),
 	v.maxLength(MAX_TURNS_PER_CONVERSATION),
 );
 
@@ -90,16 +93,27 @@ export const TurnsRequestArraySchema = v.pipe(
  * Server reads each audio file part, sha256s the bytes, stores a
  * content-addressed copy, substitutes the sha256 into the canonical form,
  * then hashes the canonical turn JSON to produce the conversation hash.
+ *
+ * `live`: a live mic session has no script. The server allows an empty
+ * `turns` array when `live === true` and salts the hash so each live POST
+ * mints a fresh conversation row (see canonicalizeAndHashSpec).
  */
-export const CreateConversationRequestSchema = v.object({
-	name: ConversationNameSchema,
-	turns: TurnsRequestArraySchema,
-	// Conversation-level judges. Run once per replay against the full
-	// transcript by the evaluate-replay job. Adding/removing/reordering
-	// judges changes the conversation hash — judges are part of the test
-	// identity, not metadata.
-	judges: v.optional(JudgesArraySchema, []),
-});
+export const CreateConversationRequestSchema = v.pipe(
+	v.object({
+		name: ConversationNameSchema,
+		turns: TurnsRequestArraySchema,
+		// Conversation-level judges. Run once per replay against the full
+		// transcript by the evaluate-replay job. Adding/removing/reordering
+		// judges changes the conversation hash — judges are part of the test
+		// identity, not metadata.
+		judges: v.optional(JudgesArraySchema, []),
+		live: v.optional(v.boolean(), false),
+	}),
+	v.check(
+		(input) => input.live || input.turns.length >= 1,
+		"A non-live conversation must declare at least one turn",
+	),
+);
 export type CreateConversationRequest = v.InferOutput<typeof CreateConversationRequestSchema>;
 
 // ─── Canonical-form schemas (what's hashed, stored, and returned) ─────
@@ -124,9 +138,11 @@ export const ConversationTurnSchema = v.object({
 });
 export type ConversationTurn = v.InferOutput<typeof ConversationTurnSchema>;
 
+// Stored turns may be empty for a `live` conversation; non-live specs always
+// arrive with ≥1 turn because the request schema's object-level check
+// enforced it before the spec was canonicalized and stored.
 export const TurnsArraySchema = v.pipe(
 	v.array(ConversationTurnSchema),
-	v.minLength(1),
 	v.maxLength(MAX_TURNS_PER_CONVERSATION),
 );
 
@@ -135,10 +151,17 @@ export const TurnsArraySchema = v.pipe(
  * the turn array + the conversation-level judges into one object so the
  * single `turns_json` column can carry both. The column name predates
  * judges; the *contents* are the full spec.
+ *
+ * `live` marks a mic session; `live_salt` is a server-generated UUID folded
+ * into the canonical JSON so two live sessions with identical (empty) turns
+ * still hash to distinct conversation rows. Both are absent on ordinary
+ * scripted conversations.
  */
 export const StoredConversationSpecSchema = v.object({
 	turns: TurnsArraySchema,
 	judges: v.optional(v.array(JudgeSchema), []),
+	live: v.optional(v.boolean(), false),
+	live_salt: v.optional(v.string()),
 });
 export type StoredConversationSpec = v.InferOutput<typeof StoredConversationSpecSchema>;
 
@@ -150,6 +173,7 @@ export const ConversationResponseSchema = v.object({
 	last_run_at: v.nullable(v.string()),
 	turns: v.array(ConversationTurnSchema),
 	judges: v.array(JudgeSchema),
+	live: v.boolean(),
 });
 export type ConversationResponse = v.InferOutput<typeof ConversationResponseSchema>;
 

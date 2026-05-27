@@ -56,6 +56,7 @@ export interface SeedConversationOverrides {
 	judges?: Judge[];
 	createdAt?: string;
 	lastRunAt?: string | null;
+	live?: boolean;
 }
 
 /**
@@ -72,15 +73,20 @@ export async function seedConversation(
 	overrides: SeedConversationOverrides = {},
 ): Promise<{ hash: string; name: string }> {
 	counter += 1;
-	const turns = overrides.turns ?? [
-		makeConversationTurn({ role: "user", text: `hi-${counter}`, key: `u${counter}` }),
-		makeConversationTurn({ role: "agent", key: `a${counter}` }),
-	];
+	const live = overrides.live ?? false;
+	const turns =
+		overrides.turns ??
+		(live
+			? []
+			: [
+					makeConversationTurn({ role: "user", text: `hi-${counter}`, key: `u${counter}` }),
+					makeConversationTurn({ role: "agent", key: `a${counter}` }),
+				]);
 	const judges = overrides.judges ?? [];
 	const name = overrides.name ?? `Conversation ${counter}`;
 	const createdAt = overrides.createdAt ?? "2026-05-18T11:00:00.000Z";
 	const lastRunAt = overrides.lastRunAt === undefined ? null : overrides.lastRunAt;
-	const { json: turnsJson, hash } = await canonicalizeAndHashSpec(turns, judges);
+	const { json: turnsJson, hash } = await canonicalizeAndHashSpec(turns, judges, live);
 	store.db
 		.insert(conversations)
 		.values({ hash, name, turnsJson, createdAt, lastRunAt })

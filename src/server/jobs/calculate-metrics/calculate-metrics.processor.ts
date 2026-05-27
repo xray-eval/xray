@@ -1,8 +1,11 @@
 import { and, asc, eq } from "drizzle-orm";
 
+import { getConversationSpec } from "@/server/conversations/conversations.service.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
 import { findReplay, markReplayFailed } from "@/server/replays/replays.service.ts";
+import type { ReplayResult, TurnMetricsResponse } from "@/server/replays/replays.types.ts";
 import {
+	replayEvaluations,
 	replayMetrics,
 	replays,
 	replayTurns,
@@ -94,6 +97,16 @@ export function makeCalculateMetricsProcessor(
 				return { ok: true, metricsWritten: rows.length };
 			}
 
+			// Live sessions carry no script — no assertions, no judges. Skip the
+			// evaluate-replay stage (which would load the judge provider only to
+			// loop over an empty spec) and finalize the replay to `completed`
+			// here. A missing conversation row reads as non-live so the chain
+			// still routes to evaluate-replay, which surfaces the missing row.
+			const spec = getConversationSpec(store, replay.conversationHash);
+			if (spec?.live) {
+				return finalizeLiveReplay(store, events, replayId, replay.conversationHash, turns, rows);
+			}
+
 			events.emit(replayId, {
 				type: "state",
 				lifecycle_state: "analyzing",
@@ -107,6 +120,89 @@ export function makeCalculateMetricsProcessor(
 			throw new JobProcessingError(replayId, `metrics stage failed: ${detail}`, { cause });
 		}
 	};
+}
+
+type ComputedMetric = ReturnType<typeof computeMetrics>[number];
+
+/**
+ * Terminal step of the analyze chain for a `live` replay. There is no spec
+ * to evaluate, so we write an empty `replay_evaluations` row (passed=true,
+ * all totals 0), flip the replay to `completed`, and emit the
+ * `evaluation_complete` SSE directly — the same event evaluate-replay would
+ * emit for a scripted run, minus the assertion/judge work. The SDK's
+ * `run_live` is waiting on exactly this event.
+ */
+function finalizeLiveReplay(
+	store: Store,
+	events: ReplayEvents,
+	replayId: string,
+	conversationHash: string,
+	turns: readonly ReplayTurnRow[],
+	metricRows: readonly ComputedMetric[],
+): CalculateMetricsResult {
+	const evaluatedAt = new Date().toISOString();
+	const advanced = store.db.transaction((tx) => {
+		// Same idempotency guard as every other chain stage: only finalize
+		// while the row is still ours (`analyzing`). A concurrent failed-stamp
+		// or operator PATCH must not be overwritten.
+		const current = tx.select().from(replays).where(eq(replays.id, replayId)).get();
+		if (current?.lifecycleState !== "analyzing") return false;
+		tx.delete(replayEvaluations).where(eq(replayEvaluations.replayId, replayId)).run();
+		tx.insert(replayEvaluations)
+			.values({
+				replayId,
+				passed: true,
+				assertionsTotal: 0,
+				assertionsPassed: 0,
+				judgesTotal: 0,
+				judgesPassed: 0,
+				evaluatedAt,
+			})
+			.run();
+		tx.update(replays)
+			.set({ lifecycleState: "completed", analysisStep: null, finishedAt: evaluatedAt })
+			.where(eq(replays.id, replayId))
+			.run();
+		return true;
+	});
+
+	if (!advanced) {
+		console.warn(
+			`calculate-metrics worker for ${replayId} (live) found the row no longer in 'analyzing' — skipping completed emit`,
+		);
+		return { ok: true, metricsWritten: metricRows.length };
+	}
+
+	const result: ReplayResult = {
+		replay_id: replayId,
+		conversation_hash: conversationHash,
+		passed: true,
+		assertions: [],
+		judges: [],
+		metrics: { turns: buildLiveTurnMetrics(turns, metricRows) },
+	};
+	events.emit(replayId, { type: "state", lifecycle_state: "completed", analysis_step: null });
+	events.emit(replayId, { type: "evaluation_complete", result });
+	return { ok: true, metricsWritten: metricRows.length };
+}
+
+function buildLiveTurnMetrics(
+	turns: readonly ReplayTurnRow[],
+	metricRows: readonly ComputedMetric[],
+): TurnMetricsResponse[] {
+	const byIdx = new Map(metricRows.map((m) => [m.turnIdx, m]));
+	return [...turns]
+		.sort((a, b) => a.idx - b.idx)
+		.map((turn) => {
+			const metric = byIdx.get(turn.idx);
+			return {
+				turn_idx: turn.idx,
+				role: turn.role,
+				agent_response_ms: metric?.agentResponseMs ?? null,
+				ttft_ms: metric?.ttftMs ?? null,
+				interrupted: metric?.interrupted ?? false,
+			};
+		});
 }
 
 /**

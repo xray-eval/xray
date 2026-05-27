@@ -524,47 +524,76 @@ class LiveKitRuntime(Runtime):
                 "LiveKitRuntime: bind(replay_id=..., conversation_hash=...) "
                 "must be called before token minting."
             )
-        attributes = encode_attribute(
+        return mint_user_token(
+            lk_api,
+            api_key=self.api_key,
+            api_secret=self.api_secret,
+            room=self.room,
+            identity=self.identity,
             replay_id=self.replay_id,
             conversation_hash=self.conversation_hash,
         )
-        builder = lk_api.AccessToken(self.api_key, self.api_secret)
-        builder = builder.with_identity(self.identity)
-        builder = builder.with_grants(lk_api.VideoGrants(room_join=True, room=self.room))
-        if hasattr(builder, "with_attributes"):
-            builder = builder.with_attributes(attributes)
-        return builder.to_jwt()
 
     def _load_livekit(self) -> tuple[LkRtcModule, LkApiModule]:
-        # Loaded via importlib so pyright doesn't try to resolve `livekit`
-        # at type-check time — the Protocols in `_livekit_types` are the
-        # static contract; `isinstance` against them is the runtime gate.
-        # CI therefore doesn't need `pip install ...[livekit]`.
-        if self._lk_rtc is not None and self._lk_api is not None:
-            return self._lk_rtc, self._lk_api
-        try:
-            lk_rtc_mod: object = importlib.import_module("livekit.rtc")
-            lk_api_mod: object = importlib.import_module("livekit.api")
-        except ImportError as e:
-            raise LiveKitDependencyError(
-                "LiveKitRuntime requires `pip install xray-py[livekit]`."
-            ) from e
-        if not isinstance(lk_rtc_mod, LkRtcModule):
-            raise LiveKitDependencyError(
-                "livekit.rtc is missing one of the required attributes "
-                "(AudioSource / AudioFrame / Room / …). Installed livekit "
-                "version may be incompatible."
-            )
-        if not isinstance(lk_api_mod, LkApiModule):
-            raise LiveKitDependencyError(
-                "livekit.api is missing AccessToken / VideoGrants. "
-                "Installed livekit-api version may be incompatible."
-            )
-        return lk_rtc_mod, lk_api_mod
+        return load_livekit_modules(self._lk_rtc, self._lk_api)
 
     @override
     async def aclose(self) -> None:
         return None
+
+
+def load_livekit_modules(
+    injected_rtc: LkRtcModule | None,
+    injected_api: LkApiModule | None,
+) -> tuple[LkRtcModule, LkApiModule]:
+    """Resolve the ``livekit.rtc`` / ``livekit.api`` modules, preferring
+    test-injected fakes. Loaded via importlib so pyright doesn't resolve
+    `livekit` at type-check time — the Protocols in `_livekit_types` are the
+    static contract; `isinstance` against them is the runtime gate. CI
+    therefore doesn't need `pip install ...[livekit]`."""
+    if injected_rtc is not None and injected_api is not None:
+        return injected_rtc, injected_api
+    try:
+        lk_rtc_mod: object = importlib.import_module("livekit.rtc")
+        lk_api_mod: object = importlib.import_module("livekit.api")
+    except ImportError as e:
+        raise LiveKitDependencyError(
+            "This runtime requires `pip install xray-py[livekit]`."
+        ) from e
+    if not isinstance(lk_rtc_mod, LkRtcModule):
+        raise LiveKitDependencyError(
+            "livekit.rtc is missing one of the required attributes "
+            "(AudioSource / AudioFrame / Room / …). Installed livekit "
+            "version may be incompatible."
+        )
+    if not isinstance(lk_api_mod, LkApiModule):
+        raise LiveKitDependencyError(
+            "livekit.api is missing AccessToken / VideoGrants. "
+            "Installed livekit-api version may be incompatible."
+        )
+    return lk_rtc_mod, lk_api_mod
+
+
+def mint_user_token(
+    lk_api: LkApiModule,
+    *,
+    api_key: str,
+    api_secret: str,
+    room: str,
+    identity: str,
+    replay_id: str,
+    conversation_hash: str,
+) -> str:
+    """Mint the user-side driver JWT carrying the ``xray`` token-claim
+    attribute (the agent reads it via ``participant.attributes`` to bind the
+    replay context). Shared by the scripted and live runtimes."""
+    attributes = encode_attribute(replay_id=replay_id, conversation_hash=conversation_hash)
+    builder = lk_api.AccessToken(api_key, api_secret)
+    builder = builder.with_identity(identity)
+    builder = builder.with_grants(lk_api.VideoGrants(room_join=True, room=room))
+    if hasattr(builder, "with_attributes"):
+        builder = builder.with_attributes(attributes)
+    return builder.to_jwt()
 
 
 def _read_wav_as_pcm48k_mono(path: Path, *, turn_idx: int | None) -> bytes:
@@ -693,6 +722,52 @@ def write_stereo_mixdown(*, segments: list[_TurnSegment], out_path: Path) -> Non
                 _mix_into(right, offset_bytes, s.pcm)
             case _:
                 assert_never(s.role)
+
+    with wave.open(str(out_path), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(SAMPLE_WIDTH_BYTES)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(_interleave_lr(left=bytes(left), right=bytes(right)))
+
+
+def write_live_mixdown(
+    *,
+    user_frames: list[tuple[float, bytes]],
+    agent_frames: list[tuple[float, bytes]],
+    out_path: Path,
+) -> None:
+    """Write a wall-clock-aligned stereo WAV (L = user mic, R = agent) for a
+    live session. Each frame is ``(wall_clock_seconds, int16_pcm_bytes)``;
+    frames are placed at their offset from t0 (earliest frame across both
+    channels), so the gaps the agent's event-driven ``AudioStream`` leaves
+    during silence become real silence — not compressed-away time.
+
+    Mirrors :func:`write_stereo_mixdown` but keyed on per-frame timestamps
+    instead of per-turn segments, because a live run has no turn boundaries
+    on the driver side (the server derives them via VAD from this file)."""
+    user = [(t, pcm) for t, pcm in user_frames if pcm]
+    agent = [(t, pcm) for t, pcm in agent_frames if pcm]
+    if not user and not agent:
+        with wave.open(str(out_path), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(SAMPLE_WIDTH_BYTES)
+            w.setframerate(SAMPLE_RATE)
+        return
+
+    t0 = min(t for t, _pcm in [*user, *agent])
+    total_samples = 0
+    for t, pcm in [*user, *agent]:
+        offset_samples = max(0, int((t - t0) * SAMPLE_RATE))
+        total_samples = max(total_samples, offset_samples + len(pcm) // SAMPLE_WIDTH_BYTES)
+
+    left = bytearray(total_samples * SAMPLE_WIDTH_BYTES)
+    right = bytearray(total_samples * SAMPLE_WIDTH_BYTES)
+    for t, pcm in user:
+        offset_bytes = max(0, int((t - t0) * SAMPLE_RATE)) * SAMPLE_WIDTH_BYTES
+        _mix_into(left, offset_bytes, bytearray(pcm))
+    for t, pcm in agent:
+        offset_bytes = max(0, int((t - t0) * SAMPLE_RATE)) * SAMPLE_WIDTH_BYTES
+        _mix_into(right, offset_bytes, bytearray(pcm))
 
     with wave.open(str(out_path), "wb") as w:
         w.setnchannels(2)

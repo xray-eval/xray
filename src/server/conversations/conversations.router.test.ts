@@ -185,6 +185,32 @@ describe("POST /v1/conversations", () => {
 		expect(body.error).toBe("invalid_conversation_request");
 	});
 
+	it("accepts empty turns when live=true and reports live in the response", async () => {
+		const { app } = makeApp();
+		const res = await postConversation(
+			app,
+			specForm({ name: "live-session", turns: [], live: true }),
+		);
+		expect(res.status).toBe(200);
+		const body = await readJson(
+			res,
+			v.object({ hash: v.string(), live: v.boolean(), turns: v.array(v.unknown()) }),
+		);
+		expect(body.hash).toMatch(/^[0-9a-f]{64}$/);
+		expect(body.live).toBe(true);
+		expect(body.turns).toHaveLength(0);
+	});
+
+	it("mints a fresh hash for every live POST (salted), unlike scripted upserts", async () => {
+		const { app } = makeApp();
+		const form = () => specForm({ name: "live-session", turns: [], live: true });
+		const r1 = await postConversation(app, form());
+		const r2 = await postConversation(app, form());
+		const b1 = await readJson(r1, v.object({ hash: v.string() }));
+		const b2 = await readJson(r2, v.object({ hash: v.string() }));
+		expect(b1.hash).not.toBe(b2.hash);
+	});
+
 	it("returns 400 when a turn references an upload_key with no file part", async () => {
 		const { app } = makeApp();
 		const spec = {

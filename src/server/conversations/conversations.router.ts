@@ -113,6 +113,7 @@ export function createConversationsRouter(store: Store, audioRoot: string): Hono
 			const { json: turnsJson, hash } = await canonicalizeAndHashSpec(
 				canonicalTurns,
 				parsed.output.judges,
+				parsed.output.live,
 			);
 
 			// Write audio files BEFORE the upsert. Content-addressed

@@ -12,6 +12,10 @@ Public surface:
 - ``xray.run(...)`` — orchestrator: POST the spec, POST the replay, drive
   the runtime, upload audio, wait for the server's evaluation, return
   the verdict.
+- ``xray.run_live(...)`` — live-session orchestrator: no authored
+  Conversation, the user talks to the agent over the mic; records the
+  session and uploads it as a Replay under a fresh ``live`` Conversation.
+  Stop with Ctrl+C. See ``xray.runtime.livekit_live.LiveKitLiveRuntime``.
 - ``xray.attach(ctx, ...)`` — async-CM for LiveKit Agents worker
   entrypoints. Auto-binds the replay context from the JWT's ``xray``
   attribute, installs the OTLP/JSON exporter, force-flushes spans on
@@ -43,7 +47,7 @@ from xray.conversation import (
 )
 from xray.errors import ReplayEvaluationError, XrayError
 from xray.instrument import XraySession, attach
-from xray.orchestrator import run
+from xray.orchestrator import run, run_live
 
 __all__ = [
     "AgentResponse",
@@ -68,6 +72,7 @@ __all__ = [
     "attach",
     "format_failures",
     "run",
+    "run_live",
 ]
 
 __version__ = "0.0.1"
