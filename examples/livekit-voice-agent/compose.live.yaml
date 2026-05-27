@@ -1,0 +1,31 @@
+# Live mic-session overlay — layer on top of compose.yaml ONLY for an
+# interactive `xray.run_live` session driven from the host:
+#
+#   export LIVEKIT_NODE_IP=$(ipconfig getifaddr en0)   # your host LAN IP
+#   docker compose -f compose.yaml -f compose.live.yaml up --build
+#   # then, in another shell:
+#   python driver/live_session.py
+#
+# The scripted replay (driver/test_e2e.py) uses the base compose.yaml ALONE and
+# exposes no LAN ports — its driver runs inside the Docker network. This overlay
+# is what opens LiveKit's media plane to the host:
+#   - re-points LiveKit at livekit.live.yaml (media on 7896/7897),
+#   - publishes those media ports on 0.0.0.0 so a host WebRTC client can reach
+#     the candidate LiveKit advertises,
+#   - sets that candidate to the host LAN IP via NODE_IP.
+#
+# It deliberately does NOT define the `driver` service, so `up` here does not
+# run the scripted replay — you drive the live session yourself.
+services:
+  livekit:
+    command: --config /etc/livekit.live.yaml --bind 0.0.0.0
+    volumes:
+      - ./livekit.live.yaml:/etc/livekit.live.yaml:ro
+    environment:
+      # LiveKit reads node_ip from $NODE_IP (`livekit-server --node-ip [$NODE_IP]`).
+      # Must be the host LAN IP: reachable from both the host driver and the
+      # in-container agent (which hairpins out to the LAN to reach it).
+      NODE_IP: "${LIVEKIT_NODE_IP:?set LIVEKIT_NODE_IP to your host LAN IP (e.g. ipconfig getifaddr en0)}"
+    ports:
+      - "7896:7896"
+      - "7897:7897/udp"

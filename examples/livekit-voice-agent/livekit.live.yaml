@@ -1,0 +1,24 @@
+# Live-session LiveKit config — used ONLY by the live mic overlay
+# (compose.live.yaml), never by the scripted test.
+#
+# Differs from livekit.yaml in the two things a WebRTC client running on the
+# macOS host (outside the Docker network) needs:
+#   - media on dedicated ports (7896/7897) published 1:1 to the host, clear of
+#     a local LiveKit on 7881/7882;
+#   - the advertised ICE candidate set to the host LAN IP via the NODE_IP env
+#     var (see compose.live.yaml). The default container 172.x address is
+#     unroutable from the host on Docker Desktop, so the peer connection times
+#     out without this.
+port: 7880
+log_level: info
+
+rtc:
+  tcp_port: 7896
+  udp_port: 7897
+  # node_ip is supplied at runtime via the NODE_IP env var (compose.live.yaml),
+  # so this file stays machine-independent. use_external_ip stays false — when
+  # true it overrides node_ip.
+  use_external_ip: false
+
+keys:
+  devkey: devsecret32charsminimumlengthxyz123
