@@ -10,7 +10,6 @@ Usage::
         await ctx.connect()
         async with ctx.xray.turn(0):
             ...
-        ctx.xray.record_tool_call("book_table", args_json="...", result_json="...")
 
 The decorator:
 
@@ -28,7 +27,10 @@ The decorator:
    :class:`XrayBaggageSpanProcessor` lifts each baggage key onto every
    span at start; :class:`XraySpanExporter` POSTs them to xray.
 4. Constructs an :class:`XraySession` and attaches it to ``ctx.xray``.
-   The session exposes ``turn(idx)`` / ``record_tool_call(...)``.
+   The session exposes ``turn(idx)``. Tool calls instrument themselves:
+   wrap the body of each ``@function_tool`` in a ``gen_ai.execute_tool``
+   span. xray's OTLP vocabulary registry extracts the span into a
+   ``tool_calls`` row.
 5. Awaits the wrapped entrypoint. After it returns (or raises),
    force-flushes the tracer provider so spans land in xray before the
    worker shuts down — kills the "BatchSpanProcessor 5s delay" trap.
@@ -182,29 +184,6 @@ class XraySession:
                     span.set_attribute("xray.turn.duration_ms", int((time.time() - started) * 1000))
         finally:
             context.detach(token)
-
-    def record_tool_call(
-        self,
-        name: str,
-        *,
-        args_json: str | None = None,
-        result_json: str | None = None,
-        latency_ms: int | None = None,
-    ) -> None:
-        """Emit a ``gen_ai.tool`` span carrying the tool-call payload.
-
-        xray's OTLP vocabulary registry recognizes the GenAI semconv
-        namespace and persists this into a ``tool_calls`` row on the
-        replay. Attributes follow OTel GenAI semconv keys."""
-        with self._tracer.start_as_current_span("execute_tool") as span:
-            span.set_attribute("gen_ai.tool.name", name)
-            span.set_attribute("gen_ai.operation.name", "execute_tool")
-            if args_json is not None:
-                span.set_attribute("gen_ai.tool.arguments", args_json)
-            if result_json is not None:
-                span.set_attribute("gen_ai.tool.message", result_json)
-            if latency_ms is not None:
-                span.set_attribute("gen_ai.latency_ms", latency_ms)
 
 
 # ─── xray.attach(ctx, …) — async context manager ──────────────────────

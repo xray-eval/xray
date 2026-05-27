@@ -77,9 +77,6 @@ async def test_e2e_voice_agent_replay() -> None:
     for s in replay["spans"]:
         spans_by_vocab.setdefault(s["vocabulary"], set()).add(s["name"])
 
-    assert "xray.stage.tts" in spans_by_vocab.get("xray", set()), (
-        f"`xray.stage.tts` span did not land: spans_by_vocab={spans_by_vocab}"
-    )
     assert "example_langfuse_step" in spans_by_vocab.get("langfuse", set()), (
         f"Langfuse `@observe` span did not land: spans_by_vocab={spans_by_vocab}"
     )

@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
+import wave
+from collections.abc import AsyncIterable
+from pathlib import Path
 
 import xray
 from google.genai import types as genai_types
 from langfuse import observe
 from livekit import rtc
 from livekit.agents import Agent, AgentSession, JobContext, WorkerOptions, cli
-from livekit.agents.llm import ChatMessage
+from livekit.agents.llm import ChatMessage, function_tool
 from livekit.agents.voice.events import ConversationItemAddedEvent
 from livekit.plugins import google
 from opentelemetry import trace
@@ -20,19 +24,61 @@ from opentelemetry import trace
 logger = logging.getLogger("voice-agent")
 _tracer = trace.get_tracer("example-voice-agent")
 
+# Gemini 3.1 Live's `generate_reply()` is warn-and-ignored by the
+# realtime plugin, so the agent can't speak first via the LLM path.
+# Pre-recorded greeting (24kHz mono int16 PCM, generated once via
+# Gemini standalone TTS) is published through `session.say(audio=...)`.
+# `add_to_chat_ctx=True` (the default) records the greeting text in
+# the chat history so the realtime model knows it already greeted.
+_GREETING_TEXT = "Hello there! How can I help you today?"
+_GREETING_VOICE = "Puck"
+_GREETING_WAV_PATH = Path(__file__).resolve().parent.parent / "fixtures" / "agent_greeting.wav"
+
 
 @observe(as_type="generation", name="example_langfuse_step")
 def _langfuse_step(model: str) -> str:
     return f"agent will use {model}"
 
 
+@function_tool
+async def get_current_year() -> dict[str, int]:
+    """Return the current calendar year. Call this whenever the user asks
+    about today's year, the current year, or what year it is."""
+    with _tracer.start_as_current_span("execute_tool") as span:
+        span.set_attribute("gen_ai.operation.name", "execute_tool")
+        span.set_attribute("gen_ai.tool.name", "get_current_year")
+        span.set_attribute("gen_ai.tool.arguments", "{}")
+        result = {"year": 2026}
+        span.set_attribute("gen_ai.tool.result", json.dumps(result))
+        return result
+
+
+async def _wav_audio_frames(path: Path, frame_ms: int = 20) -> AsyncIterable[rtc.AudioFrame]:
+    with wave.open(str(path), "rb") as w:
+        sr = w.getframerate()
+        nch = w.getnchannels()
+        sw = w.getsampwidth()
+        samples_per_frame = sr * frame_ms // 1000
+        while True:
+            raw = w.readframes(samples_per_frame)
+            if not raw:
+                break
+            yield rtc.AudioFrame(
+                data=raw,
+                sample_rate=sr,
+                num_channels=nch,
+                samples_per_channel=len(raw) // (sw * nch),
+            )
+
+
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
     async with xray.attach(ctx, service_name="example-voice-agent") as xray_session:
+        model_id = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
         session = AgentSession(
             llm=google.realtime.RealtimeModel(
-                model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025"),
-                voice="Puck",
+                model=model_id,
+                voice=_GREETING_VOICE,
                 output_audio_transcription=genai_types.AudioTranscriptionConfig(),
                 input_audio_transcription=genai_types.AudioTranscriptionConfig(),
             ),
@@ -57,34 +103,25 @@ async def entrypoint(ctx: JobContext) -> None:
             await session.start(
                 agent=Agent(
                     instructions=(
-                        "You are a friendly voice assistant. Greet the caller, then "
-                        "answer their question briefly in one or two sentences."
+                        "You are a friendly voice assistant. You have already "
+                        "greeted the caller. Answer their question briefly in "
+                        "one or two sentences. If the caller asks about the "
+                        "current year (or any question whose answer depends on "
+                        "the current year), you MUST call the `get_current_year` "
+                        "tool and use its result."
                     ),
+                    tools=[get_current_year],
                 ),
                 room=ctx.room,
             )
 
-            model_id = os.environ.get(
-                "GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025"
+            await session.say(
+                text=_GREETING_TEXT,
+                audio=_wav_audio_frames(_GREETING_WAV_PATH),
+                allow_interruptions=False,
             )
 
-            with _tracer.start_as_current_span("xray.stage.tts") as span:
-                span.set_attribute("xray.stage.tts.provider", "gemini-live")
-                span.set_attribute("xray.stage.tts.model", model_id)
-                handle = session.generate_reply(
-                    instructions="Greet the caller in one short sentence."
-                )
-                await handle
-
             _langfuse_step(model_id)
-
-            if xray_session is not None:
-                xray_session.record_tool_call(
-                    name="get_current_year",
-                    args_json="{}",
-                    result_json='{"year": 2026}',
-                    latency_ms=5,
-                )
 
             await disconnect.wait()
         finally:

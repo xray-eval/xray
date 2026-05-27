@@ -19,6 +19,7 @@ RUN pip install --upgrade pip && \
       "langfuse==3.9.3"
 
 COPY examples/livekit-voice-agent/agent /workspace/agent
+COPY examples/livekit-voice-agent/fixtures /workspace/fixtures
 
 WORKDIR /workspace/agent
 CMD ["python", "main.py", "start"]
