@@ -368,7 +368,7 @@ async function runOneJudge(
 		// — the entire stage can't run without the key. Re-throw it so the
 		// outer catch in the processor maps it to
 		// `failure_reason='missing_credential'`, which prompts the operator
-		// to set OPENAI_API_KEY rather than retry the run.
+		// to set the configured provider's API key rather than retry the run.
 		if (cause instanceof MissingProviderCredentialError) {
 			throw cause;
 		}

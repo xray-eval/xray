@@ -12,12 +12,11 @@ import { makeEvaluateReplayProcessor } from "./jobs/evaluate-replay/evaluate-rep
 import type { JobRunner } from "./jobs/jobs.bunqueue.ts";
 import { createJobRunner } from "./jobs/jobs.bunqueue.ts";
 import { JobRunnerNotInitializedError } from "./jobs/jobs.errors.ts";
-import { createOpenAIJudgeProvider } from "./judges/judges.openai.ts";
+import { buildJudgeProvider, buildTranscriptionProvider } from "./providers/providers.ts";
 import { makeReplayEvents } from "./replays/replays.events.ts";
 import { markReplayFailed } from "./replays/replays.service.ts";
 import { createApp } from "./server.ts";
 import { openStoreFromEnv } from "./store/store.ts";
-import { createOpenAIWhisperProvider } from "./transcription/transcription.openai-whisper.ts";
 
 const env = loadEnv();
 const store = openStoreFromEnv(env);
@@ -31,14 +30,10 @@ const events = makeReplayEvents();
 // only fails when a stage actually needs them — boot stays cheap, and
 // the failure surfaces as `MissingProviderCredentialError` with the env
 // var name, not as a generic 500. Tests substitute fake providers with
-// their own apiKey closures and don't go through `loadEnv()`.
-const transcriptionProvider = createOpenAIWhisperProvider({
-	apiKey: () => env.OPENAI_API_KEY,
-});
-const judgeProvider = createOpenAIJudgeProvider({
-	apiKey: () => env.OPENAI_API_KEY,
-	...(env.XRAY_JUDGE_MODEL !== undefined ? { model: env.XRAY_JUDGE_MODEL } : {}),
-});
+// their own apiKey closures and don't go through `loadEnv()`. The
+// selection logic + its branch tests live in `providers/providers.ts`.
+const transcriptionProvider = buildTranscriptionProvider(env);
+const judgeProvider = buildJudgeProvider(env);
 
 // bunqueue opens its own SQLite file alongside `xray.db` (see
 // `.claude/rules/single-image-distribution.md`'s "one volume, two files"

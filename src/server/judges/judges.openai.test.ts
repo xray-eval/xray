@@ -1,46 +1,31 @@
-import type { FetchLike } from "@/server/transcription/transcription.openai-whisper.ts";
+import * as v from "valibot";
+
+import { makeFetch } from "@/server/core/test-utils.ts";
 
 import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import { createOpenAIJudgeProvider } from "./judges.openai.ts";
 import { describe, expect, it } from "bun:test";
 
-function makeFetch(
-	handler: (req: { url: string; headers: Headers; body: unknown }) => Response,
-): FetchLike {
-	return async (input, init) => {
-		const url =
-			typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-		const headers = new Headers(init?.headers ?? {});
-		let body: unknown = init?.body;
-		if (typeof body === "string") {
-			try {
-				body = JSON.parse(body);
-			} catch {
-				/* leave as string */
-			}
-		}
-		return handler({ url, headers, body });
-	};
-}
-
-interface ChatBody {
-	model?: unknown;
-	temperature?: unknown;
-	response_format?: unknown;
-}
+const ChatBodySchema = v.object({
+	model: v.optional(v.unknown()),
+	temperature: v.optional(v.unknown()),
+	response_format: v.optional(v.unknown()),
+});
+type ChatBody = v.InferOutput<typeof ChatBodySchema>;
 
 function asChatBody(value: unknown): ChatBody | null {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-	return value;
+	const result = v.safeParse(ChatBodySchema, value);
+	return result.success ? result.output : null;
 }
 
-interface ResponseFormat {
-	type?: unknown;
-}
+const ResponseFormatSchema = v.object({
+	type: v.optional(v.unknown()),
+});
+type ResponseFormat = v.InferOutput<typeof ResponseFormatSchema>;
 
 function asResponseFormat(value: unknown): ResponseFormat | null {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-	return value;
+	const result = v.safeParse(ResponseFormatSchema, value);
+	return result.success ? result.output : null;
 }
 
 function chatResponse(content: string): Response {

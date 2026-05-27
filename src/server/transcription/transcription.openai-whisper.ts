@@ -1,6 +1,8 @@
 import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
+import type { FetchLike } from "@/server/core/fetch.ts";
+import { redactProviderSecrets } from "@/server/core/redact.ts";
 
 import {
 	MissingProviderCredentialError,
@@ -11,22 +13,6 @@ import type {
 	TranscriptionRequest,
 	TranscriptionResult,
 } from "./transcription.types.ts";
-
-/**
- * Strip OpenAI-style API key prefixes ("sk-...") from any string we're
- * about to embed in an error message or log line. OpenAI's 401 response
- * echoes a truncated key prefix into its error body — without this
- * helper, every "wrong key" error sprays partial credential material into
- * the operator's stdout / log aggregator (Datadog, Loki, etc.). The
- * regex covers both project keys (`sk-proj-...`) and classic ones.
- *
- * Defined in the transcription slice (rather than a shared utility) so
- * `judges.openai.ts` keeps its existing one-way import on this module
- * (`FetchLike` already crosses this seam); avoids a cycle.
- */
-export function redactProviderSecrets(text: string): string {
-	return text.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***");
-}
 
 const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
 const DEFAULT_MODEL = "whisper-1";
@@ -53,14 +39,6 @@ const WhisperResponseSchema = v.object({
 	duration: v.optional(v.union([v.number(), v.null()])),
 	words: v.optional(v.union([v.array(WhisperWordSchema), v.null()])),
 });
-
-/**
- * Minimal subset of `fetch` we depend on. Bun's `typeof fetch` includes a
- * `preconnect` static method we don't use, and matching it would force
- * every test stub to ship a stub `preconnect` for no reason. Accepting
- * `FetchLike` keeps the seam thin and the tests honest.
- */
-export type FetchLike = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 
 export interface OpenAIWhisperOptions {
 	/** Read at call time, not at construction — env can be loaded between server

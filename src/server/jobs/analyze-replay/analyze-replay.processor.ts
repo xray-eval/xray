@@ -167,15 +167,24 @@ export function makeAnalyzeProcessor(
 			transcribedCount = await runTranscriptionStage(store, replayId, wav, turns, transcription);
 		} catch (cause) {
 			// MissingProviderCredentialError signals an operator config gap
-			// (`OPENAI_API_KEY` unset), NOT a transient provider failure.
-			// Stamp a distinct reason so the operator's first instinct is to
-			// set the env var, not to retry the run.
+			// (the configured provider's API key is unset), NOT a transient
+			// provider failure. Stamp a distinct reason so the operator's
+			// first instinct is to set the env var, not to retry the run.
 			const reason =
 				cause instanceof MissingProviderCredentialError
 					? "missing_credential"
 					: "transcription_failed";
 			markReplayFailed(store, events, replayId, reason);
 			const detail = cause instanceof Error ? cause.message : String(cause);
+			// Surface the underlying provider error to stderr so operators
+			// can debug a transcription failure without digging into the
+			// bunqueue tables — `JobProcessingError` thrown below carries
+			// `cause` but bunqueue overwrites the failure result if a
+			// subsequent retry early-exits successfully.
+			console.error(
+				`analyze-replay ${replayId} transcription stage failed (reason=${reason})`,
+				cause,
+			);
 			throw new JobProcessingError(replayId, `transcription stage failed: ${detail}`, { cause });
 		}
 

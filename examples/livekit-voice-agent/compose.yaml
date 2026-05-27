@@ -33,6 +33,10 @@ services:
       HOST: "0.0.0.0"
       XRAY_DATA_DIR: "/data"
       XRAY_AUDIO_ROOT: "/data/audio"
+      # Provider credential for the analyze-replay stage (Gemini transcription +
+      # Gemini judge). Server auto-selects google-gemini when only this key is
+      # set. Same key the agent uses for Gemini Live below.
+      GOOGLE_API_KEY: "${GEMINI_API_KEY:?GEMINI_API_KEY must be set in examples/livekit-voice-agent/.env}"
     volumes:
       - xray-data:/data
     ports:
