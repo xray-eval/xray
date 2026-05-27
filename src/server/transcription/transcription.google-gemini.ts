@@ -15,12 +15,10 @@ import type {
 } from "./transcription.types.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-// Floating alias, not a pinned snapshot — Gemini exposes no dated flash
-// snapshot, so Google may re-point this to newer builds and transcription
-// output can drift over time. Operators pin a specific model via
-// XRAY_TRANSCRIPTION_MODEL. The split vs. the judge is deliberate: the
-// judge defaults to the newer `gemini-3.5-flash` (`judges.google-gemini.ts`)
-// for verdict quality; transcription stays on 2.5-flash.
+// Floating alias (Gemini ships no dated flash snapshot), so Google may
+// re-point it and output can drift — pin a specific model via
+// XRAY_TRANSCRIPTION_MODEL. Judge defaults to the newer gemini-3.5-flash
+// deliberately; transcription stays on 2.5-flash.
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_TIMEOUT_MS = 120_000;
 

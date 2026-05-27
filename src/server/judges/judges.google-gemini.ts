@@ -8,14 +8,10 @@ import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import type { JudgeProvider, JudgeProviderResponse } from "./judges.types.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-// Latest flash alias, chosen for verdict quality. Unlike `judges.openai.ts`
-// (which pins a dated snapshot, `gpt-4o-2024-08-06`), Gemini exposes no
-// dated flash snapshot — this is a floating alias, so Google may re-point
-// it to newer builds and scores can drift over time. Operators pin a
-// specific model via XRAY_JUDGE_MODEL. The split vs. transcription is
-// deliberate: transcription defaults to `gemini-2.5-flash`
-// (`transcription.google-gemini.ts`), the judge runs a newer generation
-// for stronger verdict reasoning.
+// Floating alias (Gemini ships no dated flash snapshot), so Google may
+// re-point it and scores can drift — pin a specific model via
+// XRAY_JUDGE_MODEL. Newer generation than transcription's 2.5-flash
+// default, deliberately: stronger verdict reasoning.
 const DEFAULT_MODEL = "gemini-3.5-flash";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
