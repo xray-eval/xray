@@ -1,29 +1,33 @@
+import * as v from "valibot";
+
 import { makeFetch } from "@/server/core/test-utils.ts";
 
 import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import { createGoogleGeminiJudgeProvider } from "./judges.google-gemini.ts";
 import { describe, expect, it } from "bun:test";
 
-interface GeminiBody {
-	systemInstruction?: unknown;
-	contents?: unknown;
-	generationConfig?: unknown;
-}
+const GeminiBodySchema = v.object({
+	systemInstruction: v.optional(v.unknown()),
+	contents: v.optional(v.unknown()),
+	generationConfig: v.optional(v.unknown()),
+});
+type GeminiBody = v.InferOutput<typeof GeminiBodySchema>;
 
 function asGeminiBody(value: unknown): GeminiBody | null {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-	return value;
+	const result = v.safeParse(GeminiBodySchema, value);
+	return result.success ? result.output : null;
 }
 
-interface GenerationConfig {
-	temperature?: unknown;
-	responseMimeType?: unknown;
-	responseSchema?: unknown;
-}
+const GenerationConfigSchema = v.object({
+	temperature: v.optional(v.unknown()),
+	responseMimeType: v.optional(v.unknown()),
+	responseSchema: v.optional(v.unknown()),
+});
+type GenerationConfig = v.InferOutput<typeof GenerationConfigSchema>;
 
 function asGenerationConfig(value: unknown): GenerationConfig | null {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-	return value;
+	const result = v.safeParse(GenerationConfigSchema, value);
+	return result.success ? result.output : null;
 }
 
 function geminiResponse(text: string): Response {

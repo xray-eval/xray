@@ -1,27 +1,31 @@
+import * as v from "valibot";
+
 import { makeFetch } from "@/server/core/test-utils.ts";
 
 import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import { createOpenAIJudgeProvider } from "./judges.openai.ts";
 import { describe, expect, it } from "bun:test";
 
-interface ChatBody {
-	model?: unknown;
-	temperature?: unknown;
-	response_format?: unknown;
-}
+const ChatBodySchema = v.object({
+	model: v.optional(v.unknown()),
+	temperature: v.optional(v.unknown()),
+	response_format: v.optional(v.unknown()),
+});
+type ChatBody = v.InferOutput<typeof ChatBodySchema>;
 
 function asChatBody(value: unknown): ChatBody | null {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-	return value;
+	const result = v.safeParse(ChatBodySchema, value);
+	return result.success ? result.output : null;
 }
 
-interface ResponseFormat {
-	type?: unknown;
-}
+const ResponseFormatSchema = v.object({
+	type: v.optional(v.unknown()),
+});
+type ResponseFormat = v.InferOutput<typeof ResponseFormatSchema>;
 
 function asResponseFormat(value: unknown): ResponseFormat | null {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-	return value;
+	const result = v.safeParse(ResponseFormatSchema, value);
+	return result.success ? result.output : null;
 }
 
 function chatResponse(content: string): Response {

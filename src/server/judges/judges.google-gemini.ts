@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import type { FetchLike } from "@/server/core/fetch.ts";
+import { extractGeminiText } from "@/server/core/gemini.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
@@ -14,25 +15,6 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // default, deliberately: stronger verdict reasoning.
 const DEFAULT_MODEL = "gemini-3.5-flash";
 const DEFAULT_TIMEOUT_MS = 60_000;
-
-const GeminiPartSchema = v.object({
-	text: v.optional(v.string()),
-});
-const GeminiContentSchema = v.object({
-	parts: v.optional(v.array(GeminiPartSchema)),
-});
-const GeminiCandidateSchema = v.object({
-	content: v.optional(GeminiContentSchema),
-	finishReason: v.optional(v.string()),
-});
-const GeminiResponseSchema = v.object({
-	candidates: v.optional(v.array(GeminiCandidateSchema)),
-	promptFeedback: v.optional(
-		v.object({
-			blockReason: v.optional(v.string()),
-		}),
-	),
-});
 
 const JudgeContentSchema = v.object({
 	score: v.number(),
@@ -126,44 +108,13 @@ export function createGoogleGeminiJudgeProvider(opts: GoogleGeminiJudgeOptions):
 					{ cause },
 				);
 			}
-			const content = extractGeminiText(raw);
+			const content = extractGeminiText(
+				raw,
+				(message) => new JudgeProviderError("google-gemini", message),
+			);
 			return parseJudgeContent(content);
 		},
 	};
-}
-
-function extractGeminiText(raw: unknown): string {
-	const result = v.safeParse(GeminiResponseSchema, raw);
-	if (!result.success) {
-		throw new JudgeProviderError(
-			"google-gemini",
-			`response failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
-		);
-	}
-	const parsed = result.output;
-	const blockReason = parsed.promptFeedback?.blockReason;
-	if (blockReason !== undefined) {
-		throw new JudgeProviderError(
-			"google-gemini",
-			`prompt blocked by safety filter: ${blockReason}`,
-		);
-	}
-	const first = parsed.candidates?.[0];
-	if (first === undefined) {
-		throw new JudgeProviderError("google-gemini", "response candidates array was empty");
-	}
-	if (first.finishReason !== undefined && first.finishReason !== "STOP") {
-		throw new JudgeProviderError(
-			"google-gemini",
-			`candidate finished with reason "${first.finishReason}" (expected STOP)`,
-		);
-	}
-	const parts = first.content?.parts ?? [];
-	const text = parts.map((p) => p.text ?? "").join("");
-	if (text.length === 0) {
-		throw new JudgeProviderError("google-gemini", "candidate content was empty");
-	}
-	return text;
 }
 
 function parseJudgeContent(content: string): JudgeProviderResponse {

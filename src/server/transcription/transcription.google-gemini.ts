@@ -2,6 +2,7 @@ import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
+import { extractGeminiText } from "@/server/core/gemini.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 
 import {
@@ -21,29 +22,6 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // deliberately; transcription stays on 2.5-flash.
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_TIMEOUT_MS = 120_000;
-
-// Gemini's generateContent response shape, validated at the provider
-// boundary. We only read `candidates[0].content.parts[].text` (joined)
-// and an optional `promptFeedback.blockReason` so a safety block surfaces
-// as a distinct error instead of "empty candidates".
-const GeminiPartSchema = v.object({
-	text: v.optional(v.string()),
-});
-const GeminiContentSchema = v.object({
-	parts: v.optional(v.array(GeminiPartSchema)),
-});
-const GeminiCandidateSchema = v.object({
-	content: v.optional(GeminiContentSchema),
-	finishReason: v.optional(v.string()),
-});
-const GeminiResponseSchema = v.object({
-	candidates: v.optional(v.array(GeminiCandidateSchema)),
-	promptFeedback: v.optional(
-		v.object({
-			blockReason: v.optional(v.string()),
-		}),
-	),
-});
 
 // The JSON the model is forced to produce via responseSchema. Language is
 // best-effort: Gemini returns ISO-639-1 when confident, omits otherwise.
@@ -184,7 +162,10 @@ export function createGoogleGeminiTranscriptionProvider(
 				);
 			}
 
-			const content = extractGeminiText(raw);
+			const content = extractGeminiText(
+				raw,
+				(message) => new TranscriptionProviderError("google-gemini", message),
+			);
 			const payload = parseTranscribedPayload(content);
 
 			// Duration is computed locally rather than asked-of-the-model.
@@ -200,40 +181,6 @@ export function createGoogleGeminiTranscriptionProvider(
 			};
 		},
 	};
-}
-
-function extractGeminiText(raw: unknown): string {
-	const result = v.safeParse(GeminiResponseSchema, raw);
-	if (!result.success) {
-		throw new TranscriptionProviderError(
-			"google-gemini",
-			`response failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
-		);
-	}
-	const parsed = result.output;
-	const blockReason = parsed.promptFeedback?.blockReason;
-	if (blockReason !== undefined) {
-		throw new TranscriptionProviderError(
-			"google-gemini",
-			`prompt blocked by safety filter: ${blockReason}`,
-		);
-	}
-	const first = parsed.candidates?.[0];
-	if (first === undefined) {
-		throw new TranscriptionProviderError("google-gemini", "response candidates array was empty");
-	}
-	if (first.finishReason !== undefined && first.finishReason !== "STOP") {
-		throw new TranscriptionProviderError(
-			"google-gemini",
-			`candidate finished with reason "${first.finishReason}" (expected STOP)`,
-		);
-	}
-	const parts = first.content?.parts ?? [];
-	const text = parts.map((p) => p.text ?? "").join("");
-	if (text.length === 0) {
-		throw new TranscriptionProviderError("google-gemini", "candidate content was empty");
-	}
-	return text;
 }
 
 function parseTranscribedPayload(content: string): { text: string; language: string | null } {
