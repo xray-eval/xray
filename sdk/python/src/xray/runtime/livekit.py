@@ -589,8 +589,7 @@ def mint_user_token(
     builder = lk_api.AccessToken(api_key, api_secret)
     builder = builder.with_identity(identity)
     builder = builder.with_grants(lk_api.VideoGrants(room_join=True, room=room))
-    if hasattr(builder, "with_attributes"):
-        builder = builder.with_attributes(attributes)
+    builder = builder.with_attributes(attributes)
     return builder.to_jwt()
 
 

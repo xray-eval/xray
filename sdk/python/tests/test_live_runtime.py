@@ -376,6 +376,31 @@ def test_agent_not_joined_raises(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_agent_audio_timeout_independent_of_join_timeout(tmp_path: Path):
+    """``agent_join_timeout_s`` gates the participant-join wait; the
+    distinct ``agent_audio_timeout_s`` gates the audio-publish wait. An
+    operator must be able to tune them independently — same field for both
+    would surprise anyone shortening the join timeout for a fast-fail."""
+    # Agent joins immediately but never publishes audio. With a fast
+    # audio timeout, the agent pump returns cleanly; the user-only
+    # recording is finalized.
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join()])
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api, mic_frames=[_silence(20)])
+    rt.agent_join_timeout_s = 30.0  # generous join timeout
+    rt.agent_audio_timeout_s = 0.05  # snappy audio timeout
+    conv = Conversation(name="live", turns=[], live=True)
+
+    task = asyncio.create_task(rt.run(conv))
+    # Let the audio-timeout fire (50 ms) and the agent pump return.
+    await asyncio.sleep(0.1)
+    rt.request_stop()
+    result = await asyncio.wait_for(task, timeout=3.0)
+    # User-only recording finalized cleanly; no AgentNotJoinedError.
+    assert result.full_audio_path is not None
+
+
+@pytest.mark.asyncio
 async def test_mic_factory_failure_propagates_and_disconnects(tmp_path: Path):
     """If the mic backend can't open (e.g. [live] extra missing), the error
     propagates and the room is still disconnected — and the already-running

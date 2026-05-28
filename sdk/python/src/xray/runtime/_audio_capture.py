@@ -192,16 +192,29 @@ class SoundDeviceMicStream:
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         stream = self._stream
-        if stream is not None:
-            try:
-                stream.stop()
-                stream.close()
-            except Exception as e:
-                raise MicCaptureError(f"could not close microphone: {e}") from e
-            finally:
-                self._stream = None
-        # Unblock a pending __anext__ so the iterator terminates.
-        self._queue.put_nowait(None)
+        self._stream = None
+        try:
+            if stream is not None:
+                # close() MUST run even when stop() raises — otherwise the
+                # PortAudio device handle leaks and the next session opens
+                # with "device busy" (very confusing failure mode).
+                try:
+                    stream.stop()
+                finally:
+                    stream.close()
+        except Exception as e:
+            raise MicCaptureError(f"could not close microphone: {e}") from e
+        finally:
+            # Schedule the sentinel via call_soon_threadsafe so it lands
+            # AFTER any in-flight callbacks the PortAudio thread scheduled
+            # via call_soon_threadsafe before stop() returned. A direct
+            # put_nowait(None) would enqueue ahead of them and the iterator
+            # would return before draining the final frame.
+            loop = self._loop
+            if loop is not None and not loop.is_closed():
+                loop.call_soon_threadsafe(self._queue.put_nowait, None)
+            else:
+                self._queue.put_nowait(None)
 
     def __aiter__(self) -> AsyncIterator[bytes]:
         return self._iter()
@@ -252,8 +265,12 @@ class SoundDeviceSpeakerSink:
         self._stream = None
         if stream is not None:
             try:
-                stream.stop()
-                stream.close()
+                # Same close-must-run shape as the mic stream above — a raise
+                # from stop() must not strand the output device handle.
+                try:
+                    stream.stop()
+                finally:
+                    stream.close()
             except Exception as e:
                 raise SpeakerPlaybackError(f"could not close speaker: {e}") from e
 

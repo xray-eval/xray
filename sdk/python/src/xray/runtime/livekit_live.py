@@ -80,6 +80,11 @@ class LiveKitLiveRuntime(Runtime):
     room: str
     identity: str = "xray-driver"
     agent_join_timeout_s: float = 30.0
+    # Separate from agent_join_timeout_s so an operator can tune "did the
+    # agent participant ever join" and "did the agent publish audio after
+    # joining" independently. Reuses agent_join_timeout_s as default so
+    # existing call sites keep their effective behavior.
+    agent_audio_timeout_s: float | None = None
     # Play the agent's audio to the OS speaker so the user can converse in
     # real time. Set False for a record-only session (headless/CI, or when no
     # output device is available). Headphones recommended — an open speaker
@@ -284,8 +289,13 @@ class LiveKitLiveRuntime(Runtime):
         speaker: SpeakerSink,
     ) -> None:
         if not agent_track_holder:
+            audio_timeout = (
+                self.agent_audio_timeout_s
+                if self.agent_audio_timeout_s is not None
+                else self.agent_join_timeout_s
+            )
             try:
-                await asyncio.wait_for(agent_track_event.wait(), timeout=self.agent_join_timeout_s)
+                await asyncio.wait_for(agent_track_event.wait(), timeout=audio_timeout)
             except TimeoutError:
                 # Agent joined but never published audio. A user-only
                 # recording is still a valid live session — don't fail it.

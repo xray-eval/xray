@@ -18,9 +18,17 @@ from xray.runtime._audio_capture import (
 
 
 class _FakeRawInputStream:
-    def __init__(self, *, callback: Any, raise_on_start: bool = False, **_: Any) -> None:
+    def __init__(
+        self,
+        *,
+        callback: Any,
+        raise_on_start: bool = False,
+        raise_on_stop: bool = False,
+        **_: Any,
+    ) -> None:
         self._callback = callback
         self._raise_on_start = raise_on_start
+        self._raise_on_stop = raise_on_stop
         self.started = False
         self.stopped = False
         self.closed = False
@@ -32,6 +40,8 @@ class _FakeRawInputStream:
 
     def stop(self) -> None:
         self.stopped = True
+        if self._raise_on_stop:
+            raise RuntimeError("stop failed")
 
     def close(self) -> None:
         self.closed = True
@@ -42,8 +52,9 @@ class _FakeRawInputStream:
 
 
 class _FakeRawOutputStream:
-    def __init__(self, *, raise_on_start: bool = False) -> None:
+    def __init__(self, *, raise_on_start: bool = False, raise_on_stop: bool = False) -> None:
         self._raise_on_start = raise_on_start
+        self._raise_on_stop = raise_on_stop
         self.started = False
         self.stopped = False
         self.closed = False
@@ -56,6 +67,8 @@ class _FakeRawOutputStream:
 
     def stop(self) -> None:
         self.stopped = True
+        if self._raise_on_stop:
+            raise RuntimeError("stop failed")
 
     def close(self) -> None:
         self.closed = True
@@ -66,8 +79,9 @@ class _FakeRawOutputStream:
 
 
 class _FakeSoundDevice:
-    def __init__(self, *, raise_on_start: bool = False) -> None:
+    def __init__(self, *, raise_on_start: bool = False, raise_on_stop: bool = False) -> None:
         self.raise_on_start = raise_on_start
+        self.raise_on_stop = raise_on_stop
         self.streams: list[_FakeRawInputStream] = []
         self.out_streams: list[_FakeRawOutputStream] = []
 
@@ -80,7 +94,11 @@ class _FakeSoundDevice:
         dtype: str,
         callback: Any,
     ) -> _FakeRawInputStream:
-        stream = _FakeRawInputStream(callback=callback, raise_on_start=self.raise_on_start)
+        stream = _FakeRawInputStream(
+            callback=callback,
+            raise_on_start=self.raise_on_start,
+            raise_on_stop=self.raise_on_stop,
+        )
         self.streams.append(stream)
         return stream
 
@@ -91,7 +109,10 @@ class _FakeSoundDevice:
         channels: int,
         dtype: str,
     ) -> _FakeRawOutputStream:
-        stream = _FakeRawOutputStream(raise_on_start=self.raise_on_start)
+        stream = _FakeRawOutputStream(
+            raise_on_start=self.raise_on_start,
+            raise_on_stop=self.raise_on_stop,
+        )
         self.out_streams.append(stream)
         return stream
 
@@ -152,6 +173,35 @@ async def test_speaker_sink_raises_when_device_fails():
     sink = SoundDeviceSpeakerSink(sample_rate=48000, channels=1, sd=sd)
     with pytest.raises(SpeakerPlaybackError):
         await sink.__aenter__()
+
+
+@pytest.mark.asyncio
+async def test_mic_close_runs_even_when_stop_raises():
+    """If ``stream.stop()`` raises, ``stream.close()`` MUST still run —
+    otherwise the PortAudio device handle leaks and the next session opens
+    with 'device busy' (the bug this test pins down)."""
+    sd = _FakeSoundDevice(raise_on_stop=True)
+    stream = SoundDeviceMicStream(sample_rate=48000, frame_samples=960, sd=sd)
+    await stream.__aenter__()
+    raw = sd.streams[0]
+    with pytest.raises(MicCaptureError):
+        await stream.__aexit__(None, None, None)
+    assert raw.stopped is True
+    assert raw.closed is True
+
+
+@pytest.mark.asyncio
+async def test_speaker_close_runs_even_when_stop_raises():
+    """Same close-must-run guarantee on the speaker side — a stop()-raise
+    must not strand the output device handle."""
+    sd = _FakeSoundDevice(raise_on_stop=True)
+    sink = SoundDeviceSpeakerSink(sample_rate=48000, channels=1, sd=sd)
+    await sink.__aenter__()
+    out = sd.out_streams[0]
+    with pytest.raises(SpeakerPlaybackError):
+        await sink.__aexit__(None, None, None)
+    assert out.stopped is True
+    assert out.closed is True
 
 
 def test_load_sounddevice_missing_raises_live_dependency_error(monkeypatch: pytest.MonkeyPatch):
