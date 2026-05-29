@@ -239,6 +239,11 @@ class Conversation:
     upsert. Adding/removing/changing assertions or judges changes the
     hash — they're part of the test identity, not metadata.
 
+    ``live`` marks a mic session driven by :func:`xray.run_live`: there is
+    no script, so ``turns`` may be empty and no assertions/judges run. The
+    server salts the hash for live conversations so each session is its own
+    row.
+
     Frozen so a stale ``Conversation`` reference can't silently drift after
     being handed to the orchestrator.
     """
@@ -246,11 +251,13 @@ class Conversation:
     name: str
     turns: list[Turn]
     judges: tuple[Judge, ...] = ()
+    live: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Conversation.name must be non-empty")
-        if len(self.turns) == 0:
+        # Live sessions have no script — empty turns are valid only when live.
+        if len(self.turns) == 0 and not self.live:
             raise ValueError("Conversation must have at least one turn")
 
     def to_conversation_spec_payload(self) -> ConversationSpecBody:
@@ -266,6 +273,8 @@ class Conversation:
         }
         if len(self.judges) > 0:
             body["judges"] = [j.to_wire() for j in self.judges]
+        if self.live:
+            body["live"] = True
         return body
 
     def recorded_audio_uploads(self) -> list[tuple[str, str]]:
@@ -316,6 +325,7 @@ class ConversationSpecBody(TypedDict):
     name: str
     turns: list[TurnWirePayload]
     judges: NotRequired[list[JudgeWirePayload]]
+    live: NotRequired[bool]
 
 
 # ─── Wire encoders ────────────────────────────────────────────────────

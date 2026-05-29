@@ -32,13 +32,16 @@ Failure model:
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import io
 import json
 import logging
+import signal
 from collections.abc import Generator
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, TypeAlias, TypedDict, TypeVar
 
@@ -72,7 +75,7 @@ from xray.errors import (
 )
 from xray.otel import attach_replay_baggage
 from xray.otel import install as install_otel
-from xray.runtime.base import Runtime, RuntimeBindable, RuntimeResult
+from xray.runtime.base import Runtime, RuntimeBindable, RuntimeResult, StoppableRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -164,27 +167,132 @@ async def run(
         replay_create = _read_response(r.json(), _ReplayCreateResponse, "POST /v1/replays")
         replay_id = replay_create.id
 
-        # 3. Bind runtime.
-        if isinstance(runtime, RuntimeBindable):
-            runtime.bind(replay_id=replay_id, conversation_hash=conversation_hash)
-
-        # 3b. Wire the driver-side OTEL pipeline.
-        tracer_provider: TracerProvider = install_otel(endpoint=xray_url)
-        baggage_token: contextvars.Token[Context] = attach_replay_baggage(
-            replay_id=replay_id,
+        # 3-8: bind, run, upload, analyze, wait. Shared with run_live so a
+        # fix to the driver-side flow (SIGINT trapping, error wrapping,
+        # SSE-wait) doesn't have to land twice.
+        return await _drive_replay(
+            client=client,
+            xray_url=xray_url,
+            conversation=conversation,
             conversation_hash=conversation_hash,
-            modality="voice",
+            replay_id=replay_id,
+            runtime=runtime,
         )
 
-        # 4. Run the runtime.
-        # We capture the typed XrayError instance (not just its
-        # `failure_reason`) so we can re-raise the SAME subclass after the
-        # PATCH below — the dev's `except AgentNotJoinedError` /
-        # `except AudioMissingError` block has to fire, not a bare base
-        # XrayError. Untyped runtime exceptions (TypeError, KeyError, …)
-        # become a fresh `XrayError(failure_reason='driver_aborted')`.
-        driver_error: XrayError | None = None
-        runtime_result: RuntimeResult | None = None
+
+async def run_live(
+    *,
+    runtime: Runtime,
+    xray_url: str = "http://localhost:8080",
+    name: str | None = None,
+    run_config: RunConfig | None = None,
+) -> ReplayResult:
+    """Drive one *live* mic session end-to-end and return its
+    :class:`ReplayResult`.
+
+    Unlike :func:`run`, there is no authored ``Conversation`` — the user
+    talks to their agent in real time. This:
+
+    1. Upserts a fresh ``live`` Conversation (empty turns; the server salts
+       the hash so each session is its own row). ``name`` defaults to
+       ``live-<ISO-8601 UTC>``.
+    2. Creates the Replay and binds it onto the runtime + OTEL baggage so
+       the agent's spans attribute correctly.
+    3. Runs the runtime until the user stops it (SIGINT → the runtime's
+       ``request_stop`` when it implements :class:`StoppableRuntime`).
+    4. Uploads the stereo mixdown, kicks off the analyze chain, waits for
+       the server's ``evaluation_complete`` SSE.
+
+    The returned :class:`ReplayResult` carries empty ``assertions`` /
+    ``judges`` (a live session declares none) and ``passed=True``; its
+    ``metrics`` still hold the server's VAD-derived per-turn timings. Driver
+    or server-chain failures raise the same typed errors as :func:`run`.
+    """
+    xray_url = xray_url.rstrip("/")
+    conv_name = name or f"live-{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
+    conversation = Conversation(name=conv_name, turns=[], live=True)
+
+    async with httpx.AsyncClient(base_url=xray_url, timeout=30.0) as client:
+        # 1. Upsert the live Conversation (multipart, spec part only — a live
+        # session references no recorded-audio file parts).
+        spec = conversation.to_conversation_spec_payload()
+        files: list[tuple[str, tuple[str | None, str, str]]] = [
+            ("spec", (None, json.dumps(spec, separators=(",", ":")), "application/json")),
+        ]
+        r = await client.post("/v1/conversations", files=files)
+        _raise_for_status_typed(r, "POST /v1/conversations")
+        conversation_hash = _read_response(
+            r.json(), _ConversationUpsertResponse, "POST /v1/conversations"
+        ).hash
+
+        # 2. Create the Replay eagerly so the runtime can propagate the id.
+        create_body: ReplayCreateBody = {"conversation_hash": conversation_hash}
+        if run_config is not None:
+            create_body["run_config"] = run_config.to_wire()
+        r = await client.post("/v1/replays", json=create_body)
+        _raise_for_status_typed(r, "POST /v1/replays")
+        replay_id = _read_response(r.json(), _ReplayCreateResponse, "POST /v1/replays").id
+
+        # 3-8: bind, run, upload, analyze, wait. Same shared driver as
+        # `run`, with SIGINT routing enabled (Ctrl+C ends the open-ended
+        # session) and the no-audio guard active (a session that captured
+        # zero frames fails with AudioMissingError instead of POSTing
+        # /analyze on a still-`pending` replay).
+        return await _drive_replay(
+            client=client,
+            xray_url=xray_url,
+            conversation=conversation,
+            conversation_hash=conversation_hash,
+            replay_id=replay_id,
+            runtime=runtime,
+            sigint_routing=True,
+            require_audio=True,
+        )
+
+
+async def _drive_replay(
+    *,
+    client: httpx.AsyncClient,
+    xray_url: str,
+    conversation: Conversation,
+    conversation_hash: str,
+    replay_id: str,
+    runtime: Runtime,
+    sigint_routing: bool = False,
+    require_audio: bool = False,
+) -> ReplayResult:
+    """Steps 3-8 of the orchestrator: bind the runtime, install the OTEL
+    pipeline, run, upload the mixdown, kick off /analyze, wait for the
+    terminal SSE event.
+
+    Shared between :func:`run` and :func:`run_live` — the conversation
+    upsert + replay create (steps 1-2) differ between the two entrypoints
+    but everything past the replay id is identical. ``sigint_routing=True``
+    wires SIGINT → :meth:`StoppableRuntime.request_stop` for the duration
+    of the runtime run (live mode). ``require_audio=True`` raises
+    :class:`AudioMissingError` when the runtime returned no mixdown
+    (live mode — protects against POSTing /analyze on a still-`pending`
+    replay, which the server rejects with an opaque 409).
+    """
+    if isinstance(runtime, RuntimeBindable):
+        runtime.bind(replay_id=replay_id, conversation_hash=conversation_hash)
+    tracer_provider: TracerProvider = install_otel(endpoint=xray_url)
+    baggage_token: contextvars.Token[Context] = attach_replay_baggage(
+        replay_id=replay_id,
+        conversation_hash=conversation_hash,
+        modality="voice",
+    )
+
+    # We capture the typed XrayError instance (not just its
+    # `failure_reason`) so we can re-raise the SAME subclass after the
+    # PATCH below — the dev's `except AgentNotJoinedError` /
+    # `except AudioMissingError` block has to fire, not a bare base
+    # XrayError. Untyped runtime exceptions become a fresh
+    # `XrayError(failure_reason='driver_aborted')`.
+    driver_error: XrayError | None = None
+    runtime_result: RuntimeResult | None = None
+    sigint_cm = _sigint_stops(runtime) if sigint_routing else nullcontext()
+    with sigint_cm:
         try:
             runtime_result = await runtime.run(conversation)
         except XrayError as e:
@@ -200,51 +308,99 @@ async def run(
             tracer_provider.force_flush(timeout_millis=10_000)
             otel_context.detach(baggage_token)
 
-        # 5. Upload mixdown if produced and driver didn't fail.
-        if (
-            driver_error is None
-            and runtime_result is not None
-            and runtime_result.full_audio_path is not None
-        ):
-            try:
-                await _upload_replay_audio(
-                    client=client, replay_id=replay_id, audio_path=runtime_result.full_audio_path
-                )
-            except XrayError as e:
-                logger.exception("audio upload failed on replay %s", replay_id)
-                driver_error = e
-            except Exception as e:
-                logger.exception("audio upload errored on replay %s", replay_id)
-                driver_error = XrayError(f"audio upload failed: {e}")
+    if (
+        driver_error is None
+        and runtime_result is not None
+        and runtime_result.full_audio_path is not None
+    ):
+        try:
+            await _upload_replay_audio(
+                client=client, replay_id=replay_id, audio_path=runtime_result.full_audio_path
+            )
+        except XrayError as e:
+            logger.exception("audio upload failed on replay %s", replay_id)
+            driver_error = e
+        except Exception as e:
+            logger.exception("audio upload errored on replay %s", replay_id)
+            driver_error = XrayError(f"audio upload failed: {e}")
 
-        # If anything driver-side failed, PATCH the row to `failed` with the
-        # right reason and re-raise the ORIGINAL typed subclass — the dev's
-        # `except AgentNotJoinedError as e: print(e.room)` only works if the
-        # raised exception is the AgentNotJoinedError, not a bare XrayError
-        # wrapping its `failure_reason` string.
-        if driver_error is not None:
-            await _patch_driver_failure(client, replay_id, driver_error.failure_reason)
-            raise driver_error
+    if (
+        require_audio
+        and driver_error is None
+        and (runtime_result is None or runtime_result.full_audio_path is None)
+    ):
+        driver_error = AudioMissingError(
+            "live session captured no audio — nothing to analyze. The microphone "
+            "produced no frames (check OS mic permission for your terminal/Python, and "
+            "that an input device is selected), or the session ended before any audio."
+        )
 
-        # 6. Kick off the server-side analyze chain.
-        r = await client.post(f"/v1/replays/{replay_id}/analyze")
-        _raise_for_status_typed(r, f"POST /v1/replays/{replay_id}/analyze")
+    if driver_error is not None:
+        await _patch_driver_failure(client, replay_id, driver_error.failure_reason)
+        raise driver_error
 
-        # 7. Stream events until evaluation_complete or failed.
-        outcome = await _wait_for_evaluation(client, replay_id)
-        # Match exhaustively on the discriminated union so adding a third
-        # `_EvalOutcome` variant in future (e.g. `_EvalCancelled`)
-        # statically forces every consumer to handle it —
-        # `assert_never(outcome)` turns the missing arm into a pyright
-        # error rather than a silent fall-through.
-        match outcome:
-            case _EvalFailed(failure_reason=reason):
-                raise ReplayEvaluationError(replay_id, reason)
-            case _EvalCompleted(payload=payload):
-                # 8. Translate the SSE payload into ReplayResult.
-                return _result_from_payload(payload, replay_id=replay_id)
-            case _:
-                assert_never(outcome)
+    r = await client.post(f"/v1/replays/{replay_id}/analyze")
+    _raise_for_status_typed(r, f"POST /v1/replays/{replay_id}/analyze")
+
+    # Match exhaustively on the discriminated union so adding a third
+    # `_EvalOutcome` variant later statically forces every consumer to
+    # handle it — `assert_never(outcome)` turns the missing arm into a
+    # pyright error rather than a silent fall-through.
+    outcome = await _wait_for_evaluation(client, replay_id)
+    match outcome:
+        case _EvalFailed(failure_reason=reason):
+            raise ReplayEvaluationError(replay_id, reason)
+        case _EvalCompleted(payload=payload):
+            return _result_from_payload(payload, replay_id=replay_id)
+        case _:
+            assert_never(outcome)
+
+
+@contextmanager
+def _sigint_stops(runtime: Runtime) -> Generator[None, None, None]:
+    """Route SIGINT to ``runtime.request_stop`` for the duration of the
+    block, when the runtime is :class:`StoppableRuntime`. Prefers the
+    asyncio loop's signal handler; falls back to ``signal.signal`` where
+    the loop doesn't support it (e.g. the Windows Proactor loop). Restores
+    the prior behavior on exit. A no-op for runtimes that aren't stoppable."""
+    if not isinstance(runtime, StoppableRuntime):
+        yield
+        return
+
+    stoppable = runtime
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGINT, stoppable.request_stop)
+    except (NotImplementedError, RuntimeError, ValueError):
+        # The loop can't trap signals here. Three known cases land in this
+        # branch: Windows Proactor (NotImplementedError), some test loops
+        # (RuntimeError), and off-main-thread invocation (ValueError from
+        # the underlying signal.set_wakeup_fd — e.g. `xray.run_live` called
+        # from a worker thread). Fall back to a plain signal handler, which
+        # itself no-ops off the main thread.
+        with _signal_signal_stops(stoppable):
+            yield
+        return
+    try:
+        yield
+    finally:
+        loop.remove_signal_handler(signal.SIGINT)
+
+
+@contextmanager
+def _signal_signal_stops(stoppable: StoppableRuntime) -> Generator[None, None, None]:
+    try:
+        previous = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, lambda _sig, _frame: stoppable.request_stop())
+    except ValueError:
+        # Not the main thread — can't trap SIGINT here. The session can still
+        # be stopped programmatically via runtime.request_stop().
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 # ─── Result translation ──────────────────────────────────────────────
@@ -514,4 +670,5 @@ __all__ = [
     "MAX_AUDIO_BYTES",
     "ReplayPatchBody",
     "run",
+    "run_live",
 ]

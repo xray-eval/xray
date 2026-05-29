@@ -5,6 +5,7 @@ import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { makeReplayEvents } from "@/server/replays/replays.events.ts";
 import { createReplay } from "@/server/replays/replays.service.ts";
 import {
+	replayEvaluations,
 	replayMetrics,
 	replays,
 	replayTurns,
@@ -17,13 +18,13 @@ import type { ReplayTurnRow, SpanRow, SpeechSegmentRow } from "@/server/store/ty
 import { computeMetrics, makeCalculateMetricsProcessor } from "./calculate-metrics.processor.ts";
 import { describe, expect, it } from "bun:test";
 
-async function setupReplay(): Promise<{
+async function setupReplay(opts: { live?: boolean } = {}): Promise<{
 	store: ReturnType<typeof makeTempStore>;
 	replayId: string;
 	startedAt: string;
 }> {
 	const store = makeTempStore();
-	const { hash } = await seedConversation(store);
+	const { hash } = await seedConversation(store, opts.live ? { live: true } : {});
 	const detail = createReplay(store, { conversation_hash: hash });
 	// Park the replay in `analyzing` so the processor's WHERE guard hits.
 	store.db
@@ -269,6 +270,70 @@ describe("makeCalculateMetricsProcessor", () => {
 		await expect(processor({ replayId: "00000000-0000-0000-0000-000000000099" })).rejects.toThrow(
 			/replay row not found/,
 		);
+		store.close();
+	});
+
+	it("live: finalizes to completed + emits evaluation_complete, skips evaluate-replay", async () => {
+		const { store, replayId } = await setupReplay({ live: true });
+		store.db
+			.insert(replayTurns)
+			.values([
+				{
+					replayId,
+					idx: 0,
+					role: "user",
+					turnStartMs: 0,
+					turnEndMs: 1000,
+					voiceStartMs: 0,
+					voiceEndMs: 1000,
+				},
+				{
+					replayId,
+					idx: 1,
+					role: "agent",
+					turnStartMs: 1000,
+					turnEndMs: 2500,
+					voiceStartMs: 1300,
+					voiceEndMs: 2500,
+				},
+			])
+			.run();
+
+		const events = makeReplayEvents();
+		const seen: Array<{ type: string }> = [];
+		events.subscribe(replayId, (e) => seen.push(e));
+		const runner = makeFakeJobRunner();
+		const processor = makeCalculateMetricsProcessor(store, events, runner);
+		const result = await processor({ replayId });
+
+		expect(result.ok).toBe(true);
+		// Metrics still written (latency etc. are useful for a live session).
+		const metricRows = store.db
+			.select()
+			.from(replayMetrics)
+			.where(eq(replayMetrics.replayId, replayId))
+			.all();
+		expect(metricRows.length).toBe(2);
+
+		const after = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+		expect(after?.lifecycleState).toBe("completed");
+		expect(after?.analysisStep).toBeNull();
+		expect(after?.finishedAt).not.toBeNull();
+
+		const evalRow = store.db
+			.select()
+			.from(replayEvaluations)
+			.where(eq(replayEvaluations.replayId, replayId))
+			.get();
+		expect(evalRow?.passed).toBe(true);
+		expect(evalRow?.assertionsTotal).toBe(0);
+		expect(evalRow?.judgesTotal).toBe(0);
+
+		// The live branch must NOT chain to evaluate-replay.
+		expect(runner.enqueued).toEqual([]);
+
+		const complete = seen.find((e) => e.type === "evaluation_complete");
+		expect(complete).toBeDefined();
 		store.close();
 	});
 });

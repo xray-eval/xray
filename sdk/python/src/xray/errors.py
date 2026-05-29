@@ -131,6 +131,29 @@ class LiveKitDependencyError(XrayError):
     failure_reason: FailureReason = "driver_aborted"
 
 
+class LiveDependencyError(XrayError):
+    """The optional ``[live]`` extra (``sounddevice``) is not installed.
+
+    Raised by :class:`xray.runtime.livekit_live.LiveKitLiveRuntime` when the
+    OS-microphone capture backend can't be imported.
+    """
+
+    failure_reason: FailureReason = "driver_aborted"
+
+
+class MicCaptureError(XrayError):
+    """The OS microphone could not be opened or read during a live session."""
+
+    failure_reason: FailureReason = "driver_aborted"
+
+
+class SpeakerPlaybackError(XrayError):
+    """The OS speaker/output device could not be opened during a live
+    session. Pass ``play_agent_audio=False`` to record without playback."""
+
+    failure_reason: FailureReason = "driver_aborted"
+
+
 class ReplayEvaluationError(XrayError):
     """The server failed the analyze chain before producing a verdict.
 
@@ -176,10 +199,13 @@ __all__ = [
     "AudioMissingError",
     "AudioTooLargeError",
     "FailureReason",
+    "LiveDependencyError",
     "LiveKitDependencyError",
+    "MicCaptureError",
     "MixdownError",
     "ReplayEvaluationError",
     "RuntimeBindError",
+    "SpeakerPlaybackError",
     "XrayError",
     "XrayServerError",
 ]

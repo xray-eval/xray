@@ -1,8 +1,11 @@
 import { and, asc, eq } from "drizzle-orm";
 
+import { getConversationSpec } from "@/server/conversations/conversations.service.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
 import { findReplay, markReplayFailed } from "@/server/replays/replays.service.ts";
+import type { ReplayResult, TurnMetricsResponse } from "@/server/replays/replays.types.ts";
 import {
+	replayEvaluations,
 	replayMetrics,
 	replays,
 	replayTurns,
@@ -26,8 +29,11 @@ export type CalculateMetricsProcessor = (payload: JobPayload) => Promise<Calcula
 /**
  * Stage 2 of the analyze chain. Reads the VAD-derived turns + speech
  * segments + raw spans, computes per-turn timing metrics, writes
- * `replay_metrics`, transitions analysis_step to `evaluate`, then
- * enqueues `evaluate-replay`.
+ * `replay_metrics`. For a scripted replay it then bumps analysis_step to
+ * `metrics` and enqueues `evaluate-replay`. For a live replay there's no
+ * script to evaluate, so this stage is terminal: it finalizes in the same
+ * transaction (writes an empty `replay_evaluations` row + flips lifecycle
+ * to `completed`) and emits `evaluation_complete` directly.
  *
  * Metrics computed:
  * - `agentResponseMs` (agent turns only): gap from the prior user turn's
@@ -73,17 +79,60 @@ export function makeCalculateMetricsProcessor(
 
 			const rows = computeMetrics(replayId, turns, segments, ttftSpans, replayStartMs);
 
+			// Decide live vs scripted BEFORE the transaction. The conversation
+			// row is immutable post-creation (no live-flag flip), so reading it
+			// outside the tx is safe.
+			//
+			// A missing conversation row reads as non-live so the chain still
+			// routes to evaluate-replay, which surfaces the missing row as a
+			// failure with full context.
+			const spec = getConversationSpec(store, replay.conversationHash);
+			const isLive = spec?.live ?? false;
+
 			const advanced = store.db.transaction((tx) => {
-				// Same idempotency rule as analyze-replay: don't trash existing
-				// metric rows if a concurrent path already flipped lifecycle to
-				// `failed` or `completed`. Read the lifecycle first; abort the
-				// write phase otherwise.
+				// Same idempotency rule as every chain stage: don't trash
+				// existing rows if a concurrent path already flipped lifecycle
+				// to `failed` or `completed`. Read the lifecycle first; abort
+				// the write phase otherwise.
 				const current = tx.select().from(replays).where(eq(replays.id, replayId)).get();
 				if (current?.lifecycleState !== "analyzing") return false;
 
 				tx.delete(replayMetrics).where(eq(replayMetrics.replayId, replayId)).run();
 				if (rows.length > 0) tx.insert(replayMetrics).values(rows).run();
-				tx.update(replays).set({ analysisStep: "metrics" }).where(eq(replays.id, replayId)).run();
+
+				if (isLive) {
+					// Terminal step for a live replay: there's no script to
+					// evaluate, so finalize in this SAME transaction. Splitting
+					// metric-write + evaluation-write across two transactions
+					// would leave a crash window where the replay sits forever
+					// at `analyzing` (no chained evaluate-replay job to retry
+					// it). Single tx eliminates that window entirely.
+					// Captured inside the tx so the stored timestamp matches the
+					// moment this row flips to `completed`, not a few ms earlier.
+					const evaluatedAt = new Date().toISOString();
+					tx.delete(replayEvaluations).where(eq(replayEvaluations.replayId, replayId)).run();
+					tx.insert(replayEvaluations)
+						.values({
+							replayId,
+							passed: true,
+							assertionsTotal: 0,
+							assertionsPassed: 0,
+							judgesTotal: 0,
+							judgesPassed: 0,
+							evaluatedAt,
+						})
+						.run();
+					tx.update(replays)
+						.set({
+							lifecycleState: "completed",
+							analysisStep: null,
+							finishedAt: evaluatedAt,
+						})
+						.where(eq(replays.id, replayId))
+						.run();
+				} else {
+					tx.update(replays).set({ analysisStep: "metrics" }).where(eq(replays.id, replayId)).run();
+				}
 				return true;
 			});
 
@@ -91,6 +140,26 @@ export function makeCalculateMetricsProcessor(
 				console.warn(
 					`calculate-metrics worker for ${replayId} found the row no longer in 'analyzing' — skipping chain`,
 				);
+				return { ok: true, metricsWritten: rows.length };
+			}
+
+			if (isLive) {
+				// Emit SSE events AFTER the commit so a subscriber can't see
+				// `evaluation_complete` before the row reads as `completed`.
+				const result: ReplayResult = {
+					replay_id: replayId,
+					conversation_hash: replay.conversationHash,
+					passed: true,
+					assertions: [],
+					judges: [],
+					metrics: { turns: buildLiveTurnMetrics(turns, rows) },
+				};
+				events.emit(replayId, {
+					type: "state",
+					lifecycle_state: "completed",
+					analysis_step: null,
+				});
+				events.emit(replayId, { type: "evaluation_complete", result });
 				return { ok: true, metricsWritten: rows.length };
 			}
 
@@ -107,6 +176,27 @@ export function makeCalculateMetricsProcessor(
 			throw new JobProcessingError(replayId, `metrics stage failed: ${detail}`, { cause });
 		}
 	};
+}
+
+type ComputedMetric = ReturnType<typeof computeMetrics>[number];
+
+function buildLiveTurnMetrics(
+	turns: readonly ReplayTurnRow[],
+	metricRows: readonly ComputedMetric[],
+): TurnMetricsResponse[] {
+	const byIdx = new Map(metricRows.map((m) => [m.turnIdx, m]));
+	return [...turns]
+		.sort((a, b) => a.idx - b.idx)
+		.map((turn) => {
+			const metric = byIdx.get(turn.idx);
+			return {
+				turn_idx: turn.idx,
+				role: turn.role,
+				agent_response_ms: metric?.agentResponseMs ?? null,
+				ttft_ms: metric?.ttftMs ?? null,
+				interrupted: metric?.interrupted ?? false,
+			};
+		});
 }
 
 /**

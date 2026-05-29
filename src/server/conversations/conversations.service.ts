@@ -106,8 +106,16 @@ export async function materializeRequestTurns(
 export async function canonicalizeAndHashSpec(
 	turns: readonly ConversationTurn[],
 	judges: readonly Judge[],
+	live = false,
 ): Promise<{ json: string; hash: string }> {
-	const spec = { turns, judges } as const;
+	// A live session has no script, so two live runs would otherwise
+	// canonicalize to the identical (empty) spec and collapse onto one
+	// conversation row. Fold a server-generated salt into the live spec so
+	// every live POST mints a distinct hash. Non-live specs stay byte-for-byte
+	// unchanged — their stored hashes must remain stable across this change.
+	const spec = live
+		? ({ turns, judges, live: true, live_salt: crypto.randomUUID() } as const)
+		: ({ turns, judges } as const);
 	const json = canonicalStringify(spec);
 	const hash = await sha256Hex(new TextEncoder().encode(json));
 	return { json, hash };
@@ -161,7 +169,7 @@ export function ensureConversation(
 function parseStoredSpec(
 	raw: string,
 	hash: string,
-): { turns: ConversationTurn[]; judges: Judge[] } {
+): { turns: ConversationTurn[]; judges: Judge[]; live: boolean } {
 	// Stored rows were validated on the way in; a corrupt row (botched
 	// migration, fsck'd file) shouldn't 500 the entire conversation handler.
 	let parsedJson: unknown;
@@ -173,7 +181,7 @@ function parseStoredSpec(
 			hash,
 			err instanceof Error ? err.message : String(err),
 		);
-		return { turns: [], judges: [] };
+		return { turns: [], judges: [], live: false };
 	}
 	const result = v.safeParse(StoredConversationSpecSchema, parsedJson);
 	if (!result.success) {
@@ -182,14 +190,14 @@ function parseStoredSpec(
 			hash,
 			JSON.stringify(result.issues.map((i) => ({ path: i.path, message: i.message }))),
 		);
-		return { turns: [], judges: [] };
+		return { turns: [], judges: [], live: false };
 	}
-	return result.output;
+	return { turns: result.output.turns, judges: result.output.judges, live: result.output.live };
 }
 
 /** Project a stored row back onto the wire response shape. */
 export function toConversationResponse(row: ConversationRow): ConversationResponse {
-	const { turns, judges } = parseStoredSpec(row.turnsJson, row.hash);
+	const { turns, judges, live } = parseStoredSpec(row.turnsJson, row.hash);
 	return {
 		hash: row.hash,
 		name: row.name,
@@ -197,15 +205,17 @@ export function toConversationResponse(row: ConversationRow): ConversationRespon
 		last_run_at: row.lastRunAt,
 		turns,
 		judges,
+		live,
 	};
 }
 
 /** Read the canonical spec stored in `conversations.turns_json`. Used by
- *  the evaluate-replay job to walk per-turn assertions + judges. */
+ *  the evaluate-replay job to walk per-turn assertions + judges, and by
+ *  calculate-metrics to decide whether to skip evaluation for a live run. */
 export function getConversationSpec(
 	store: Store,
 	hash: string,
-): { turns: ConversationTurn[]; judges: Judge[] } | undefined {
+): { turns: ConversationTurn[]; judges: Judge[]; live: boolean } | undefined {
 	const row = store.db.select().from(conversations).where(eq(conversations.hash, hash)).get();
 	if (row === undefined) return undefined;
 	return parseStoredSpec(row.turnsJson, row.hash);

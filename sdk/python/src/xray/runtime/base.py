@@ -72,8 +72,23 @@ class RuntimeBindable(Protocol):
     ) -> None: ...
 
 
+@runtime_checkable
+class StoppableRuntime(Protocol):
+    """Optional contract for runtimes that run open-endedly until told to
+    stop — e.g. a live mic session that ends on Ctrl+C. ``xray.run_live``
+    binds :meth:`request_stop` to SIGINT so the run winds down cleanly
+    (disconnect, finalize the mixdown, upload).
+
+    Structural — ``isinstance(rt, StoppableRuntime)`` works because of
+    ``@runtime_checkable``.
+    """
+
+    def request_stop(self) -> None: ...
+
+
 __all__ = [
     "Runtime",
     "RuntimeBindable",
     "RuntimeResult",
+    "StoppableRuntime",
 ]
