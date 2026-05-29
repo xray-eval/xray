@@ -4,9 +4,12 @@ participant."""
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import pytest
 
 from xray import SimulatedSipCall
+from xray.instrument import XRAY_ATTRIBUTE_KEY
 
 
 def test_to_attributes_emits_each_named_field_with_canonical_key() -> None:
@@ -69,6 +72,22 @@ def test_empty_simulated_sip_call_rejected() -> None:
     ``simulated_sip=None`` for a non-SIP run."""
     with pytest.raises(ValueError, match="at least one attribute"):
         SimulatedSipCall()
+
+
+def test_extra_attrs_with_reserved_xray_key_rejected() -> None:
+    """extra_attrs must never carry the ``xray`` binding key. Allowing it would
+    let the merge in mint_user_token overwrite the replay binding the agent
+    reads to attribute its spans — silently rebinding the run to a forged
+    context. Reject at construction, where the mistake is visible."""
+    with pytest.raises(ValueError, match=XRAY_ATTRIBUTE_KEY):
+        SimulatedSipCall(caller_phone="+15551234567", extra_attrs={XRAY_ATTRIBUTE_KEY: "forged"})
+
+
+def test_extra_attrs_is_frozen_after_construction() -> None:
+    """extra_attrs is stored as a read-only mapping so the reserved-key guard
+    cannot be bypassed by mutating the dict after construction."""
+    sip = SimulatedSipCall(caller_phone="+15551234567", extra_attrs={"x-custom-header": "v"})
+    assert isinstance(sip.extra_attrs, MappingProxyType)
 
 
 def test_only_extra_attrs_is_a_valid_configuration() -> None:

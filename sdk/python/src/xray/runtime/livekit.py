@@ -599,8 +599,9 @@ def mint_user_token(
     """
     attributes = encode_attribute(replay_id=replay_id, conversation_hash=conversation_hash)
     if simulated_sip is not None:
-        # The SimulatedSipCall keyspace is disjoint from XRAY_ATTRIBUTE_KEY,
-        # so this merge cannot collide by construction.
+        # sip.* keys never overlap "xray", and SimulatedSipCall rejects an
+        # "xray" key in extra_attrs at construction — so this merge provably
+        # cannot clobber the replay-binding attribute.
         attributes = {**attributes, **simulated_sip.to_attributes()}
     builder = lk_api.AccessToken(api_key, api_secret)
     builder = builder.with_identity(identity)

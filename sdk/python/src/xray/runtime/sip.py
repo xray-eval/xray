@@ -23,8 +23,12 @@ spelling verbatim.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal, TypeAlias
+
+from xray.instrument import XRAY_ATTRIBUTE_KEY
 
 # Closed picklist per the LiveKit SIP docs. Narrower than `str` so a typo at
 # the call site fails pyright instead of becoming an inert attribute the
@@ -50,15 +54,28 @@ class SimulatedSipCall:
     # Free-form passthrough for arbitrary additional keys the agent reads —
     # anything outside the standard ``sip.*`` set above. A named field wins
     # on collision so a dev can't accidentally shadow a typed attribute by
-    # spelling it twice.
-    extra_attrs: dict[str, str] = field(default_factory=dict[str, str])
+    # spelling it twice. Stored as a read-only mapping after construction
+    # (see __post_init__).
+    extra_attrs: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def __post_init__(self) -> None:
+        if XRAY_ATTRIBUTE_KEY in self.extra_attrs:
+            raise ValueError(
+                f"SimulatedSipCall.extra_attrs must not contain the reserved "
+                f"{XRAY_ATTRIBUTE_KEY!r} key — it carries the replay binding the "
+                f"agent reads to attribute its spans. Use the sip.* fields for SIP "
+                f"attributes; never override the xray binding."
+            )
         if not self._has_any():
             raise ValueError(
                 "SimulatedSipCall requires at least one attribute. "
                 "Pass simulated_sip=None for a non-SIP run."
             )
+        # frozen=True blocks field reassignment but not mutation of a dict
+        # field — a post-construction extra_attrs["xray"]=... would slip the
+        # reserved-key guard above and clobber the binding at mint time. Freeze
+        # a copy so the guard can't be bypassed after construction.
+        object.__setattr__(self, "extra_attrs", MappingProxyType(dict(self.extra_attrs)))
 
     def _has_any(self) -> bool:
         return (

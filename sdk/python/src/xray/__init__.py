@@ -48,7 +48,7 @@ from xray.conversation import (
 from xray.errors import ReplayEvaluationError, XrayError
 from xray.instrument import XraySession, attach
 from xray.orchestrator import run, run_live
-from xray.runtime.sip import SimulatedSipCall, SipCallStatus
+from xray.runtime.sip import SimulatedSipCall
 
 __all__ = [
     "AgentResponse",
@@ -65,7 +65,6 @@ __all__ = [
     "Role",
     "RunConfig",
     "SimulatedSipCall",
-    "SipCallStatus",
     "ToolCall",
     "TtsAudio",
     "Turn",

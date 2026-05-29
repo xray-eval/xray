@@ -3,15 +3,14 @@ scripted and live LiveKit runtimes."""
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 from xray import SimulatedSipCall
-from xray.instrument import XRAY_ATTRIBUTE_KEY
+from xray.instrument import XRAY_ATTRIBUTE_KEY, encode_attribute
 from xray.runtime.livekit import mint_user_token
 
 
-def _fake_lk_api() -> Any:
+def _fake_lk_api() -> tuple[MagicMock, MagicMock]:
     """Build a MagicMock lk_api whose AccessToken returns a chainable
     builder — every with_* returns self so the test can inspect all calls
     in order on one mock."""
@@ -73,8 +72,10 @@ def test_simulated_sip_sets_kind_sip_and_merges_attrs() -> None:
 
     args, _ = token.with_attributes.call_args
     attrs = args[0]
-    # xray attribute must coexist with sip.* — the merge can't clobber it.
-    assert XRAY_ATTRIBUTE_KEY in attrs
+    # The sip.* merge must leave the replay binding byte-for-byte intact —
+    # check the VALUE, not just the key's presence (a clobber preserves the key).
+    expected = encode_attribute(replay_id="rep-1", conversation_hash="a" * 64)
+    assert attrs[XRAY_ATTRIBUTE_KEY] == expected[XRAY_ATTRIBUTE_KEY]
     assert attrs["sip.phoneNumber"] == "+15551234567"
     assert attrs["sip.trunkPhoneNumber"] == "+46790952746"
     assert attrs["sip.callID"] == "abc-123"
