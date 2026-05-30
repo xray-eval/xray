@@ -134,14 +134,16 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<PlayerProvider>
 			<SpanSelectionProvider>
-				<div className="grid gap-6 lg:grid-cols-3">
+				{/* items-start: the detail panel (right column) can grow taller than
+				    the trace tree, and stretch would balloon the tree card to match. */}
+				<div className="grid items-start gap-6 lg:grid-cols-3">
 					<div className="grid gap-6 lg:col-span-2">
 						<AudioSection replay={replay} />
 						<TraceCard replay={replay} />
 					</div>
 					<aside className="grid gap-6">
-						<SpanDetailAside replay={replay} />
 						<RunDetailsCard replay={replay} />
+						<SpanDetailAside replay={replay} />
 					</aside>
 				</div>
 			</SpanSelectionProvider>
