@@ -48,14 +48,14 @@ export function SpanDetailPanel({
 }) {
 	const palette = vocabPalette(detail.span.vocabulary);
 	return (
-		<Card className="relative gap-0 overflow-hidden p-0 animate-in fade-in-0 slide-in-from-right-3 duration-300 ease-out">
+		<Card className="relative gap-0 overflow-hidden p-0 animate-in fade-in-0 duration-300 ease-out lg:absolute lg:inset-0 lg:flex lg:flex-col lg:slide-in-from-right-3">
 			<div
 				aria-hidden="true"
-				className="absolute inset-x-0 top-0 h-px"
+				className="absolute inset-x-0 top-0 z-10 h-px"
 				style={{ background: palette.barOutline }}
 			/>
 			<SpanDetailHeader span={detail.span} onClose={onClose} />
-			<CardContent className="divide-y divide-border/50 p-0">
+			<CardContent className="scroll-panel divide-y divide-border/50 p-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
 				<SpanTimingGrid detail={detail} />
 				{detail.usage.length > 0 && <LinkedUsageSection usage={detail.usage} />}
 				{detail.toolCalls.length > 0 && <LinkedToolSection toolCalls={detail.toolCalls} />}
@@ -68,7 +68,7 @@ export function SpanDetailPanel({
 function SpanDetailHeader({ span, onClose }: { span: SpanResponse; onClose: () => void }) {
 	const palette = vocabPalette(span.vocabulary);
 	return (
-		<CardHeader className="gap-0 border-b border-border/60 px-5 py-4">
+		<CardHeader className="gap-0 border-b border-border/60 px-5 py-4 lg:shrink-0">
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0 space-y-1.5">
 					<div className="flex items-center gap-2">

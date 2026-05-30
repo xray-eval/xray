@@ -134,15 +134,17 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<PlayerProvider>
 			<SpanSelectionProvider>
-				{/* items-start: the detail panel (right column) can grow taller than
-				    the trace tree, and stretch would balloon the tree card to match. */}
-				<div className="grid items-start gap-6 lg:grid-cols-3">
-					<div className="grid gap-6 lg:col-span-2">
+				<div className="grid gap-6 lg:grid-cols-3">
+					<div className="lg:col-span-2 lg:col-start-1 lg:row-start-1">
 						<AudioSection replay={replay} />
+					</div>
+					<div className="lg:col-span-2 lg:col-start-1 lg:row-start-2">
 						<TraceCard replay={replay} />
 					</div>
-					<aside className="grid gap-6">
+					<div className="relative lg:col-start-3 lg:row-start-1">
 						<RunDetailsCard replay={replay} />
+					</div>
+					<aside className="relative lg:col-start-3 lg:row-start-2">
 						<SpanDetailAside replay={replay} />
 					</aside>
 				</div>
@@ -218,13 +220,13 @@ function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
 	const hasConfig = replay.run_config !== null && replay.run_config !== undefined;
 	if (!hasUsage && !hasTools && !hasConfig) return null;
 	return (
-		<Card className="gap-0 overflow-hidden p-0">
-			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
+		<Card className="gap-0 overflow-hidden p-0 lg:absolute lg:inset-0 lg:flex lg:flex-col">
+			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4 lg:shrink-0">
 				<CardTitle className="text-base font-semibold tracking-tight text-foreground">
 					Run details
 				</CardTitle>
 			</CardHeader>
-			<CardContent className="divide-y divide-border/50 p-0">
+			<CardContent className="scroll-panel divide-y divide-border/50 p-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
 				{hasUsage && <ModelUsageSection usage={replay.model_usage} />}
 				{hasTools && <ToolCallsSection toolCalls={replay.tool_calls} />}
 				{hasConfig && <RunConfigSection runConfig={replay.run_config} />}
