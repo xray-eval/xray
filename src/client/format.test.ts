@@ -1,5 +1,6 @@
 import {
 	formatAbsolute,
+	formatClockSeconds,
 	formatDuration,
 	formatTimestamp,
 	HASH_PREFIX_LEN,
@@ -48,6 +49,25 @@ describe("formatTimestamp", () => {
 			useGrouping: false,
 		}).format(42);
 		expect(out).toContain(localized42);
+	});
+});
+
+describe("formatClockSeconds", () => {
+	it("renders a sub-minute time as `0:SS.d`", () => {
+		expect(formatClockSeconds(0)).toBe("0:00.0");
+		expect(formatClockSeconds(5.3)).toBe("0:05.3");
+	});
+
+	it("rolls whole minutes into the leading field", () => {
+		expect(formatClockSeconds(65)).toBe("1:05.0");
+		expect(formatClockSeconds(83.7)).toBe("1:23.7");
+		expect(formatClockSeconds(125.4)).toBe("2:05.4");
+	});
+
+	it("clamps negative and non-finite inputs to zero", () => {
+		expect(formatClockSeconds(-3)).toBe("0:00.0");
+		expect(formatClockSeconds(Number.NaN)).toBe("0:00.0");
+		expect(formatClockSeconds(Number.POSITIVE_INFINITY)).toBe("0:00.0");
 	});
 });
 

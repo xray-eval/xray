@@ -17,6 +17,11 @@ export type PlayerControls = Readonly<{
 	clearHighlight: () => void;
 }>;
 
+/** Current audio playback position, published by the player ~60fps. */
+export type PlayheadState = Readonly<{ sec: number; playing: boolean }>;
+
+const INITIAL_PLAYHEAD: PlayheadState = { sec: 0, playing: false };
+
 export type PlayerHandle = Readonly<{
 	isReady: boolean;
 	seek: (seconds: number) => void;
@@ -29,6 +34,13 @@ type PlayerContextValue = Readonly<{
 	setReady: (ready: boolean) => void;
 	registerControls: (controls: PlayerControls | null) => void;
 	controlsRef: RefObject<PlayerControls | null>;
+	// Playhead is a high-frequency signal routed through a ref + listener set —
+	// same imperative-handle shape as `controlsRef` — so publishing a new
+	// position never re-renders the provider or its row consumers, only the
+	// single leaf that subscribes via `usePlayhead`.
+	playheadRef: RefObject<PlayheadState>;
+	setPlayhead: (state: PlayheadState) => void;
+	subscribePlayhead: (listener: () => void) => () => void;
 }>;
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -41,9 +53,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 		controlsRef.current = controls;
 	}, []);
 
+	const playheadRef = useRef<PlayheadState>(INITIAL_PLAYHEAD);
+	const playheadListeners = useRef<Set<() => void>>(new Set());
+	const setPlayhead = useCallback((state: PlayheadState) => {
+		playheadRef.current = state;
+		for (const listener of playheadListeners.current) listener();
+	}, []);
+	const subscribePlayhead = useCallback((listener: () => void) => {
+		playheadListeners.current.add(listener);
+		return () => {
+			playheadListeners.current.delete(listener);
+		};
+	}, []);
+
 	const value = useMemo<PlayerContextValue>(
-		() => ({ isReady, setReady, registerControls, controlsRef }),
-		[isReady, registerControls],
+		() => ({
+			isReady,
+			setReady,
+			registerControls,
+			controlsRef,
+			playheadRef,
+			setPlayhead,
+			subscribePlayhead,
+		}),
+		[isReady, registerControls, setPlayhead, subscribePlayhead],
 	);
 
 	return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
@@ -75,6 +108,45 @@ export function usePlayer(): PlayerHandle {
 	return useMemo(
 		() => ({ isReady, seek, highlight, clearHighlight }),
 		[isReady, seek, highlight, clearHighlight],
+	);
+}
+
+/**
+ * Subscribe to the audio playhead position. Returns the latest `{ sec,
+ * playing }`, re-rendering only the calling component as playback advances —
+ * the position is routed through a ref + listener set, so neither the
+ * provider nor unrelated consumers (e.g. trace-tree rows) re-render.
+ *
+ * Throws `PlayerProviderMissingError` outside a provider — like `usePlayer`,
+ * the consumer side treats a missing provider as a programming error.
+ */
+export function usePlayhead(): PlayheadState {
+	const ctx = useContext(PlayerContext);
+	if (ctx === null) throw new PlayerProviderMissingError();
+	const { playheadRef, subscribePlayhead } = ctx;
+	const [state, setState] = useState<PlayheadState>(() => playheadRef.current);
+	useEffect(() => {
+		// Sync once on mount in case a position was published between this
+		// component's render and the effect firing, then subscribe for updates.
+		setState(playheadRef.current);
+		return subscribePlayhead(() => setState(playheadRef.current));
+	}, [playheadRef, subscribePlayhead]);
+	return state;
+}
+
+/**
+ * Returns a stable function the audio player calls to publish the current
+ * playhead position. Tolerates being called outside a provider (no-op) so the
+ * player can mount standalone — mirrors `useRegisterPlayer`.
+ */
+export function usePublishPlayhead(): (state: PlayheadState) => void {
+	const ctx = useContext(PlayerContext);
+	const setPlayhead = ctx?.setPlayhead;
+	return useCallback(
+		(state: PlayheadState) => {
+			setPlayhead?.(state);
+		},
+		[setPlayhead],
 	);
 }
 
