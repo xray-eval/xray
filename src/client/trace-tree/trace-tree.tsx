@@ -161,8 +161,8 @@ function TurnRowItem({
 	return (
 		<li className="group/row relative">
 			<div
-				className="flex h-8 items-stretch transition-colors"
-				style={{ boxShadow: `inset 2px 0 0 0 ${accent}` }}
+				className="flex h-9 items-stretch border-t border-border/40 transition-colors"
+				style={{ background: stickyBg, boxShadow: `inset 3px 0 0 0 ${accent}` }}
 			>
 				<div
 					className="sticky left-0 z-10 flex shrink-0 items-center justify-center"
@@ -204,18 +204,18 @@ function TurnRowItem({
 						background: stickyBg,
 					}}
 				>
-					<span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground/80">
+					<span className="font-mono text-[10px] tabular-nums tracking-[0.18em] text-muted-foreground/70">
 						T{String(row.idx + 1).padStart(2, "0")}
 					</span>
 					<span
 						className={cn(
-							"truncate text-[13px] font-semibold tracking-tight",
-							isUser ? "text-sky-100" : "text-orange-50",
+							"inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]",
+							isUser ? "bg-sky-400 text-sky-950" : "bg-orange-400 text-orange-950",
 						)}
 					>
-						{isUser ? "User" : "Agent"} turn
+						{isUser ? "User" : "Agent"}
 					</span>
-					<span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/80">
+					<span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/70">
 						{formatDurationMs(row.durationMs)}
 					</span>
 				</button>

@@ -121,8 +121,8 @@ describe("Inspector TurnsCard", () => {
 		// Channel legend renders the two side labels and the play button is
 		// part of the bottom bar; together they confirm the stereo player
 		// mounted (not just the header chip text).
-		expect(screen.getByText(/^user$/i)).toBeTruthy();
-		expect(screen.getByText(/^agent$/i)).toBeTruthy();
+		expect(screen.getByText(/^user$/)).toBeTruthy();
+		expect(screen.getByText(/^agent$/)).toBeTruthy();
 		expect(screen.getByLabelText(/^Play$/i)).toBeTruthy();
 		expect(screen.getByLabelText(/^Replay waveform$/i)).toBeTruthy();
 	});
