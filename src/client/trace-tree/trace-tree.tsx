@@ -2,13 +2,15 @@ import { ChevronDownIcon, ChevronRightIcon, MinusIcon, PlusIcon } from "lucide-r
 import { useEffect, useMemo, useState } from "react";
 import { match } from "ts-pattern";
 
-import type { ReplayTurnResponse, SpanResponse, SpanVocabulary } from "@/client/api/api.types.ts";
+import type { ReplayTurnResponse, SpanResponse } from "@/client/api/api.types.ts";
 import { usePlayer, usePlayhead } from "@/client/audio/player-provider.tsx";
 import { formatClockSeconds, formatDurationMs, formatTimelineTick } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { buildTree } from "./build-tree.ts";
+import { useSpanSelection } from "./span-selection.tsx";
 import type { SpanRow, TraceScale, TreeRow, TurnRow, UntimedGroupRow } from "./trace-tree.types.ts";
+import { vocabPalette, vocabShortLabel } from "./vocab.ts";
 
 const INDENT_PX = 16;
 const CHEVRON_COL_PX = 28;
@@ -244,17 +246,26 @@ function SpanRowItem({
 	onToggle: () => void;
 }) {
 	const player = usePlayer();
+	const { selectedSpanId, select } = useSpanSelection();
 	const palette = vocabPalette(row.vocabulary);
+	const isSelected = selectedSpanId === row.span.span_id;
 
-	const onSeek = () => {
+	// One "focus this span" gesture: move the playhead, shade the waveform,
+	// and open the span in the detail panel. Both the name cell and the bar
+	// trigger it, so clicking anywhere on the row inspects the span.
+	const onActivate = () => {
 		player.seek(row.startedAtSec);
 		player.highlight(row.startedAtSec, row.endedAtSec);
+		select(row.span.span_id);
 	};
 
-	const stickyBg = "rgb(15 15 15)";
+	const stickyBg = isSelected ? "rgb(30 28 24)" : "rgb(15 15 15)";
 	return (
 		<li className="group/row relative">
-			<div className="relative flex h-8 items-stretch transition-colors">
+			<div
+				className="relative flex h-8 items-stretch transition-colors"
+				style={isSelected ? { boxShadow: `inset 2px 0 0 0 ${palette.barOutline}` } : undefined}
+			>
 				<div
 					className="sticky left-0 z-10 flex shrink-0 items-center justify-center"
 					style={{ width: CHEVRON_COL_PX, background: stickyBg }}
@@ -278,9 +289,10 @@ function SpanRowItem({
 				</div>
 				<button
 					type="button"
-					onClick={onSeek}
+					onClick={onActivate}
 					data-keep-trace-highlight="true"
-					aria-label={`Seek to ${row.vocabulary} span ${row.name}`}
+					aria-current={isSelected ? "true" : undefined}
+					aria-label={`Inspect ${row.vocabulary} span ${row.name}`}
 					className="sticky z-10 flex shrink-0 items-center gap-2 overflow-hidden pr-3 text-left hover:bg-foreground/[0.04]"
 					style={{
 						left: CHEVRON_COL_PX + DOT_COL_PX,
@@ -303,8 +315,8 @@ function SpanRowItem({
 					scale={scale}
 					startSec={row.startedAtSec}
 					endSec={row.endedAtSec}
-					onSeek={onSeek}
-					ariaLabel={`Seek to span ${row.name} bar`}
+					onSeek={onActivate}
+					ariaLabel={`Inspect span ${row.name} bar`}
 					emphasis="span"
 					colorFill={palette.barFill}
 					colorOutline={palette.barOutline}
@@ -644,40 +656,6 @@ function filterCollapsed(
 		}
 	}
 	return out;
-}
-
-function vocabShortLabel(vocab: SpanVocabulary): string {
-	// Two-character text indicator so the vocabulary stays distinguishable
-	// without relying on dot color alone (WCAG 1.4.1). Full vocab name is
-	// announced by aria-label + native `title` tooltip.
-	return match(vocab)
-		.with("xray", () => "xr")
-		.with("gen_ai", () => "ga")
-		.with("langfuse", () => "lf")
-		.exhaustive();
-}
-
-function vocabPalette(vocab: SpanVocabulary) {
-	return match(vocab)
-		.with("xray", () => ({
-			dotBg: "bg-amber-400 shadow-[0_0_6px_rgb(251_191_36/0.55)]",
-			text: "text-amber-100/95",
-			barFill: "rgb(251 191 36 / 0.55)",
-			barOutline: "rgb(251 191 36)",
-		}))
-		.with("gen_ai", () => ({
-			dotBg: "bg-violet-400 shadow-[0_0_6px_rgb(167_139_250/0.55)]",
-			text: "text-violet-100/95",
-			barFill: "rgb(167 139 250 / 0.55)",
-			barOutline: "rgb(167 139 250)",
-		}))
-		.with("langfuse", () => ({
-			dotBg: "bg-emerald-400 shadow-[0_0_6px_rgb(52_211_153/0.55)]",
-			text: "text-emerald-100/95",
-			barFill: "rgb(52 211 153 / 0.55)",
-			barOutline: "rgb(52 211 153)",
-		}))
-		.exhaustive();
 }
 
 function buildTicks(scale: TraceScale, zoom: number): { sec: number; leftPct: number }[] {
