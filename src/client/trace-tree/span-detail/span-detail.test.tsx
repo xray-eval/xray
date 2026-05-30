@@ -106,6 +106,29 @@ describe("SpanDetailPanel", () => {
 		expect(screen.getByText("1222")).toBeTruthy();
 	});
 
+	it("type-renders boolean, null, nested-container, and unrecognized attribute values", () => {
+		render(
+			<SpanDetailPanel
+				detail={model({
+					attributes: {
+						kind: "parsed",
+						entries: [
+							{ key: "xray.stream", namespace: "xray", leaf: "stream", value: true },
+							{ key: "xray.parent_id", namespace: "xray", leaf: "parent_id", value: null },
+							{ key: "xray.opts", namespace: "xray", leaf: "opts", value: { region: "us-east" } },
+							{ key: "xray.unset", namespace: "xray", leaf: "unset", value: undefined },
+						],
+					},
+				})}
+				onClose={() => undefined}
+			/>,
+		);
+		expect(screen.getByText("true")).toBeTruthy();
+		expect(screen.getByText("null")).toBeTruthy();
+		expect(screen.getByText(/region/)).toBeTruthy();
+		expect(screen.getByText("—")).toBeTruthy();
+	});
+
 	it("renders linked model usage with provider, model, and latency", () => {
 		render(<SpanDetailPanel detail={model({ usage: [USAGE] })} onClose={() => undefined} />);
 		expect(screen.getByText("gemini-3.1-flash-live-preview")).toBeTruthy();
