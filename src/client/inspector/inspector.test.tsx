@@ -164,6 +164,6 @@ describe("Inspector TraceCard", () => {
 		render(ui);
 
 		await waitFor(() => screen.getByText(/stt\.transcribe/));
-		expect(screen.getByLabelText(/Seek to xray span stt\.transcribe$/i)).toBeTruthy();
+		expect(screen.getByLabelText(/Inspect xray span stt\.transcribe$/i)).toBeTruthy();
 	});
 });

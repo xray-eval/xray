@@ -7,6 +7,7 @@ import {
 } from "@/client/audio/player-provider.tsx";
 
 import { registerHappyDom } from "../test-happy-dom.ts";
+import { SpanSelectionProvider, useSpanSelection } from "./span-selection.tsx";
 import { fractionOf, playheadLeft, TraceTree } from "./trace-tree.tsx";
 import type { TraceScale } from "./trace-tree.types.ts";
 import { describe, expect, it } from "bun:test";
@@ -95,7 +96,7 @@ describe("TraceTree", () => {
 		);
 		expect(screen.getByLabelText(/Seek to turn 1, user/i)).toBeTruthy();
 		expect(screen.getByLabelText(/Seek to turn 2, agent/i)).toBeTruthy();
-		expect(screen.getByLabelText(/Seek to xray span stt\.transcribe$/i)).toBeTruthy();
+		expect(screen.getByLabelText(/Inspect xray span stt\.transcribe$/i)).toBeTruthy();
 	});
 
 	it("clicking a span row seeks the player to its relative start time", () => {
@@ -123,7 +124,7 @@ describe("TraceTree", () => {
 			</PlayerProvider>,
 		);
 		act(() => {
-			screen.getByLabelText(/Seek to xray span stt\.transcribe$/i).click();
+			screen.getByLabelText(/Inspect xray span stt\.transcribe$/i).click();
 		});
 		expect(seeks).toEqual([0.75]);
 		expect(highlights).toEqual([[0.75, 1.4]]);
@@ -140,14 +141,14 @@ describe("TraceTree", () => {
 				/>
 			</PlayerProvider>,
 		);
-		expect(screen.getByLabelText(/Seek to xray span tool_call$/i)).toBeTruthy();
-		expect(screen.getByLabelText(/Seek to xray span rag_retrieve$/i)).toBeTruthy();
+		expect(screen.getByLabelText(/Inspect xray span tool_call$/i)).toBeTruthy();
+		expect(screen.getByLabelText(/Inspect xray span rag_retrieve$/i)).toBeTruthy();
 		act(() => {
 			const collapseBtn = screen.getAllByRole("button", { name: /Collapse/i }).at(0);
 			collapseBtn?.click();
 		});
-		expect(screen.queryByLabelText(/Seek to xray span tool_call$/i)).toBeNull();
-		expect(screen.queryByLabelText(/Seek to xray span rag_retrieve$/i)).toBeNull();
+		expect(screen.queryByLabelText(/Inspect xray span tool_call$/i)).toBeNull();
+		expect(screen.queryByLabelText(/Inspect xray span rag_retrieve$/i)).toBeNull();
 	});
 
 	it("renders the Untimed group when a span sits outside every turn", () => {
@@ -176,6 +177,36 @@ describe("TraceTree", () => {
 			</PlayerProvider>,
 		);
 		expect(screen.getByText(/Span \/ call/i)).toBeTruthy();
+	});
+});
+
+describe("TraceTree selection", () => {
+	function SelectionReadout() {
+		const { selectedSpanId } = useSpanSelection();
+		return <output data-testid="selected">{selectedSpanId ?? "none"}</output>;
+	}
+
+	it("clicking a span selects it and marks the row aria-current", () => {
+		render(
+			<PlayerProvider>
+				<SpanSelectionProvider>
+					<SelectionReadout />
+					<TraceTree
+						turns={[turn(0, "user", 0, 2_500)]}
+						spans={[span(1, "stt.transcribe", 750, 1_400)]}
+						replayStartIso={REPLAY_START}
+						zoom={1}
+					/>
+				</SpanSelectionProvider>
+			</PlayerProvider>,
+		);
+		const row = screen.getByLabelText(/Inspect xray span stt\.transcribe$/i);
+		expect(row.getAttribute("aria-current")).toBeNull();
+		act(() => row.click());
+		expect(screen.getByTestId("selected").textContent).toBe("s-1");
+		expect(
+			screen.getByLabelText(/Inspect xray span stt\.transcribe$/i).getAttribute("aria-current"),
+		).toBe("true");
 	});
 });
 
