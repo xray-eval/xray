@@ -67,3 +67,17 @@ export function formatDuration(ms: number | null): string {
 	const s = secs % 60;
 	return `${m}m${s.toString().padStart(2, "0")}s`;
 }
+
+/**
+ * Render a span/turn duration in ms for trace views: `123ms` below a second,
+ * `1.23s` at or above it. Two reasons it's distinct from `formatDuration`:
+ * trace latencies cluster in the sub-5-second range where whole-second
+ * rounding erases the signal worth reading, and a row with no resolved
+ * duration is missing data — so invalid/negative input renders an em-dash,
+ * not "in progress".
+ */
+export function formatDurationMs(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return "—";
+	if (ms < 1_000) return `${Math.round(ms)}ms`;
+	return `${(ms / 1_000).toFixed(2)}s`;
+}

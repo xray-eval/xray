@@ -9,12 +9,11 @@ import type {
 } from "@/client/api/api.types.ts";
 import { JsonOrText, JsonTree } from "@/client/components/json-tree.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
-import { formatClockSeconds } from "@/client/format.ts";
+import { formatClockSeconds, formatDurationMs } from "@/client/format.ts";
 import { isJsonContainer, safeParseJson } from "@/client/lib/json.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { useSpanSelection } from "../span-selection.tsx";
-import { formatDurationMs } from "../trace-tree.tsx";
 import { vocabLabel, vocabPalette, vocabShortLabel } from "../vocab.ts";
 import type { AttributeEntry, SpanAttributes, SpanDetailModel } from "./span-detail.types.ts";
 import { resolveSpanDetail } from "./span-detail-model.ts";

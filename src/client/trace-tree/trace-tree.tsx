@@ -4,7 +4,7 @@ import { match } from "ts-pattern";
 
 import type { ReplayTurnResponse, SpanResponse } from "@/client/api/api.types.ts";
 import { usePlayer, usePlayhead } from "@/client/audio/player-provider.tsx";
-import { formatClockSeconds } from "@/client/format.ts";
+import { formatClockSeconds, formatDurationMs } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { buildTree } from "./build-tree.ts";
@@ -703,10 +703,4 @@ function formatClock(seconds: number): string {
 	const minutes = Math.floor(totalWholeSec / 60);
 	const secInMin = totalWholeSec - minutes * 60;
 	return `${sign}${String(minutes).padStart(2, "0")}:${String(secInMin).padStart(2, "0")}.${tenth}`;
-}
-
-export function formatDurationMs(ms: number): string {
-	if (!Number.isFinite(ms) || ms < 0) return "—";
-	if (ms < 1_000) return `${Math.round(ms)}ms`;
-	return `${(ms / 1_000).toFixed(2)}s`;
 }

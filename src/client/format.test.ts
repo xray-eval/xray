@@ -2,6 +2,7 @@ import {
 	formatAbsolute,
 	formatClockSeconds,
 	formatDuration,
+	formatDurationMs,
 	formatTimestamp,
 	HASH_PREFIX_LEN,
 	shortHash,
@@ -93,5 +94,25 @@ describe("formatDuration", () => {
 		expect(formatDuration(125_000)).toBe("2m05s");
 		// 5 min + 9 sec — confirm seconds zero-pad to two digits.
 		expect(formatDuration(309_000)).toBe("5m09s");
+	});
+});
+
+describe("formatDurationMs", () => {
+	it("renders invalid and negative input as an em-dash", () => {
+		expect(formatDurationMs(-1)).toBe("—");
+		expect(formatDurationMs(Number.NaN)).toBe("—");
+		expect(formatDurationMs(Number.POSITIVE_INFINITY)).toBe("—");
+	});
+
+	it("renders sub-second durations as rounded ms", () => {
+		expect(formatDurationMs(0)).toBe("0ms");
+		expect(formatDurationMs(123.4)).toBe("123ms");
+		expect(formatDurationMs(999)).toBe("999ms");
+	});
+
+	it("renders one second and above as two-decimal seconds", () => {
+		expect(formatDurationMs(1_000)).toBe("1.00s");
+		expect(formatDurationMs(1_234)).toBe("1.23s");
+		expect(formatDurationMs(42_500)).toBe("42.50s");
 	});
 });
