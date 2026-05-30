@@ -167,8 +167,8 @@ function AudioSection({ replay }: { replay: ReplayDetailResponse }) {
 			<StereoTurnPlayer audioUrl={replayAudioUrl(replay.id)} turns={replay.turns} />
 			{replay.turns.length === 0 && (
 				<p className="text-xs text-muted-foreground">
-					Audio uploaded. Server-side VAD analysis hasn't published turns yet. They'll appear on
-					the waveform once analysis completes.
+					Audio uploaded. Server-side VAD analysis hasn't published turns yet. They'll appear on the
+					waveform once analysis completes.
 				</p>
 			)}
 		</div>
@@ -181,7 +181,7 @@ function TraceCard({ replay }: { replay: ReplayDetailResponse }) {
 		<Card className="gap-0 overflow-hidden p-0">
 			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
 				<div className="flex items-center justify-between gap-3">
-					<div className="flex items-center gap-3">
+					<div className="flex items-baseline gap-3">
 						<CardTitle className="text-base font-semibold tracking-tight text-foreground">
 							Span tree
 						</CardTitle>
