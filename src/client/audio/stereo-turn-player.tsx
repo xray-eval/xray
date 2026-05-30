@@ -7,9 +7,10 @@ import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js";
 
 import type { ReplayTurnResponse } from "@/client/api/api.types.ts";
 import type { PlayerControls } from "@/client/audio/player-provider.tsx";
-import { useRegisterPlayer } from "@/client/audio/player-provider.tsx";
+import { usePublishPlayhead, useRegisterPlayer } from "@/client/audio/player-provider.tsx";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Button } from "@/client/components/ui/button.tsx";
+import { formatClockSeconds } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 // Yellow-tinted so the selected range stays distinguishable from the
@@ -155,6 +156,29 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 
 	useRegisterPlayer(controls);
 
+	// Publish the playback position so the trace tree can render a cursor
+	// synced to the audio. Subscribing to wavesurfer's own clock events
+	// (rather than the hook's `currentTime`) keeps this a genuine
+	// external-system subscription and decoupled from this component's render.
+	const publishPlayhead = usePublishPlayhead();
+	useEffect(() => {
+		if (!wavesurfer) return;
+		const update = () =>
+			publishPlayhead({ sec: wavesurfer.getCurrentTime(), playing: wavesurfer.isPlaying() });
+		const offs = [
+			wavesurfer.on("timeupdate", update),
+			wavesurfer.on("audioprocess", update),
+			wavesurfer.on("seeking", update),
+			wavesurfer.on("interaction", update),
+			wavesurfer.on("play", update),
+			wavesurfer.on("pause", update),
+			wavesurfer.on("finish", update),
+		];
+		return () => {
+			for (const off of offs) off();
+		};
+	}, [wavesurfer, publishPlayhead]);
+
 	// User clicks on the waveform (not on a turn region) → clear the
 	// trace-tree highlight. The highlight only makes sense while the
 	// audio cursor matches a selected span; once the user scrubs to
@@ -247,8 +271,8 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 					{isPlaying ? <PauseIcon /> : <PlayIcon />}
 				</Button>
 				<div className="font-mono text-xs tabular-nums text-foreground/90">
-					<span className="text-foreground">{formatClock(currentTime)}</span>
-					<span className="text-muted-foreground"> / {formatClock(duration)}</span>
+					<span className="text-foreground">{formatClockSeconds(currentTime)}</span>
+					<span className="text-muted-foreground"> / {formatClockSeconds(duration)}</span>
 				</div>
 			</div>
 		</div>
@@ -297,13 +321,4 @@ function useWaveState(wavesurfer: WaveSurfer | null): WaveState {
 function playedFraction(currentTime: number, duration: number): number {
 	if (!(duration > 0) || !Number.isFinite(currentTime)) return 0;
 	return Math.max(0, Math.min(1, currentTime / duration));
-}
-
-function formatClock(seconds: number): string {
-	const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-	const minutes = Math.floor(safe / 60);
-	const rest = safe - minutes * 60;
-	const wholeSeconds = Math.floor(rest);
-	const tenths = Math.floor((rest - wholeSeconds) * 10);
-	return `${minutes}:${String(wholeSeconds).padStart(2, "0")}.${tenths}`;
 }

@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { match } from "ts-pattern";
 
 import type { ReplayTurnResponse, SpanResponse, SpanVocabulary } from "@/client/api/api.types.ts";
-import { usePlayer } from "@/client/audio/player-provider.tsx";
+import { usePlayer, usePlayhead } from "@/client/audio/player-provider.tsx";
+import { formatClockSeconds } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { buildTree } from "./build-tree.ts";
@@ -91,7 +92,7 @@ function TraceTreeReady({
 
 	return (
 		<div className="h-full overflow-auto">
-			<div style={{ width: virtualWidth, minWidth: "100%" }}>
+			<div className="relative" style={{ width: virtualWidth, minWidth: "100%" }}>
 				<TimeRuler scale={scale} zoom={zoom} />
 				<ol className="divide-y divide-border/30">
 					{visible.map((row) => (
@@ -104,6 +105,7 @@ function TraceTreeReady({
 						/>
 					))}
 				</ol>
+				<TracePlayhead scale={scale} />
 			</div>
 		</div>
 	);
@@ -448,6 +450,65 @@ export function ZoomControls({ zoom, onChange }: { zoom: number; onChange: (z: n
 	);
 }
 
+/**
+ * Position of `sec` along the trace timeline as a 0..1 fraction, clamped to
+ * the visible range and 0 for a degenerate (zero-duration / non-finite) scale.
+ * The single source of truth for horizontal placement — `TimeBar` and the
+ * playhead cursor both derive from it so a bar and the cursor over it can
+ * never drift apart.
+ */
+export function fractionOf(sec: number, scale: TraceScale): number {
+	const raw = (sec - scale.startSec) / scale.durationSec;
+	if (!Number.isFinite(raw)) return 0;
+	return Math.max(0, Math.min(1, raw));
+}
+
+/**
+ * CSS `left` for a 0..1 fraction, placing it within the timeline region
+ * [STICKY_LEFT_TOTAL_PX, virtualWidth]. `100%` resolves to the inner
+ * container's width (== virtualWidth), so `STICKY_LEFT_TOTAL_PX + f·(100% −
+ * STICKY_LEFT_TOTAL_PX)` lands on the exact x a `TimeBar` bar at fraction `f`
+ * occupies — at any zoom, since zoom only changes the resolved `100%`.
+ */
+export function playheadLeft(fraction: number): string {
+	return `calc(${STICKY_LEFT_TOTAL_PX}px + ${fraction} * (100% - ${STICKY_LEFT_TOTAL_PX}px))`;
+}
+
+/**
+ * Vertical cursor synced to the audio playhead, overlaid across the whole
+ * tree at the same horizontal scale as the `TimeBar`s. Left is built so the
+ * timeline region [STICKY_LEFT_TOTAL_PX, virtualWidth] maps the fraction
+ * exactly onto a bar at the same fraction — `100%` resolves to the inner
+ * container's width (== virtualWidth), so it tracks zoom with no extra wiring.
+ * Decorative: `aria-hidden` + `pointer-events-none` so it never intercepts a
+ * row's seek click. Hidden until the player is ready (no audio → no cursor).
+ */
+function TracePlayhead({ scale }: { scale: TraceScale }) {
+	const { isReady } = usePlayer();
+	const { sec, playing } = usePlayhead();
+	if (!isReady) return null;
+	return (
+		<div
+			data-testid="trace-playhead"
+			aria-hidden="true"
+			className="pointer-events-none absolute inset-y-0 z-30"
+			style={{ left: playheadLeft(fractionOf(sec, scale)) }}
+		>
+			<div
+				className={cn(
+					"absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-white/85",
+					playing
+						? "shadow-[0_0_10px_rgba(255,255,255,0.7)]"
+						: "shadow-[0_0_6px_rgba(255,255,255,0.4)]",
+				)}
+			/>
+			<div className="sticky top-1 left-0 -translate-x-1/2 whitespace-nowrap rounded bg-white px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-zinc-950 shadow-sm">
+				{formatClockSeconds(sec)}
+			</div>
+		</div>
+	);
+}
+
 function TimeBar({
 	scale,
 	startSec,
@@ -467,7 +528,7 @@ function TimeBar({
 	colorFill: string;
 	colorOutline: string;
 }) {
-	const leftPct = ((startSec - scale.startSec) / scale.durationSec) * 100;
+	const leftPct = fractionOf(startSec, scale) * 100;
 	const widthPct = Math.max(((endSec - startSec) / scale.durationSec) * 100, 0.4);
 	return (
 		<button
@@ -487,7 +548,7 @@ function TimeBar({
 					emphasis === "turn" ? "h-4" : "h-2.5",
 				)}
 				style={{
-					left: `${Math.max(leftPct, 0)}%`,
+					left: `${leftPct}%`,
 					width: `${widthPct}%`,
 					background: colorFill,
 					boxShadow: `0 0 0 1px ${colorOutline}`,

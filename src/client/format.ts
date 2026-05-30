@@ -36,6 +36,24 @@ export function formatTimestamp(iso: string): string {
 }
 
 /**
+ * Render a playback offset (in seconds) as a `M:SS.d` clock, e.g. `0:05.3` /
+ * `1:23.7`. Deciseconds are truncated via `floor(sec * 10)` rather than the
+ * naive `sec - floor(sec)` subtraction, which underflows on values like 5.3
+ * (`5.3 - 5 === 0.2999…` → would show `.2`). Negative / non-finite inputs
+ * clamp to `0:00.0`. Shared by the audio clock readout and the trace-tree
+ * playhead pill so they always agree.
+ */
+export function formatClockSeconds(seconds: number): string {
+	const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+	const totalTenths = Math.floor(safe * 10);
+	const minutes = Math.floor(totalTenths / 600);
+	const withinMinute = totalTenths - minutes * 600;
+	const wholeSeconds = Math.floor(withinMinute / 10);
+	const tenths = withinMinute % 10;
+	return `${minutes}:${String(wholeSeconds).padStart(2, "0")}.${tenths}`;
+}
+
+/**
  * Render a duration in ms as `123ms` / `42s` / `2m05s`. `null` means the
  * session/turn has no recorded duration yet — "in progress" reads better
  * than an em-dash or empty cell at the list/header sites that use this.
