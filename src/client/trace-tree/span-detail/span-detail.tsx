@@ -87,7 +87,7 @@ function SpanDetailHeader({ span, onClose }: { span: SpanResponse; onClose: () =
 					</div>
 					<div className="flex items-center gap-2 pl-3.5">
 						<span
-							className="rounded border px-1 font-mono text-[9px] uppercase tracking-[0.18em]"
+							className="inline-flex items-center justify-center rounded border px-1 py-0.5 font-mono text-[9px] uppercase leading-none"
 							style={{ borderColor: palette.barOutline, color: palette.barOutline }}
 						>
 							{vocabShortLabel(span.vocabulary)}
