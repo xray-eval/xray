@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import type { defaultStyles } from "react-json-view-lite";
 import { JsonView } from "react-json-view-lite";
 
@@ -48,14 +49,25 @@ export function JsonTree({
 }
 
 /**
+ * A JSON tree when `raw` parses to an object or array, else `null` so each
+ * caller supplies its own non-JSON fallback. The one place the string→JSON
+ * detection lives — `JsonOrText` and the span attribute renderer share it.
+ */
+export function jsonTreeOrNull(raw: string, expandLevel?: number): ReactElement | null {
+	const parsed = safeParseJson(raw);
+	if (parsed.ok && isJsonContainer(parsed.value)) {
+		return <JsonTree data={parsed.value} expandLevel={expandLevel} />;
+	}
+	return null;
+}
+
+/**
  * Render an opaque JSON string: a pretty tree when it parses to an object or
  * array, the raw text otherwise. Tool args/results and span attribute values
  * arrive as strings that may or may not be JSON.
  */
 export function JsonOrText({ raw, expandLevel }: { raw: string; expandLevel?: number }) {
-	const parsed = safeParseJson(raw);
-	if (parsed.ok && isJsonContainer(parsed.value)) {
-		return <JsonTree data={parsed.value} expandLevel={expandLevel} />;
-	}
-	return <span className="break-all text-foreground/80">{raw}</span>;
+	return (
+		jsonTreeOrNull(raw, expandLevel) ?? <span className="break-all text-foreground/80">{raw}</span>
+	);
 }

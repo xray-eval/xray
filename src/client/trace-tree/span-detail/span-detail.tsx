@@ -7,10 +7,10 @@ import type {
 	SpanResponse,
 	ToolCallResponse,
 } from "@/client/api/api.types.ts";
-import { JsonOrText, JsonTree } from "@/client/components/json-tree.tsx";
+import { JsonOrText, JsonTree, jsonTreeOrNull } from "@/client/components/json-tree.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { formatClockSeconds, formatDurationMs } from "@/client/format.ts";
-import { isJsonContainer, safeParseJson } from "@/client/lib/json.ts";
+import { isJsonContainer } from "@/client/lib/json.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { useSpanSelection } from "../span-selection.tsx";
@@ -315,12 +315,12 @@ function AttributeRow({ entry }: { entry: AttributeEntry }) {
  */
 function AttributeValue({ value }: { value: unknown }) {
 	if (typeof value === "string") {
-		const parsed = safeParseJson(value);
-		if (parsed.ok && isJsonContainer(parsed.value)) return <JsonTree data={parsed.value} />;
 		return (
-			<span className="whitespace-pre-wrap break-words text-emerald-300/90">
-				{value === "" ? '""' : value}
-			</span>
+			jsonTreeOrNull(value) ?? (
+				<span className="whitespace-pre-wrap break-words text-emerald-300/90">
+					{value === "" ? '""' : value}
+				</span>
+			)
 		);
 	}
 	if (typeof value === "number") {
