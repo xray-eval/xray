@@ -39,6 +39,20 @@ export function SpanDetailAside({ replay }: { replay: ReplayDetailResponse }) {
 	return <SpanDetailPanel key={detail.span.span_id} detail={detail} onClose={clear} />;
 }
 
+/**
+ * Callback ref that scrolls the panel into view on mount below the `lg`
+ * breakpoint, where the inspector columns stack and the panel renders far
+ * beneath the trace tree — without this, clicking a span reads as a no-op. On
+ * `lg`+ the panel sits beside the tree, so it stays put. The panel is re-keyed
+ * per selection (see `SpanDetailAside`), so it remounts — and this fires — on
+ * every span click, not just the first.
+ */
+function scrollSpanDetailIntoView(node: HTMLDivElement | null): void {
+	if (node === null) return;
+	if (window.matchMedia("(min-width: 1024px)").matches) return;
+	node.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 export function SpanDetailPanel({
 	detail,
 	onClose,
@@ -48,7 +62,10 @@ export function SpanDetailPanel({
 }) {
 	const palette = vocabPalette(detail.span.vocabulary);
 	return (
-		<Card className="relative gap-0 overflow-hidden p-0 animate-in fade-in-0 duration-300 ease-out lg:absolute lg:inset-0 lg:flex lg:flex-col lg:slide-in-from-right-3">
+		<Card
+			ref={scrollSpanDetailIntoView}
+			className="relative gap-0 overflow-hidden p-0 animate-in fade-in-0 duration-300 ease-out lg:absolute lg:inset-0 lg:flex lg:flex-col lg:slide-in-from-right-3"
+		>
 			<div
 				aria-hidden="true"
 				className="absolute inset-x-0 top-0 z-10 h-px"
