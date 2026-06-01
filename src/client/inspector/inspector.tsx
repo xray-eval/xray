@@ -124,7 +124,10 @@ export function Inspector() {
 						Failed to load replay.
 					</p>
 				))
-				.with({ status: "success" }, (q) => <ReplayBody replay={q.data} />)
+				// Key on the replay id so a replay→replay navigation remounts the
+				// body (fresh span selection, player, zoom) instead of re-rendering
+				// in place and carrying the previous replay's state over.
+				.with({ status: "success" }, (q) => <ReplayBody key={q.data.id} replay={q.data} />)
 				.exhaustive()}
 		</section>
 	);
