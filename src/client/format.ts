@@ -53,6 +53,19 @@ export function formatClockSeconds(seconds: number): string {
 	return `${minutes}:${String(wholeSeconds).padStart(2, "0")}.${tenths}`;
 }
 
+export function formatTimelineTick(seconds: number): string {
+	if (!Number.isFinite(seconds)) return "—";
+	const sign = seconds < 0 ? "-" : "";
+	const safe = Math.abs(seconds);
+	if (safe < 10) return `${sign}${safe.toFixed(2)}s`;
+	const totalTenths = Math.round(safe * 10);
+	const totalWholeSec = Math.floor(totalTenths / 10);
+	const tenth = totalTenths % 10;
+	const minutes = Math.floor(totalWholeSec / 60);
+	const secInMin = totalWholeSec - minutes * 60;
+	return `${sign}${String(minutes).padStart(2, "0")}:${String(secInMin).padStart(2, "0")}.${tenth}`;
+}
+
 /**
  * Render a duration in ms as `123ms` / `42s` / `2m05s`. `null` means the
  * session/turn has no recorded duration yet — "in progress" reads better
@@ -66,4 +79,10 @@ export function formatDuration(ms: number | null): string {
 	const m = Math.floor(secs / 60);
 	const s = secs % 60;
 	return `${m}m${s.toString().padStart(2, "0")}s`;
+}
+
+export function formatDurationMs(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return "—";
+	if (ms < 1_000) return `${Math.round(ms)}ms`;
+	return `${(ms / 1_000).toFixed(2)}s`;
 }

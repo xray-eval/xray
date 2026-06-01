@@ -7,6 +7,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from "react";
 
 import { PlayerProviderMissingError } from "./player-provider.errors.ts";
@@ -111,27 +112,11 @@ export function usePlayer(): PlayerHandle {
 	);
 }
 
-/**
- * Subscribe to the audio playhead position. Returns the latest `{ sec,
- * playing }`, re-rendering only the calling component as playback advances —
- * the position is routed through a ref + listener set, so neither the
- * provider nor unrelated consumers (e.g. trace-tree rows) re-render.
- *
- * Throws `PlayerProviderMissingError` outside a provider — like `usePlayer`,
- * the consumer side treats a missing provider as a programming error.
- */
 export function usePlayhead(): PlayheadState {
 	const ctx = useContext(PlayerContext);
 	if (ctx === null) throw new PlayerProviderMissingError();
 	const { playheadRef, subscribePlayhead } = ctx;
-	const [state, setState] = useState<PlayheadState>(() => playheadRef.current);
-	useEffect(() => {
-		// Sync once on mount in case a position was published between this
-		// component's render and the effect firing, then subscribe for updates.
-		setState(playheadRef.current);
-		return subscribePlayhead(() => setState(playheadRef.current));
-	}, [playheadRef, subscribePlayhead]);
-	return state;
+	return useSyncExternalStore(subscribePlayhead, () => playheadRef.current);
 }
 
 /**

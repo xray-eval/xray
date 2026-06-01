@@ -265,4 +265,23 @@ describe("TracePlayhead", () => {
 		expect(cursor.getAttribute("aria-hidden")).toBe("true");
 		expect(cursor.className).toContain("pointer-events-none");
 	});
+
+	it("brightens the cursor glow while playing and dims it when paused", () => {
+		const publish = renderWithDriver(1);
+		publish({ sec: 3, playing: true });
+		expect(screen.getByTestId("trace-playhead").firstElementChild?.className).toContain(
+			"shadow-[0_0_10px_rgba(255,255,255,0.7)]",
+		);
+
+		publish({ sec: 3, playing: false });
+		expect(screen.getByTestId("trace-playhead").firstElementChild?.className).toContain(
+			"shadow-[0_0_6px_rgba(255,255,255,0.4)]",
+		);
+	});
+
+	it("never paints above the sticky label columns or time ruler", () => {
+		const publish = renderWithDriver(7.6);
+		publish({ sec: 0, playing: false });
+		expect(screen.getByTestId("trace-playhead").className).not.toMatch(/\bz-(20|30|40|50)\b/);
+	});
 });

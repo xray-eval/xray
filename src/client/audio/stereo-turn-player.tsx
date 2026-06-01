@@ -7,7 +7,8 @@ import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js";
 
 import type { ReplayTurnResponse } from "@/client/api/api.types.ts";
 import type { PlayerControls } from "@/client/audio/player-provider.tsx";
-import { usePublishPlayhead, useRegisterPlayer } from "@/client/audio/player-provider.tsx";
+import { useRegisterPlayer } from "@/client/audio/player-provider.tsx";
+import { usePublishWavesurferPlayhead } from "@/client/audio/wavesurfer-playhead.ts";
 import { Badge } from "@/client/components/ui/badge.tsx";
 import { Button } from "@/client/components/ui/button.tsx";
 import { formatClockSeconds } from "@/client/format.ts";
@@ -155,29 +156,7 @@ export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlaye
 	}, [isReady, regions, wavesurfer]);
 
 	useRegisterPlayer(controls);
-
-	// Publish the playback position so the trace tree can render a cursor
-	// synced to the audio. Subscribing to wavesurfer's own clock events
-	// (rather than the hook's `currentTime`) keeps this a genuine
-	// external-system subscription and decoupled from this component's render.
-	const publishPlayhead = usePublishPlayhead();
-	useEffect(() => {
-		if (!wavesurfer) return;
-		const update = () =>
-			publishPlayhead({ sec: wavesurfer.getCurrentTime(), playing: wavesurfer.isPlaying() });
-		const offs = [
-			wavesurfer.on("timeupdate", update),
-			wavesurfer.on("audioprocess", update),
-			wavesurfer.on("seeking", update),
-			wavesurfer.on("interaction", update),
-			wavesurfer.on("play", update),
-			wavesurfer.on("pause", update),
-			wavesurfer.on("finish", update),
-		];
-		return () => {
-			for (const off of offs) off();
-		};
-	}, [wavesurfer, publishPlayhead]);
+	usePublishWavesurferPlayhead(wavesurfer);
 
 	// User clicks on the waveform (not on a turn region) → clear the
 	// trace-tree highlight. The highlight only makes sense while the
