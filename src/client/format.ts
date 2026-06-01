@@ -91,6 +91,8 @@ export function formatDuration(ms: number | null): string {
  */
 export function formatDurationMs(ms: number): string {
 	if (!Number.isFinite(ms) || ms < 0) return "—";
-	if (ms < 1_000) return `${Math.round(ms)}ms`;
+	// Round before the cutoff, else [999.5, 1000) rounds to "1000ms".
+	const rounded = Math.round(ms);
+	if (rounded < 1_000) return `${rounded}ms`;
 	return `${(ms / 1_000).toFixed(2)}s`;
 }

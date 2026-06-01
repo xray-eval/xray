@@ -144,4 +144,9 @@ describe("formatDurationMs", () => {
 		expect(formatDurationMs(-1)).toBe("—");
 		expect(formatDurationMs(Number.NaN)).toBe("—");
 	});
+
+	it("crosses to seconds once rounding reaches the boundary, never showing 1000ms", () => {
+		expect(formatDurationMs(999.4)).toBe("999ms");
+		expect(formatDurationMs(999.5)).toBe("1.00s");
+	});
 });
