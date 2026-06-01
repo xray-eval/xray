@@ -2,7 +2,7 @@ import { HttpResponse, http } from "msw";
 
 import { server } from "@/test-server.ts";
 
-import type { ReplayDetailResponse } from "../api/api.types.ts";
+import type { ConversationResponse, ReplayDetailResponse } from "../api/api.types.ts";
 import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
@@ -52,13 +52,33 @@ function buildReplay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetai
 	};
 }
 
+function buildConversation(hash: string): ConversationResponse {
+	return {
+		hash,
+		name: "Test conversation",
+		created_at: "2026-05-15T10:00:00.000Z",
+		last_run_at: null,
+		turns: [],
+		judges: [],
+		live: false,
+	};
+}
+
+// The Inspector fetches the replay and then its conversation (for the
+// breadcrumb label), so both endpoints must be mocked or MSW's
+// onUnhandledRequest: "error" fires on the conversation request.
 function mockReplay(replay: ReplayDetailResponse) {
-	server.use(http.get(`http://localhost/v1/replays/${replay.id}`, () => HttpResponse.json(replay)));
+	server.use(
+		http.get(`http://localhost/v1/replays/${replay.id}`, () => HttpResponse.json(replay)),
+		http.get(`http://localhost/v1/conversations/${replay.conversation_hash}`, () =>
+			HttpResponse.json(buildConversation(replay.conversation_hash)),
+		),
+	);
 }
 
 describe("Inspector empty states", () => {
-	it("renders the @xray.trace copy when the replay has no spans", async () => {
-		mockReplay(buildReplay({ spans: [] }));
+	it("renders the @xray.trace copy when the replay has no spans or turns", async () => {
+		mockReplay(buildReplay({ spans: [], turns: [] }));
 		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
 		render(ui);
 
