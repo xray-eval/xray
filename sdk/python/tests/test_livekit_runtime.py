@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from xray import Conversation, Turn
+from xray import Conversation, SimulatedSipCall, Turn
 from xray.conversation import RecordedAudio, TtsAudio
 from xray.errors import AgentNotJoinedError, RuntimeBindError
 from xray.runtime.livekit import (
@@ -235,6 +235,36 @@ def test_bind_required_before_run():
     with pytest.raises(RuntimeBindError) as exc:
         asyncio.run(rt.run(conv))
     assert exc.value.failure_reason == "driver_aborted"
+
+
+def test_runtime_threads_simulated_sip_into_minted_token():
+    """A LiveKitRuntime built with ``simulated_sip`` mints its JWT with
+    ``kind=sip`` and the sip.* attributes — proving the field actually reaches
+    ``mint_user_token`` rather than being silently dropped in the wiring."""
+    token = MagicMock(name="AccessToken")
+    token.with_identity.return_value = token
+    token.with_grants.return_value = token
+    token.with_kind.return_value = token
+    token.with_attributes.return_value = token
+    token.to_jwt.return_value = "fake-jwt"
+    api = MagicMock(name="lk_api")
+    api.AccessToken = MagicMock(return_value=token)
+    api.VideoGrants = MagicMock()
+
+    rt = LiveKitRuntime(
+        url="wss://fake",
+        api_key="ak",
+        api_secret="sk",
+        room="room-1",
+        simulated_sip=SimulatedSipCall(caller_phone="+15551234567"),
+    )
+    rt.bind(replay_id="rep-1", conversation_hash="a" * 64)
+    jwt = rt._mint_token(api)
+
+    assert jwt == "fake-jwt"
+    token.with_kind.assert_called_once_with("sip")
+    attrs = token.with_attributes.call_args.args[0]
+    assert attrs["sip.phoneNumber"] == "+15551234567"
 
 
 def test_upsample_2x_doubles_sample_count():

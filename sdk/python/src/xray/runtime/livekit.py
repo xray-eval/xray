@@ -67,6 +67,7 @@ from xray.runtime._livekit_types import (
     OpenAiTtsFn,
 )
 from xray.runtime.base import Runtime, RuntimeResult
+from xray.runtime.sip import SimulatedSipCall
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,10 @@ class LiveKitRuntime(Runtime):
     agent_turn_timeout_s: float = 30.0
     cache_root: Path = field(default_factory=lambda: Path.home() / ".cache" / "xray-py")
     mixdown_dir: Path | None = None
+    # When set, the driver joins as ``ParticipantKind.SIP`` and carries the
+    # configured ``sip.*`` attributes — letting a scripted replay exercise
+    # the agent's production SIP code path without a bypass branch.
+    simulated_sip: SimulatedSipCall | None = None
 
     # Injection points for tests. None ⇒ load the real packages.
     _lk_rtc: LkRtcModule | None = None
@@ -532,6 +537,7 @@ class LiveKitRuntime(Runtime):
             identity=self.identity,
             replay_id=self.replay_id,
             conversation_hash=self.conversation_hash,
+            simulated_sip=self.simulated_sip,
         )
 
     def _load_livekit(self) -> tuple[LkRtcModule, LkApiModule]:
@@ -581,14 +587,27 @@ def mint_user_token(
     identity: str,
     replay_id: str,
     conversation_hash: str,
+    simulated_sip: SimulatedSipCall | None = None,
 ) -> str:
     """Mint the user-side driver JWT carrying the ``xray`` token-claim
     attribute (the agent reads it via ``participant.attributes`` to bind the
-    replay context). Shared by the scripted and live runtimes."""
+    replay context). Shared by the scripted and live runtimes.
+
+    When ``simulated_sip`` is provided the token additionally declares
+    ``kind=sip`` plus the ``sip.*`` attributes — see
+    :class:`xray.runtime.sip.SimulatedSipCall`.
+    """
     attributes = encode_attribute(replay_id=replay_id, conversation_hash=conversation_hash)
+    if simulated_sip is not None:
+        # sip.* keys never overlap "xray", and SimulatedSipCall rejects an
+        # "xray" key in extra_attrs at construction — so this merge provably
+        # cannot clobber the replay-binding attribute.
+        attributes = {**attributes, **simulated_sip.to_attributes()}
     builder = lk_api.AccessToken(api_key, api_secret)
     builder = builder.with_identity(identity)
     builder = builder.with_grants(lk_api.VideoGrants(room_join=True, room=room))
+    if simulated_sip is not None:
+        builder = builder.with_kind("sip")
     builder = builder.with_attributes(attributes)
     return builder.to_jwt()
 

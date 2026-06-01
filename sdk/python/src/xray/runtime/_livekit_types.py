@@ -14,7 +14,12 @@ foreign types — we Protocol-type them.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
+
+# LiveKit's ParticipantKind picklist (livekit-api access_token.py). Mirrored
+# here so the Protocol's ``with_kind`` stays type-checked without importing
+# from the optional ``livekit`` package at module scope.
+LkParticipantKind = Literal["standard", "egress", "ingress", "sip", "agent"]
 
 # ─── Runtime objects (instances) ──────────────────────────────────────
 
@@ -127,6 +132,7 @@ class LkAccessToken(Protocol):
     def with_identity(self, identity: str) -> LkAccessToken: ...
     def with_grants(self, grants: LkVideoGrants) -> LkAccessToken: ...
     def with_attributes(self, attributes: dict[str, str]) -> LkAccessToken: ...
+    def with_kind(self, kind: LkParticipantKind) -> LkAccessToken: ...
     def to_jwt(self) -> str: ...
 
 
@@ -159,6 +165,7 @@ __all__ = [
     "LkAudioStreamEvent",
     "LkLocalParticipant",
     "LkParticipant",
+    "LkParticipantKind",
     "LkRoom",
     "LkRoomOptions",
     "LkRtcModule",
