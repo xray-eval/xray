@@ -1,7 +1,7 @@
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useState } from "react";
-import type { StyleProps } from "react-json-view-lite";
+import type { defaultStyles } from "react-json-view-lite";
 import { JsonView } from "react-json-view-lite";
 import { match } from "ts-pattern";
 
@@ -167,8 +167,8 @@ function AudioSection({ replay }: { replay: ReplayDetailResponse }) {
 			<StereoTurnPlayer audioUrl={replayAudioUrl(replay.id)} turns={replay.turns} />
 			{replay.turns.length === 0 && (
 				<p className="text-xs text-muted-foreground">
-					Audio uploaded. Server-side VAD analysis hasn't published turns yet. They'll appear on
-					the waveform once analysis completes.
+					Audio uploaded. Server-side VAD analysis hasn't published turns yet. They'll appear on the
+					waveform once analysis completes.
 				</p>
 			)}
 		</div>
@@ -411,7 +411,9 @@ function isJsonContainer(value: unknown): value is object {
  * tokens so we don't have to import the library's bundled CSS (the package
  * ships hashed class names that would collide with our design system).
  */
-const JSON_VIEW_STYLE: StyleProps = {
+// react-json-view-lite@2.5.0 imports StyleProps internally but doesn't
+// re-export it; recover the type from the typed `defaultStyles` export.
+const JSON_VIEW_STYLE: typeof defaultStyles = {
 	container: "font-mono text-[11px] leading-relaxed text-foreground/90",
 	basicChildStyle: "ml-3",
 	label: "mr-1.5 text-sky-400",
