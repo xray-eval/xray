@@ -14,10 +14,14 @@ export function spanDurationMs(startedAt: string, endedAt: string): number {
 	return Number.isFinite(ms) && ms >= 0 ? ms : 0;
 }
 
-/** Seconds from replay start to `iso`, the offset the waveform/playhead use. */
+/**
+ * Seconds from replay start to `iso`, the offset the waveform/playhead use.
+ * Clamped to 0: a span timestamped before the recording's t=0 has no place on
+ * a waveform that starts at 0, same as `spanDurationMs`.
+ */
 export function offsetSec(iso: string, replayStartIso: string): number {
 	const sec = (Date.parse(iso) - Date.parse(replayStartIso)) / 1_000;
-	return Number.isFinite(sec) ? sec : 0;
+	return Number.isFinite(sec) && sec >= 0 ? sec : 0;
 }
 
 /**

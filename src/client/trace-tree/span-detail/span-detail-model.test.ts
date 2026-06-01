@@ -77,6 +77,10 @@ describe("offsetSec", () => {
 	it("returns 0 for unparseable input", () => {
 		expect(offsetSec("nope", REPLAY_START)).toBe(0);
 	});
+
+	it("clamps a span that starts before replay start to 0", () => {
+		expect(offsetSec("2026-05-25T09:59:59.000Z", REPLAY_START)).toBe(0);
+	});
 });
 
 describe("parseSpanAttributes", () => {
