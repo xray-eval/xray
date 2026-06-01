@@ -2,6 +2,7 @@ import { HttpResponse, http } from "msw";
 
 import { server } from "@/test-server.ts";
 
+import type { ConversationResponse, ConversationTurn } from "../api/api.types.ts";
 import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
@@ -15,18 +16,29 @@ afterEach(() => cleanup());
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 
-function mockConversation(hash: string, turns: object[], name: string) {
-	server.use(
-		http.get(`http://localhost/v1/conversations/${hash}`, () =>
-			HttpResponse.json({
-				hash,
-				name,
-				created_at: "2026-05-15T00:00:00.000Z",
-				last_run_at: "2026-05-15T00:00:00.000Z",
-				turns,
-			}),
-		),
-	);
+function buildTurn(turn: Pick<ConversationTurn, "role" | "key" | "text">): ConversationTurn {
+	return { ...turn, assertions: [] };
+}
+
+function buildConversation(
+	overrides: Pick<ConversationResponse, "hash" | "name" | "turns">,
+): ConversationResponse {
+	return {
+		created_at: "2026-05-15T00:00:00.000Z",
+		last_run_at: "2026-05-15T00:00:00.000Z",
+		judges: [],
+		live: false,
+		...overrides,
+	};
+}
+
+function mockConversation(
+	hash: string,
+	turns: readonly Pick<ConversationTurn, "role" | "key" | "text">[],
+	name: string,
+) {
+	const body = buildConversation({ hash, name, turns: turns.map(buildTurn) });
+	server.use(http.get(`http://localhost/v1/conversations/${hash}`, () => HttpResponse.json(body)));
 }
 
 describe("parseConversationHashes", () => {
@@ -47,26 +59,22 @@ describe("parseConversationHashes", () => {
 describe("alignTurnsByKey", () => {
 	it("aligns turns with matching keys into one row each, marking matched=true", () => {
 		const rows = alignTurnsByKey([
-			{
+			buildConversation({
 				hash: HASH_A,
 				name: "A",
-				created_at: "2026-05-15T00:00:00.000Z",
-				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns: [
-					{ role: "user", key: "greet", text: "hi" },
-					{ role: "agent", key: "respond", text: "hello" },
+					buildTurn({ role: "user", key: "greet", text: "hi" }),
+					buildTurn({ role: "agent", key: "respond", text: "hello" }),
 				],
-			},
-			{
+			}),
+			buildConversation({
 				hash: HASH_B,
 				name: "B",
-				created_at: "2026-05-15T00:00:00.000Z",
-				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns: [
-					{ role: "user", key: "greet", text: "yo" },
-					{ role: "agent", key: "respond", text: "hi back" },
+					buildTurn({ role: "user", key: "greet", text: "yo" }),
+					buildTurn({ role: "agent", key: "respond", text: "hi back" }),
 				],
-			},
+			}),
 		]);
 		expect(rows.map((r) => r.key)).toEqual(["greet", "respond"]);
 		expect(rows[0]?.matched).toBe(true);
@@ -75,26 +83,22 @@ describe("alignTurnsByKey", () => {
 
 	it("emits a row for every distinct key; unmatched cells are undefined", () => {
 		const rows = alignTurnsByKey([
-			{
+			buildConversation({
 				hash: HASH_A,
 				name: "A",
-				created_at: "2026-05-15T00:00:00.000Z",
-				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns: [
-					{ role: "user", key: "greet", text: "hi" },
-					{ role: "agent", key: "only-a", text: "alone" },
+					buildTurn({ role: "user", key: "greet", text: "hi" }),
+					buildTurn({ role: "agent", key: "only-a", text: "alone" }),
 				],
-			},
-			{
+			}),
+			buildConversation({
 				hash: HASH_B,
 				name: "B",
-				created_at: "2026-05-15T00:00:00.000Z",
-				last_run_at: "2026-05-15T00:00:00.000Z",
 				turns: [
-					{ role: "user", key: "greet", text: "yo" },
-					{ role: "agent", key: "only-b", text: "alone" },
+					buildTurn({ role: "user", key: "greet", text: "yo" }),
+					buildTurn({ role: "agent", key: "only-b", text: "alone" }),
 				],
-			},
+			}),
 		]);
 		expect(rows.map((r) => r.key)).toEqual(["greet", "only-a", "only-b"]);
 		const onlyA = rows.find((r) => r.key === "only-a");
