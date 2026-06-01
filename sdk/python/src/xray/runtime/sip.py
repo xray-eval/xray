@@ -66,7 +66,11 @@ class SimulatedSipCall:
                 f"agent reads to attribute its spans. Use the sip.* fields for SIP "
                 f"attributes; never override the xray binding."
             )
-        if not self._has_any():
+        # to_attributes() is the single source of truth for which fields
+        # produce output — checking it here keeps the field list in one place,
+        # so a future eighth field can't be added to one spot and forgotten in
+        # the other.
+        if not self.to_attributes():
             raise ValueError(
                 "SimulatedSipCall requires at least one attribute. "
                 "Pass simulated_sip=None for a non-SIP run."
@@ -76,23 +80,6 @@ class SimulatedSipCall:
         # reserved-key guard above and clobber the binding at mint time. Freeze
         # a copy so the guard can't be bypassed after construction.
         object.__setattr__(self, "extra_attrs", MappingProxyType(dict(self.extra_attrs)))
-
-    def _has_any(self) -> bool:
-        return (
-            any(
-                v is not None
-                for v in (
-                    self.caller_phone,
-                    self.trunk_phone,
-                    self.call_id,
-                    self.call_id_full,
-                    self.call_status,
-                    self.rule_id,
-                    self.trunk_id,
-                )
-            )
-            or len(self.extra_attrs) > 0
-        )
 
     def to_attributes(self) -> dict[str, str]:
         attrs: dict[str, str] = {}

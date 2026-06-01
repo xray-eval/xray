@@ -124,6 +124,27 @@ class LiveKitLiveRuntime(Runtime):
         if self._stop_event is not None:
             self._stop_event.set()
 
+    def _mint_token(self, lk_api: LkApiModule) -> str:
+        """JWT for the user-side driver, carrying the ``xray`` replay-context
+        attribute (and ``sip.*`` + ``kind=sip`` when ``simulated_sip`` is set).
+        A seam mirroring :meth:`LiveKitRuntime._mint_token` so the
+        ``simulated_sip`` wiring is unit-testable without driving ``run``."""
+        if self.replay_id is None or self.conversation_hash is None:
+            raise RuntimeBindError(
+                "LiveKitLiveRuntime: bind(replay_id=..., conversation_hash=...) "
+                "must be called before token minting."
+            )
+        return mint_user_token(
+            lk_api,
+            api_key=self.api_key,
+            api_secret=self.api_secret,
+            room=self.room,
+            identity=self.identity,
+            replay_id=self.replay_id,
+            conversation_hash=self.conversation_hash,
+            simulated_sip=self.simulated_sip,
+        )
+
     @override
     async def run(self, conversation: Conversation) -> RuntimeResult:
         if self.replay_id is None or self.conversation_hash is None:
@@ -135,16 +156,7 @@ class LiveKitLiveRuntime(Runtime):
         self._stop_event = stop_event
 
         lk_rtc, lk_api = load_livekit_modules(self._lk_rtc, self._lk_api)
-        token = mint_user_token(
-            lk_api,
-            api_key=self.api_key,
-            api_secret=self.api_secret,
-            room=self.room,
-            identity=self.identity,
-            replay_id=self.replay_id,
-            conversation_hash=self.conversation_hash,
-            simulated_sip=self.simulated_sip,
-        )
+        token = self._mint_token(lk_api)
 
         room = lk_rtc.Room()
         agent_joined = asyncio.Event()
