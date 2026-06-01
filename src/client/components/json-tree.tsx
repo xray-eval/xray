@@ -1,4 +1,4 @@
-import type { StyleProps } from "react-json-view-lite";
+import type { defaultStyles } from "react-json-view-lite";
 import { JsonView } from "react-json-view-lite";
 
 import { isJsonContainer, safeParseJson } from "@/client/lib/json.ts";
@@ -8,7 +8,9 @@ import { isJsonContainer, safeParseJson } from "@/client/lib/json.ts";
  * tokens so we don't have to import the library's bundled CSS (the package
  * ships hashed class names that would collide with our design system).
  */
-const JSON_VIEW_STYLE: StyleProps = {
+// react-json-view-lite@2.5.0 imports StyleProps internally but doesn't
+// re-export it; recover the type from the typed `defaultStyles` export.
+const JSON_VIEW_STYLE: typeof defaultStyles = {
 	container: "font-mono text-[11px] leading-relaxed text-foreground/90",
 	basicChildStyle: "ml-3",
 	label: "mr-1.5 text-sky-400",
@@ -29,7 +31,13 @@ const JSON_VIEW_STYLE: StyleProps = {
 };
 
 /** Syntax-styled JSON tree. `expandLevel` nodes are open on first render. */
-export function JsonTree({ data, expandLevel = 1 }: { data: object; expandLevel?: number }) {
+export function JsonTree({
+	data,
+	expandLevel = 1,
+}: {
+	data: object;
+	expandLevel?: number | undefined;
+}) {
 	return (
 		<JsonView
 			data={data}
