@@ -30,11 +30,11 @@ import type {
  */
 const BASE = ""; // Same-origin: the SPA is served by the same Bun process.
 
-async function getJson<T>(
+async function getJson<TSchema extends v.GenericSchema>(
 	path: string,
-	schema: v.GenericSchema<T>,
+	schema: TSchema,
 	signal?: AbortSignal,
-): Promise<T> {
+): Promise<v.InferOutput<TSchema>> {
 	const init: RequestInit = signal === undefined ? {} : { signal };
 	const res = await fetch(`${BASE}${path}`, init);
 	if (!res.ok) throw new ApiRequestFailedError("GET", path, res.status, res.statusText);
@@ -46,12 +46,12 @@ async function getJson<T>(
 	return parsed.output;
 }
 
-async function postJson<T>(
+async function postJson<TSchema extends v.GenericSchema>(
 	path: string,
 	body: unknown,
-	schema: v.GenericSchema<T>,
+	schema: TSchema,
 	signal?: AbortSignal,
-): Promise<T> {
+): Promise<v.InferOutput<TSchema>> {
 	const init: RequestInit = {
 		method: "POST",
 		headers: { "content-type": "application/json" },
