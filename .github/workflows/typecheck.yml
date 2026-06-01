@@ -1,0 +1,72 @@
+# TypeScript typecheck gate — `tsc --noEmit` over the whole project.
+#
+# lefthook.yml runs this in pre-commit, but a `git commit --no-verify` or a
+# fork PR whose author never installed the hook can still push type drift.
+# This workflow is the CI backstop the pre-commit hook can't be: types are
+# checked on every PR and every push to main. Local equivalent: `pnpm typecheck`.
+#
+# No Setup-Bun step (unlike test.yml / build.yml): `tsc` is a Node tool, and
+# the `bun` ambient types (tsconfig `types: ["bun"]`) come from the `@types/bun`
+# dev dependency in node_modules after `pnpm install` — not from the Bun binary.
+
+name: Typecheck
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: tsc --noEmit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5  # v2.19.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node (pinned via .nvmrc)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: '.nvmrc'
+
+      # Corepack must run AFTER setup-node — same reasoning as test.yml: current
+      # pnpm (11.x) needs Node ≥22.13, newer than the runner's pre-installed Node.
+      - name: Activate the pinned pnpm version via corepack
+        run: |
+          corepack enable
+          corepack prepare --activate
+          pnpm --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
