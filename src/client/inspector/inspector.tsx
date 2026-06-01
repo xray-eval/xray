@@ -1,12 +1,11 @@
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useState } from "react";
-import type { defaultStyles } from "react-json-view-lite";
-import { JsonView } from "react-json-view-lite";
 import { match } from "ts-pattern";
 
 import { BackLink } from "@/client/components/back-link.tsx";
 import { Breadcrumbs } from "@/client/components/breadcrumbs.tsx";
+import { JsonOrText, JsonTree } from "@/client/components/json-tree.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import {
@@ -19,7 +18,10 @@ import {
 	TableRow,
 } from "@/client/components/ui/table.tsx";
 import { shortHash } from "@/client/format.ts";
+import { isJsonContainer } from "@/client/lib/json.ts";
 import { cn } from "@/client/lib/utils.ts";
+import { SpanDetailAside } from "@/client/trace-tree/span-detail/span-detail.tsx";
+import { SpanSelectionProvider } from "@/client/trace-tree/span-selection.tsx";
 import { TraceTree, ZoomControls } from "@/client/trace-tree/trace-tree.tsx";
 
 import { getConversation, getReplay, replayAudioUrl } from "../api/api.ts";
@@ -122,7 +124,10 @@ export function Inspector() {
 						Failed to load replay.
 					</p>
 				))
-				.with({ status: "success" }, (q) => <ReplayBody replay={q.data} />)
+				// Key on the replay id so a replay→replay navigation remounts the
+				// body (fresh span selection, player, zoom) instead of re-rendering
+				// in place and carrying the previous replay's state over.
+				.with({ status: "success" }, (q) => <ReplayBody key={q.data.id} replay={q.data} />)
 				.exhaustive()}
 		</section>
 	);
@@ -131,15 +136,22 @@ export function Inspector() {
 function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<PlayerProvider>
-			<div className="grid gap-6 lg:grid-cols-3">
-				<div className="grid gap-6 lg:col-span-2">
-					<AudioSection replay={replay} />
-					<TraceCard replay={replay} />
+			<SpanSelectionProvider>
+				<div className="grid gap-6 lg:grid-cols-3">
+					<div className="lg:col-span-2 lg:col-start-1 lg:row-start-1">
+						<AudioSection replay={replay} />
+					</div>
+					<div className="lg:col-span-2 lg:col-start-1 lg:row-start-2">
+						<TraceCard replay={replay} />
+					</div>
+					<div className="relative lg:col-start-3 lg:row-start-1">
+						<RunDetailsCard replay={replay} />
+					</div>
+					<aside className="relative lg:col-start-3 lg:row-start-2">
+						<SpanDetailAside replay={replay} />
+					</aside>
 				</div>
-				<aside className="grid gap-6">
-					<RunDetailsCard replay={replay} />
-				</aside>
-			</div>
+			</SpanSelectionProvider>
 		</PlayerProvider>
 	);
 }
@@ -211,13 +223,13 @@ function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
 	const hasConfig = replay.run_config !== null && replay.run_config !== undefined;
 	if (!hasUsage && !hasTools && !hasConfig) return null;
 	return (
-		<Card className="gap-0 overflow-hidden p-0">
-			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
+		<Card className="gap-0 overflow-hidden p-0 lg:absolute lg:inset-0 lg:flex lg:flex-col">
+			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4 lg:shrink-0">
 				<CardTitle className="text-base font-semibold tracking-tight text-foreground">
 					Run details
 				</CardTitle>
 			</CardHeader>
-			<CardContent className="divide-y divide-border/50 p-0">
+			<CardContent className="scroll-panel divide-y divide-border/50 p-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
 				{hasUsage && <ModelUsageSection usage={replay.model_usage} />}
 				{hasTools && <ToolCallsSection toolCalls={replay.tool_calls} />}
 				{hasConfig && <RunConfigSection runConfig={replay.run_config} />}
@@ -349,36 +361,14 @@ function ToolCallsSection({ toolCalls }: { toolCalls: ToolCallResponse[] }) {
 }
 
 function ToolCallJsonField({ label, raw }: { label: string; raw: string }) {
-	const parsed = safeParseJson(raw);
-	if (parsed.ok && isJsonContainer(parsed.value)) {
-		return (
-			<div className="flex gap-2">
-				<dt className="shrink-0 text-muted-foreground/60">{label}</dt>
-				<dd className="min-w-0 flex-1 overflow-auto">
-					<JsonView
-						data={parsed.value}
-						style={JSON_VIEW_STYLE}
-						shouldExpandNode={(level) => level < 1}
-					/>
-				</dd>
-			</div>
-		);
-	}
 	return (
 		<div className="flex gap-2">
 			<dt className="shrink-0 text-muted-foreground/60">{label}</dt>
-			<dd className="min-w-0 truncate text-foreground/80">{raw}</dd>
+			<dd className="min-w-0 flex-1 overflow-auto">
+				<JsonOrText raw={raw} />
+			</dd>
 		</div>
 	);
-}
-
-function safeParseJson(raw: string): { ok: true; value: unknown } | { ok: false } {
-	try {
-		const value: unknown = JSON.parse(raw);
-		return { ok: true, value };
-	} catch {
-		return { ok: false };
-	}
 }
 
 function RunConfigSection({ runConfig }: { runConfig: unknown }) {
@@ -387,11 +377,7 @@ function RunConfigSection({ runConfig }: { runConfig: unknown }) {
 			<SectionHeader label="Run config" />
 			{isJsonContainer(runConfig) ? (
 				<div className="max-h-64 overflow-auto rounded-md border border-border/40 bg-muted/30 p-3">
-					<JsonView
-						data={runConfig}
-						style={JSON_VIEW_STYLE}
-						shouldExpandNode={(level) => level < 2}
-					/>
+					<JsonTree data={runConfig} expandLevel={2} />
 				</div>
 			) : (
 				<pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/40 bg-muted/30 p-3 font-mono text-[11px] leading-relaxed text-foreground/90">
@@ -401,34 +387,3 @@ function RunConfigSection({ runConfig }: { runConfig: unknown }) {
 		</section>
 	);
 }
-
-function isJsonContainer(value: unknown): value is object {
-	return typeof value === "object" && value !== null;
-}
-
-/**
- * Style props for `react-json-view-lite`. Built entirely with our Tailwind
- * tokens so we don't have to import the library's bundled CSS (the package
- * ships hashed class names that would collide with our design system).
- */
-// react-json-view-lite@2.5.0 imports StyleProps internally but doesn't
-// re-export it; recover the type from the typed `defaultStyles` export.
-const JSON_VIEW_STYLE: typeof defaultStyles = {
-	container: "font-mono text-[11px] leading-relaxed text-foreground/90",
-	basicChildStyle: "ml-3",
-	label: "mr-1.5 text-sky-400",
-	clickableLabel: "mr-1.5 cursor-pointer text-sky-400",
-	nullValue: "text-destructive",
-	undefinedValue: "text-destructive",
-	numberValue: "text-orange-400",
-	stringValue: "text-emerald-400",
-	booleanValue: "text-orange-400",
-	otherValue: "text-foreground",
-	punctuation: "mr-1 text-muted-foreground/60",
-	expandIcon: "mr-1 inline-block w-3 select-none text-muted-foreground before:content-['▸']",
-	collapseIcon: "mr-1 inline-block w-3 select-none text-muted-foreground before:content-['▾']",
-	collapsedContent: "mx-1 text-muted-foreground/60 before:content-['…']",
-	childFieldsContainer: "ml-1 border-l border-border/30 pl-2",
-	ariaLables: { collapseJson: "Collapse", expandJson: "Expand" },
-	stringifyStringValues: false,
-};

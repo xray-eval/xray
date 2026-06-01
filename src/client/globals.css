@@ -145,3 +145,26 @@
 		font-feature-settings: "ss01", "cv11";
 	}
 }
+
+@utility scroll-panel {
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in oklch, var(--color-muted-foreground) 45%, transparent) transparent;
+
+	&::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+	&::-webkit-scrollbar-track {
+		background: color-mix(in oklch, var(--color-muted-foreground) 8%, transparent);
+		border-radius: 9999px;
+	}
+	&::-webkit-scrollbar-thumb {
+		border-radius: 9999px;
+		border: 2px solid transparent;
+		background-clip: padding-box;
+		background-color: color-mix(in oklch, var(--color-muted-foreground) 45%, transparent);
+	}
+	&::-webkit-scrollbar-thumb:hover {
+		background-color: color-mix(in oklch, var(--color-muted-foreground) 70%, transparent);
+	}
+}
