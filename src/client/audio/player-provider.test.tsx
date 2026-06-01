@@ -1,11 +1,17 @@
 import { registerHappyDom } from "../test-happy-dom.ts";
 import { PlayerProviderMissingError } from "./player-provider.errors.ts";
-import type { PlayerControls } from "./player-provider.tsx";
-import { PlayerProvider, usePlayer, useRegisterPlayer } from "./player-provider.tsx";
+import type { PlayerControls, PlayheadState } from "./player-provider.tsx";
+import {
+	PlayerProvider,
+	usePlayer,
+	usePlayhead,
+	usePublishPlayhead,
+	useRegisterPlayer,
+} from "./player-provider.tsx";
 import { describe, expect, it } from "bun:test";
 
 registerHappyDom();
-const { act, cleanup, renderHook } = await import("@testing-library/react");
+const { act, cleanup, render, renderHook, screen } = await import("@testing-library/react");
 const { afterEach } = await import("bun:test");
 
 afterEach(() => cleanup());
@@ -74,5 +80,72 @@ describe("usePlayer", () => {
 		expect(result.current.isReady).toBe(true);
 		rerender({ active: false });
 		expect(result.current.isReady).toBe(false);
+	});
+});
+
+describe("usePlayhead / usePublishPlayhead", () => {
+	it("throws PlayerProviderMissingError when usePlayhead is called outside the provider", () => {
+		expect(() => renderHook(() => usePlayhead())).toThrow(PlayerProviderMissingError);
+	});
+
+	it("starts at sec=0 / playing=false before anything is published", () => {
+		const { result } = renderHook(() => usePlayhead(), { wrapper });
+		expect(result.current).toEqual({ sec: 0, playing: false });
+	});
+
+	it("reflects the latest published playhead value", () => {
+		const { result } = renderHook(
+			() => ({ publish: usePublishPlayhead(), playhead: usePlayhead() }),
+			{ wrapper },
+		);
+		expect(result.current.playhead).toEqual({ sec: 0, playing: false });
+
+		act(() => {
+			result.current.publish({ sec: 1.5, playing: true });
+		});
+		expect(result.current.playhead).toEqual({ sec: 1.5, playing: true });
+
+		act(() => {
+			result.current.publish({ sec: 4.25, playing: false });
+		});
+		expect(result.current.playhead).toEqual({ sec: 4.25, playing: false });
+	});
+
+	it("publishing is a no-op (no throw) when called outside a provider", () => {
+		const { result } = renderHook(() => usePublishPlayhead());
+		expect(() => result.current({ sec: 2, playing: true })).not.toThrow();
+	});
+
+	it("stops updating a consumer once it unmounts, without affecting siblings", () => {
+		let publish: (state: PlayheadState) => void = () => undefined;
+		function Publisher() {
+			publish = usePublishPlayhead();
+			return null;
+		}
+		function Readout({ id }: { id: string }) {
+			const { sec } = usePlayhead();
+			return <span data-testid={id}>{sec}</span>;
+		}
+		function Tree({ showB }: { showB: boolean }) {
+			return (
+				<PlayerProvider>
+					<Publisher />
+					<Readout id="a" />
+					{showB && <Readout id="b" />}
+				</PlayerProvider>
+			);
+		}
+		const { rerender } = render(<Tree showB={true} />);
+		act(() => publish({ sec: 1, playing: true }));
+		expect(screen.getByTestId("a").textContent).toBe("1");
+		expect(screen.getByTestId("b").textContent).toBe("1");
+
+		rerender(<Tree showB={false} />);
+		expect(screen.queryByTestId("b")).toBeNull();
+
+		// The unmounted consumer's listener must have been cleaned up: publishing
+		// again updates the surviving consumer and never touches the gone one.
+		act(() => publish({ sec: 2, playing: false }));
+		expect(screen.getByTestId("a").textContent).toBe("2");
 	});
 });

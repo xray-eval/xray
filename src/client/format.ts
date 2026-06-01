@@ -36,6 +36,37 @@ export function formatTimestamp(iso: string): string {
 }
 
 /**
+ * Render a playback offset (in seconds) as a `M:SS.d` clock, e.g. `0:05.3` /
+ * `1:23.7`. Deciseconds are truncated via `floor(sec * 10)` rather than the
+ * naive `sec - floor(sec)` subtraction, which underflows on values like 5.3
+ * (`5.3 - 5 === 0.2999…` → would show `.2`). Negative / non-finite inputs
+ * clamp to `0:00.0`. Shared by the audio clock readout and the trace-tree
+ * playhead pill so they always agree.
+ */
+export function formatClockSeconds(seconds: number): string {
+	const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+	const totalTenths = Math.floor(safe * 10);
+	const minutes = Math.floor(totalTenths / 600);
+	const withinMinute = totalTenths - minutes * 600;
+	const wholeSeconds = Math.floor(withinMinute / 10);
+	const tenths = withinMinute % 10;
+	return `${minutes}:${String(wholeSeconds).padStart(2, "0")}.${tenths}`;
+}
+
+export function formatTimelineTick(seconds: number): string {
+	if (!Number.isFinite(seconds)) return "—";
+	const sign = seconds < 0 ? "-" : "";
+	const safe = Math.abs(seconds);
+	if (safe < 10) return `${sign}${safe.toFixed(2)}s`;
+	const totalTenths = Math.round(safe * 10);
+	const totalWholeSec = Math.floor(totalTenths / 10);
+	const tenth = totalTenths % 10;
+	const minutes = Math.floor(totalWholeSec / 60);
+	const secInMin = totalWholeSec - minutes * 60;
+	return `${sign}${String(minutes).padStart(2, "0")}:${String(secInMin).padStart(2, "0")}.${tenth}`;
+}
+
+/**
  * Render a duration in ms as `123ms` / `42s` / `2m05s`. `null` means the
  * session/turn has no recorded duration yet — "in progress" reads better
  * than an em-dash or empty cell at the list/header sites that use this.
@@ -48,4 +79,10 @@ export function formatDuration(ms: number | null): string {
 	const m = Math.floor(secs / 60);
 	const s = secs % 60;
 	return `${m}m${s.toString().padStart(2, "0")}s`;
+}
+
+export function formatDurationMs(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return "—";
+	if (ms < 1_000) return `${Math.round(ms)}ms`;
+	return `${(ms / 1_000).toFixed(2)}s`;
 }

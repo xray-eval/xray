@@ -1,9 +1,14 @@
 import type { ReplayTurnResponse, SpanResponse } from "@/client/api/api.types.ts";
-import type { PlayerControls } from "@/client/audio/player-provider.tsx";
-import { PlayerProvider, useRegisterPlayer } from "@/client/audio/player-provider.tsx";
+import type { PlayerControls, PlayheadState } from "@/client/audio/player-provider.tsx";
+import {
+	PlayerProvider,
+	usePublishPlayhead,
+	useRegisterPlayer,
+} from "@/client/audio/player-provider.tsx";
 
 import { registerHappyDom } from "../test-happy-dom.ts";
-import { TraceTree } from "./trace-tree.tsx";
+import { fractionOf, playheadLeft, TraceTree } from "./trace-tree.tsx";
+import type { TraceScale } from "./trace-tree.types.ts";
 import { describe, expect, it } from "bun:test";
 
 registerHappyDom();
@@ -171,5 +176,112 @@ describe("TraceTree", () => {
 			</PlayerProvider>,
 		);
 		expect(screen.getByText(/Span \/ call/i)).toBeTruthy();
+	});
+});
+
+describe("fractionOf", () => {
+	const scale: TraceScale = { startSec: 0, endSec: 10, durationSec: 10 };
+
+	it("maps start/mid/end to 0 / 0.5 / 1", () => {
+		expect(fractionOf(0, scale)).toBe(0);
+		expect(fractionOf(5, scale)).toBe(0.5);
+		expect(fractionOf(10, scale)).toBe(1);
+	});
+
+	it("honors a non-zero scale origin", () => {
+		expect(fractionOf(7, { startSec: 2, endSec: 12, durationSec: 10 })).toBe(0.5);
+	});
+
+	it("clamps below the start and above the end", () => {
+		expect(fractionOf(-4, scale)).toBe(0);
+		expect(fractionOf(15, scale)).toBe(1);
+	});
+
+	it("returns 0 for a degenerate (zero-duration / non-finite) scale", () => {
+		expect(fractionOf(5, { startSec: 0, endSec: 0, durationSec: 0 })).toBe(0);
+	});
+});
+
+describe("playheadLeft", () => {
+	// 280 == STICKY_LEFT_TOTAL_PX (the fixed label columns). The cursor lives in
+	// the timeline region after them; `100%` resolves to the zoomed virtual
+	// width at runtime, so the same expression tracks any zoom level.
+	it("maps a fraction onto the timeline region after the sticky columns", () => {
+		expect(playheadLeft(0)).toBe("calc(280px + 0 * (100% - 280px))");
+		expect(playheadLeft(0.5)).toBe("calc(280px + 0.5 * (100% - 280px))");
+		expect(playheadLeft(1)).toBe("calc(280px + 1 * (100% - 280px))");
+	});
+});
+
+describe("TracePlayhead", () => {
+	const SINGLE_TURN = [turn(0, "agent", 0, 10_000)]; // scale → { 0, 10, 10 }
+
+	function renderWithDriver(zoom: number) {
+		const noop = () => undefined;
+		let publish: (state: PlayheadState) => void = noop;
+		const controls: PlayerControls = {
+			seek: noop,
+			highlight: noop,
+			clearHighlight: noop,
+		};
+		function Driver() {
+			useRegisterPlayer(controls);
+			publish = usePublishPlayhead();
+			return null;
+		}
+		render(
+			<PlayerProvider>
+				<Driver />
+				<TraceTree turns={SINGLE_TURN} spans={[]} replayStartIso={REPLAY_START} zoom={zoom} />
+			</PlayerProvider>,
+		);
+		return (state: PlayheadState) => act(() => publish(state));
+	}
+
+	it("renders no cursor when the player is not ready (no audio)", () => {
+		render(
+			<PlayerProvider>
+				<TraceTree turns={SINGLE_TURN} spans={[]} replayStartIso={REPLAY_START} zoom={1} />
+			</PlayerProvider>,
+		);
+		expect(screen.queryByTestId("trace-playhead")).toBeNull();
+	});
+
+	// The exact `left` math lives in the `playheadLeft` / `fractionOf` unit
+	// tests above — happy-dom's CSSOM can't represent a `calc(… * …)` value, so
+	// asserting `.style.left` here would read back empty. These cases cover the
+	// wiring: the published `sec` flows into the cursor and its clock pill.
+	it("appears once the player is ready and shows the live playback clock", () => {
+		const publish = renderWithDriver(1);
+		publish({ sec: 5, playing: true });
+		expect(screen.getByTestId("trace-playhead")).toBeTruthy();
+		expect(screen.getByText("0:05.0")).toBeTruthy();
+	});
+
+	it("is decorative: aria-hidden and pointer-events-none so it never steals seek clicks", () => {
+		const publish = renderWithDriver(1);
+		publish({ sec: 5, playing: true });
+		const cursor = screen.getByTestId("trace-playhead");
+		expect(cursor.getAttribute("aria-hidden")).toBe("true");
+		expect(cursor.className).toContain("pointer-events-none");
+	});
+
+	it("brightens the cursor glow while playing and dims it when paused", () => {
+		const publish = renderWithDriver(1);
+		publish({ sec: 3, playing: true });
+		expect(screen.getByTestId("trace-playhead").firstElementChild?.className).toContain(
+			"shadow-[0_0_10px_rgba(255,255,255,0.7)]",
+		);
+
+		publish({ sec: 3, playing: false });
+		expect(screen.getByTestId("trace-playhead").firstElementChild?.className).toContain(
+			"shadow-[0_0_6px_rgba(255,255,255,0.4)]",
+		);
+	});
+
+	it("never paints above the sticky label columns or time ruler", () => {
+		const publish = renderWithDriver(7.6);
+		publish({ sec: 0, playing: false });
+		expect(screen.getByTestId("trace-playhead").className).not.toMatch(/\bz-(20|30|40|50)\b/);
 	});
 });

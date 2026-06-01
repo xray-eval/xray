@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { match } from "ts-pattern";
 
 import type { ReplayTurnResponse, SpanResponse, SpanVocabulary } from "@/client/api/api.types.ts";
-import { usePlayer } from "@/client/audio/player-provider.tsx";
+import { usePlayer, usePlayhead } from "@/client/audio/player-provider.tsx";
+import { formatClockSeconds, formatDurationMs, formatTimelineTick } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { buildTree } from "./build-tree.ts";
@@ -91,7 +92,7 @@ function TraceTreeReady({
 
 	return (
 		<div className="h-full overflow-auto">
-			<div style={{ width: virtualWidth, minWidth: "100%" }}>
+			<div className="relative" style={{ width: virtualWidth, minWidth: "100%" }}>
 				<TimeRuler scale={scale} zoom={zoom} />
 				<ol className="divide-y divide-border/30">
 					{visible.map((row) => (
@@ -104,6 +105,7 @@ function TraceTreeReady({
 						/>
 					))}
 				</ol>
+				<TracePlayhead scale={scale} />
 			</div>
 		</div>
 	);
@@ -404,7 +406,7 @@ function TimeRuler({ scale, zoom }: { scale: TraceScale; zoom: number }) {
 						style={{ left: `${tick.leftPct}%` }}
 					>
 						<span className="absolute top-1 left-1 font-mono text-[10px] tabular-nums text-muted-foreground/80">
-							{formatClock(tick.sec)}
+							{formatTimelineTick(tick.sec)}
 						</span>
 						<div aria-hidden="true" className="absolute bottom-0 h-2 w-px bg-border" />
 					</div>
@@ -448,6 +450,56 @@ export function ZoomControls({ zoom, onChange }: { zoom: number; onChange: (z: n
 	);
 }
 
+/**
+ * Position of `sec` along the trace timeline as a 0..1 fraction, clamped to
+ * the visible range and 0 for a degenerate (zero-duration / non-finite) scale.
+ * The single source of truth for horizontal placement — `TimeBar` and the
+ * playhead cursor both derive from it so a bar and the cursor over it can
+ * never drift apart.
+ */
+export function fractionOf(sec: number, scale: TraceScale): number {
+	const raw = (sec - scale.startSec) / scale.durationSec;
+	if (!Number.isFinite(raw)) return 0;
+	return Math.max(0, Math.min(1, raw));
+}
+
+/**
+ * CSS `left` for a 0..1 fraction, placing it within the timeline region
+ * [STICKY_LEFT_TOTAL_PX, virtualWidth]. `100%` resolves to the inner
+ * container's width (== virtualWidth), so `STICKY_LEFT_TOTAL_PX + f·(100% −
+ * STICKY_LEFT_TOTAL_PX)` lands on the exact x a `TimeBar` bar at fraction `f`
+ * occupies — at any zoom, since zoom only changes the resolved `100%`.
+ */
+export function playheadLeft(fraction: number): string {
+	return `calc(${STICKY_LEFT_TOTAL_PX}px + ${fraction} * (100% - ${STICKY_LEFT_TOTAL_PX}px))`;
+}
+
+function TracePlayhead({ scale }: { scale: TraceScale }) {
+	const { isReady } = usePlayer();
+	const { sec, playing } = usePlayhead();
+	if (!isReady) return null;
+	return (
+		<div
+			data-testid="trace-playhead"
+			aria-hidden="true"
+			className="pointer-events-none absolute inset-y-0"
+			style={{ left: playheadLeft(fractionOf(sec, scale)) }}
+		>
+			<div
+				className={cn(
+					"absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-white/85",
+					playing
+						? "shadow-[0_0_10px_rgba(255,255,255,0.7)]"
+						: "shadow-[0_0_6px_rgba(255,255,255,0.4)]",
+				)}
+			/>
+			<div className="sticky top-9 left-0 -translate-x-1/2 whitespace-nowrap rounded bg-white px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-zinc-950 shadow-sm">
+				{formatClockSeconds(sec)}
+			</div>
+		</div>
+	);
+}
+
 function TimeBar({
 	scale,
 	startSec,
@@ -467,7 +519,7 @@ function TimeBar({
 	colorFill: string;
 	colorOutline: string;
 }) {
-	const leftPct = ((startSec - scale.startSec) / scale.durationSec) * 100;
+	const leftPct = fractionOf(startSec, scale) * 100;
 	const widthPct = Math.max(((endSec - startSec) / scale.durationSec) * 100, 0.4);
 	return (
 		<button
@@ -487,7 +539,7 @@ function TimeBar({
 					emphasis === "turn" ? "h-4" : "h-2.5",
 				)}
 				style={{
-					left: `${Math.max(leftPct, 0)}%`,
+					left: `${leftPct}%`,
 					width: `${widthPct}%`,
 					background: colorFill,
 					boxShadow: `0 0 0 1px ${colorOutline}`,
@@ -648,26 +700,4 @@ function niceTickStep(durationSec: number): number {
 	const candidates = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
 	for (const c of candidates) if (c >= rough) return c;
 	return 600;
-}
-
-function formatClock(seconds: number): string {
-	if (!Number.isFinite(seconds)) return "—";
-	const sign = seconds < 0 ? "-" : "";
-	const safe = Math.abs(seconds);
-	if (safe < 10) return `${sign}${safe.toFixed(2)}s`;
-	// Round to deciseconds BEFORE splitting into minutes/seconds, otherwise
-	// the seconds field can render as "60.0" when the source value rounds up
-	// across the minute boundary (e.g. 59.96 → "00:60.0" instead of "01:00.0").
-	const totalTenths = Math.round(safe * 10);
-	const totalWholeSec = Math.floor(totalTenths / 10);
-	const tenth = totalTenths % 10;
-	const minutes = Math.floor(totalWholeSec / 60);
-	const secInMin = totalWholeSec - minutes * 60;
-	return `${sign}${String(minutes).padStart(2, "0")}:${String(secInMin).padStart(2, "0")}.${tenth}`;
-}
-
-function formatDurationMs(ms: number): string {
-	if (!Number.isFinite(ms) || ms < 0) return "—";
-	if (ms < 1_000) return `${Math.round(ms)}ms`;
-	return `${(ms / 1_000).toFixed(2)}s`;
 }

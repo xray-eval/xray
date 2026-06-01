@@ -1,6 +1,9 @@
 import {
 	formatAbsolute,
+	formatClockSeconds,
 	formatDuration,
+	formatDurationMs,
+	formatTimelineTick,
 	formatTimestamp,
 	HASH_PREFIX_LEN,
 	shortHash,
@@ -51,6 +54,25 @@ describe("formatTimestamp", () => {
 	});
 });
 
+describe("formatClockSeconds", () => {
+	it("renders a sub-minute time as `0:SS.d`", () => {
+		expect(formatClockSeconds(0)).toBe("0:00.0");
+		expect(formatClockSeconds(5.3)).toBe("0:05.3");
+	});
+
+	it("rolls whole minutes into the leading field", () => {
+		expect(formatClockSeconds(65)).toBe("1:05.0");
+		expect(formatClockSeconds(83.7)).toBe("1:23.7");
+		expect(formatClockSeconds(125.4)).toBe("2:05.4");
+	});
+
+	it("clamps negative and non-finite inputs to zero", () => {
+		expect(formatClockSeconds(-3)).toBe("0:00.0");
+		expect(formatClockSeconds(Number.NaN)).toBe("0:00.0");
+		expect(formatClockSeconds(Number.POSITIVE_INFINITY)).toBe("0:00.0");
+	});
+});
+
 describe("formatDuration", () => {
 	it("renders null as 'in progress'", () => {
 		expect(formatDuration(null)).toBe("in progress");
@@ -73,5 +95,53 @@ describe("formatDuration", () => {
 		expect(formatDuration(125_000)).toBe("2m05s");
 		// 5 min + 9 sec — confirm seconds zero-pad to two digits.
 		expect(formatDuration(309_000)).toBe("5m09s");
+	});
+});
+
+describe("formatTimelineTick", () => {
+	it("renders sub-10s ticks as a 2-decimal seconds value", () => {
+		expect(formatTimelineTick(0)).toBe("0.00s");
+		expect(formatTimelineTick(5.3)).toBe("5.30s");
+		expect(formatTimelineTick(9.99)).toBe("9.99s");
+	});
+
+	it("switches to `MM:SS.d` at and above 10s", () => {
+		expect(formatTimelineTick(10)).toBe("00:10.0");
+		expect(formatTimelineTick(65)).toBe("01:05.0");
+		expect(formatTimelineTick(83.7)).toBe("01:23.7");
+		expect(formatTimelineTick(125.4)).toBe("02:05.4");
+	});
+
+	it("rounds to deciseconds before splitting so the minute boundary doesn't render `:60`", () => {
+		expect(formatTimelineTick(59.96)).toBe("01:00.0");
+	});
+
+	it("keeps a leading minus on negative offsets", () => {
+		expect(formatTimelineTick(-2.5)).toBe("-2.50s");
+		expect(formatTimelineTick(-65)).toBe("-01:05.0");
+	});
+
+	it("renders non-finite input as an em-dash", () => {
+		expect(formatTimelineTick(Number.NaN)).toBe("—");
+		expect(formatTimelineTick(Number.POSITIVE_INFINITY)).toBe("—");
+	});
+});
+
+describe("formatDurationMs", () => {
+	it("renders sub-second durations as rounded ms", () => {
+		expect(formatDurationMs(0)).toBe("0ms");
+		expect(formatDurationMs(42)).toBe("42ms");
+		expect(formatDurationMs(999)).toBe("999ms");
+	});
+
+	it("renders second+ durations with 2-decimal precision", () => {
+		expect(formatDurationMs(1_000)).toBe("1.00s");
+		expect(formatDurationMs(1_500)).toBe("1.50s");
+		expect(formatDurationMs(125_000)).toBe("125.00s");
+	});
+
+	it("renders non-finite or negative input as an em-dash", () => {
+		expect(formatDurationMs(-1)).toBe("—");
+		expect(formatDurationMs(Number.NaN)).toBe("—");
 	});
 });
