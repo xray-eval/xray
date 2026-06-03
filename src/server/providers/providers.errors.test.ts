@@ -3,17 +3,24 @@ import { describe, expect, it } from "bun:test";
 
 describe("AmbiguousProviderConfigError", () => {
 	it("is catchable as ProviderConfigError", () => {
-		const err = new AmbiguousProviderConfigError("XRAY_JUDGE_PROVIDER");
+		const err = new AmbiguousProviderConfigError("XRAY_JUDGE_PROVIDER", [
+			"OPENAI_API_KEY",
+			"GOOGLE_API_KEY",
+		]);
 		expect(err).toBeInstanceOf(ProviderConfigError);
 		expect(err).toBeInstanceOf(Error);
 	});
 
-	it("has a stable name and carries the selector env var", () => {
-		const err = new AmbiguousProviderConfigError("XRAY_TRANSCRIPTION_PROVIDER");
+	it("has a stable name and carries the selector env var plus the set key env vars", () => {
+		const err = new AmbiguousProviderConfigError("XRAY_TRANSCRIPTION_PROVIDER", [
+			"OPENAI_API_KEY",
+			"MISTRAL_API_KEY",
+		]);
 		expect(err.name).toBe("AmbiguousProviderConfigError");
 		expect(err.selectorEnvVar).toBe("XRAY_TRANSCRIPTION_PROVIDER");
+		expect(err.setKeyEnvVars).toEqual(["OPENAI_API_KEY", "MISTRAL_API_KEY"]);
 		expect(err.message).toContain("XRAY_TRANSCRIPTION_PROVIDER");
 		expect(err.message).toContain("OPENAI_API_KEY");
-		expect(err.message).toContain("GOOGLE_API_KEY");
+		expect(err.message).toContain("MISTRAL_API_KEY");
 	});
 });
