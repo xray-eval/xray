@@ -2,7 +2,7 @@ import { HttpResponse, http } from "msw";
 
 import { server } from "@/test-server.ts";
 
-import type { ConversationResponse, ReplayDetailResponse } from "../api/api.types.ts";
+import type { ConversationResponse, ReplayDetailResponse, ReplayResult } from "../api/api.types.ts";
 import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
@@ -45,6 +45,8 @@ function buildReplay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetai
 			},
 		],
 		speech_segments: [],
+		transcripts: [],
+		turn_metrics: [],
 		tool_calls: [],
 		model_usage: [],
 		spans: [],
@@ -64,12 +66,26 @@ function buildConversation(hash: string): ConversationResponse {
 	};
 }
 
-// The Inspector fetches the replay and then its conversation (for the
-// breadcrumb label), so both endpoints must be mocked or MSW's
-// onUnhandledRequest: "error" fires on the conversation request.
+function buildResult(replay: ReplayDetailResponse): ReplayResult {
+	return {
+		replay_id: replay.id,
+		conversation_hash: replay.conversation_hash,
+		passed: true,
+		assertions: [],
+		judges: [],
+		metrics: { turns: [] },
+	};
+}
+
+// The Inspector fetches the replay, its conversation (for the breadcrumb
+// label), and — once completed — its evaluation result, so all three
+// endpoints must be mocked or MSW's onUnhandledRequest: "error" fires.
 function mockReplay(replay: ReplayDetailResponse) {
 	server.use(
 		http.get(`http://localhost/v1/replays/${replay.id}`, () => HttpResponse.json(replay)),
+		http.get(`http://localhost/v1/replays/${replay.id}/result`, () =>
+			HttpResponse.json(buildResult(replay)),
+		),
 		http.get(`http://localhost/v1/conversations/${replay.conversation_hash}`, () =>
 			HttpResponse.json(buildConversation(replay.conversation_hash)),
 		),

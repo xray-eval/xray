@@ -8,6 +8,7 @@ import {
 	CompareReplaysResponseSchema,
 	ListReplaysResponseSchema,
 	ReplayDetailResponseSchema,
+	ReplayResultSchema,
 } from "@/server/replays/replays.types.ts";
 
 import { ApiRequestFailedError, ApiResponseValidationError } from "./api.errors.ts";
@@ -17,6 +18,7 @@ import type {
 	ListConversationsResponse,
 	ListReplaysResponse,
 	ReplayDetailResponse,
+	ReplayResult,
 } from "./api.types.ts";
 
 /**
@@ -83,6 +85,16 @@ export function listReplaysForConversation(
 
 export function getReplay(id: string, signal?: AbortSignal): Promise<ReplayDetailResponse> {
 	return getJson(`/v1/replays/${id}`, ReplayDetailResponseSchema, signal);
+}
+
+/**
+ * Evaluation verdict + per-assertion / per-judge outcomes + per-turn metrics
+ * for a completed replay. The server answers 409 until evaluation has run, so
+ * callers gate this on `lifecycle_state === "completed"` (TanStack `skipToken`)
+ * rather than letting it fail-and-retry.
+ */
+export function getReplayResult(id: string, signal?: AbortSignal): Promise<ReplayResult> {
+	return getJson(`/v1/replays/${id}/result`, ReplayResultSchema, signal);
 }
 
 export function compareReplays(

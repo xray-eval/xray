@@ -195,6 +195,7 @@ function buildLiveTurnMetrics(
 				agent_response_ms: metric?.agentResponseMs ?? null,
 				ttft_ms: metric?.ttftMs ?? null,
 				interrupted: metric?.interrupted ?? false,
+				interruption_start_ms: metric?.interruptionStartMs ?? null,
 			};
 		});
 }

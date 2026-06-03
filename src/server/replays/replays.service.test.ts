@@ -3,7 +3,13 @@ import { eq } from "drizzle-orm";
 import { ConversationNotFoundError } from "@/server/conversations/conversations.errors.ts";
 import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
-import { replays } from "@/server/store/schema.ts";
+import {
+	replayEvaluations,
+	replayMetrics,
+	replays,
+	replayTurns,
+	turnTranscripts,
+} from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import {
@@ -18,6 +24,7 @@ import {
 	createReplay,
 	enqueueAnalysis,
 	getReplay,
+	getReplayResult,
 	listReplaysForConversation,
 	markReplayFailed,
 	updateReplay,
@@ -324,6 +331,125 @@ describe("getReplay / compareReplays / listReplaysForConversation", () => {
 		const first = items[0]?.started_at ?? "";
 		const second = items[1]?.started_at ?? "";
 		expect(first >= second).toBe(true);
+		store.close();
+	});
+});
+
+describe("buildReplayDetail — transcripts projection", () => {
+	it("parses words_json into snake_case word timings, ordered by turn_idx", async () => {
+		const store = makeTempStore();
+		const { replayId } = await seedReplay(store);
+		store.db
+			.insert(turnTranscripts)
+			.values([
+				{
+					replayId,
+					turnIdx: 1,
+					text: "hello there",
+					language: "en",
+					wordsJson: JSON.stringify([
+						{ text: "hello", startMs: 100, endMs: 400 },
+						{ text: "there", startMs: 410, endMs: 700 },
+					]),
+					durationMs: 600,
+					provider: "openai_whisper",
+					model: "whisper-1",
+				},
+				{
+					replayId,
+					turnIdx: 0,
+					text: "hi",
+					language: "en",
+					wordsJson: null,
+					durationMs: 300,
+					provider: "openai_whisper",
+					model: "whisper-1",
+				},
+			])
+			.run();
+
+		const detail = getReplay(store, replayId);
+
+		expect(detail.transcripts.map((t) => t.turn_idx)).toEqual([0, 1]);
+		expect(detail.transcripts[0]?.words).toBeNull();
+		expect(detail.transcripts[1]?.words).toEqual([
+			{ text: "hello", start_ms: 100, end_ms: 400 },
+			{ text: "there", start_ms: 410, end_ms: 700 },
+		]);
+		store.close();
+	});
+
+	it("degrades a malformed words_json to null instead of throwing", async () => {
+		const store = makeTempStore();
+		const { replayId } = await seedReplay(store);
+		store.db
+			.insert(turnTranscripts)
+			.values({
+				replayId,
+				turnIdx: 0,
+				text: "hi",
+				language: null,
+				wordsJson: "{not valid json",
+				durationMs: 300,
+				provider: "openai_whisper",
+				model: "whisper-1",
+			})
+			.run();
+
+		const detail = getReplay(store, replayId);
+
+		expect(detail.transcripts[0]?.words).toBeNull();
+		expect(detail.transcripts[0]?.text).toBe("hi");
+		store.close();
+	});
+});
+
+describe("getReplayResult — interruption timing", () => {
+	it("projects interruption_start_ms onto the per-turn metrics", async () => {
+		const store = makeTempStore();
+		const { replayId } = await seedReplay(store);
+		store.db
+			.insert(replayTurns)
+			.values([
+				{
+					replayId,
+					idx: 0,
+					role: "agent",
+					turnStartMs: 0,
+					turnEndMs: 2000,
+					voiceStartMs: 100,
+					voiceEndMs: 1900,
+				},
+			])
+			.run();
+		store.db
+			.insert(replayMetrics)
+			.values({
+				replayId,
+				turnIdx: 0,
+				agentResponseMs: 250,
+				ttftMs: 80,
+				interrupted: true,
+				interruptionStartMs: 1450,
+			})
+			.run();
+		store.db
+			.insert(replayEvaluations)
+			.values({
+				replayId,
+				passed: true,
+				assertionsTotal: 0,
+				assertionsPassed: 0,
+				judgesTotal: 0,
+				judgesPassed: 0,
+				evaluatedAt: "2026-05-18T12:00:00.000Z",
+			})
+			.run();
+
+		const result = getReplayResult(store, replayId);
+
+		expect(result?.metrics.turns[0]?.interrupted).toBe(true);
+		expect(result?.metrics.turns[0]?.interruption_start_ms).toBe(1450);
 		store.close();
 	});
 });

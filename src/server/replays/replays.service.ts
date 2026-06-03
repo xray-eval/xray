@@ -1,4 +1,5 @@
 import { and, asc, desc, eq } from "drizzle-orm";
+import * as v from "valibot";
 
 import { ConversationNotFoundError } from "@/server/conversations/conversations.errors.ts";
 import { getConversationByHash } from "@/server/conversations/conversations.service.ts";
@@ -14,6 +15,7 @@ import {
 	spans,
 	speechSegments,
 	toolCalls,
+	turnTranscripts,
 } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import type {
@@ -25,6 +27,7 @@ import type {
 	SpanRow,
 	SpeechSegmentRow,
 	ToolCallRow,
+	TurnTranscriptRow,
 } from "@/server/store/types.ts";
 
 import {
@@ -44,6 +47,9 @@ import type {
 	SpanResponse,
 	SpeechSegmentResponse,
 	ToolCallResponse,
+	TranscriptWord,
+	TurnMetricsResponse,
+	TurnTranscriptResponse,
 	UpdateReplayRequest,
 } from "./replays.types.ts";
 
@@ -180,6 +186,12 @@ function buildReplayDetail(store: Store, r: ReplayRow): ReplayDetailResponse {
 		.all();
 	const spanRows = store.db.select().from(spans).where(eq(spans.replayId, id)).all();
 	spanRows.sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0));
+	const transcriptRows = store.db
+		.select()
+		.from(turnTranscripts)
+		.where(eq(turnTranscripts.replayId, id))
+		.all();
+	transcriptRows.sort((a, b) => a.turnIdx - b.turnIdx);
 	return {
 		id: r.id,
 		conversation_hash: r.conversationHash,
@@ -193,9 +205,44 @@ function buildReplayDetail(store: Store, r: ReplayRow): ReplayDetailResponse {
 		run_config: parseJsonOrNull(r.runConfigJson),
 		turns: turns.map(toTurnResponse),
 		speech_segments: segments.map(toSegmentResponse),
+		transcripts: transcriptRows.map(toTranscriptResponse),
+		turn_metrics: buildTurnMetrics(store, id),
 		tool_calls: toolCallRows.map(toToolCallResponse),
 		model_usage: modelUsageRows.map(toModelUsageResponse),
 		spans: spanRows.map(toSpanResponse),
+	};
+}
+
+// `words_json` is written by the analyze chain as `[{text, startMs, endMs}]`,
+// but it crosses the text→JSON boundary on the way back out — validate it
+// rather than trust the column. A malformed value degrades to plain text
+// (words=null) instead of throwing, matching `parseSpanAttributes`.
+const StoredWordsSchema = v.array(
+	v.object({ text: v.string(), startMs: v.number(), endMs: v.number() }),
+);
+
+function parseTranscriptWords(wordsJson: string | null): TranscriptWord[] | null {
+	if (wordsJson === null) return null;
+	let raw: unknown;
+	try {
+		raw = JSON.parse(wordsJson);
+	} catch {
+		return null;
+	}
+	const parsed = v.safeParse(StoredWordsSchema, raw);
+	if (!parsed.success) return null;
+	return parsed.output.map((w) => ({ text: w.text, start_ms: w.startMs, end_ms: w.endMs }));
+}
+
+function toTranscriptResponse(row: TurnTranscriptRow): TurnTranscriptResponse {
+	return {
+		turn_idx: row.turnIdx,
+		text: row.text,
+		language: row.language,
+		words: parseTranscriptWords(row.wordsJson),
+		duration_ms: row.durationMs,
+		provider: row.provider,
+		model: row.model,
 	};
 }
 
@@ -312,20 +359,6 @@ export function getReplayResult(store: Store, id: string): ReplayResult | undefi
 		.where(eq(judgeResults.replayId, id))
 		.orderBy(asc(judgeResults.judgeIdx))
 		.all();
-	const turnRows = store.db
-		.select()
-		.from(replayTurns)
-		.where(eq(replayTurns.replayId, id))
-		.orderBy(asc(replayTurns.idx))
-		.all();
-	const metricByTurnIdx = new Map(
-		store.db
-			.select()
-			.from(replayMetrics)
-			.where(eq(replayMetrics.replayId, id))
-			.all()
-			.map((m) => [m.turnIdx, m]),
-	);
 	return {
 		replay_id: id,
 		conversation_hash: replay.conversationHash,
@@ -344,19 +377,42 @@ export function getReplayResult(store: Store, id: string): ReplayResult | undefi
 			score: r.score,
 			reason: r.reason,
 		})),
-		metrics: {
-			turns: turnRows.map((turn) => {
-				const m = metricByTurnIdx.get(turn.idx);
-				return {
-					turn_idx: turn.idx,
-					role: turn.role,
-					agent_response_ms: m?.agentResponseMs ?? null,
-					ttft_ms: m?.ttftMs ?? null,
-					interrupted: m?.interrupted ?? false,
-				};
-			}),
-		},
+		metrics: { turns: buildTurnMetrics(store, id) },
 	};
+}
+
+/**
+ * Project per-turn timing — one row per turn (from `replay_turns`), with
+ * `replay_metrics` values joined in by turn idx (null when the metrics stage
+ * hasn't run). Shared by the replay detail (Run details UI) and the evaluation
+ * result (SDK `ReplayResult.metrics`) so both stay in lockstep.
+ */
+function buildTurnMetrics(store: Store, id: string): TurnMetricsResponse[] {
+	const turnRows = store.db
+		.select()
+		.from(replayTurns)
+		.where(eq(replayTurns.replayId, id))
+		.orderBy(asc(replayTurns.idx))
+		.all();
+	const metricByTurnIdx = new Map(
+		store.db
+			.select()
+			.from(replayMetrics)
+			.where(eq(replayMetrics.replayId, id))
+			.all()
+			.map((m) => [m.turnIdx, m]),
+	);
+	return turnRows.map((turn) => {
+		const m = metricByTurnIdx.get(turn.idx);
+		return {
+			turn_idx: turn.idx,
+			role: turn.role,
+			agent_response_ms: m?.agentResponseMs ?? null,
+			ttft_ms: m?.ttftMs ?? null,
+			interrupted: m?.interrupted ?? false,
+			interruption_start_ms: m?.interruptionStartMs ?? null,
+		};
+	});
 }
 
 function assertionStatusFor(raw: string): "passed" | "failed" | "errored" {

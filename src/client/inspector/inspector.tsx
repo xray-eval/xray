@@ -34,6 +34,10 @@ import { PlayerProvider } from "../audio/player-provider.tsx";
 import { StereoTurnPlayer } from "../audio/stereo-turn-player.tsx";
 import { formatTimestamp } from "../format.ts";
 import { RunStatusBadge } from "../replay-status/replay-status.tsx";
+import { AnalysisProgress } from "./analysis-progress/analysis-progress.tsx";
+import { EvaluationPanel } from "./evaluation/evaluation.tsx";
+import { TurnMetricsSection } from "./metrics/turn-metrics.tsx";
+import { TranscriptCard } from "./transcript/transcript.tsx";
 
 export function Inspector() {
 	const { replayId } = useParams({ from: "/replays/$replayId" });
@@ -137,19 +141,24 @@ function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	return (
 		<PlayerProvider>
 			<SpanSelectionProvider>
-				<div className="grid gap-6 lg:grid-cols-3">
-					<div className="lg:col-span-2 lg:col-start-1 lg:row-start-1">
-						<AudioSection replay={replay} />
+				<div className="space-y-6">
+					<AnalysisProgress replay={replay} />
+					<EvaluationPanel replayId={replay.id} lifecycleState={replay.lifecycle_state} />
+					<div className="grid gap-6 lg:grid-cols-3">
+						<div className="lg:col-span-2 lg:col-start-1 lg:row-start-1">
+							<AudioSection replay={replay} />
+						</div>
+						<div className="lg:col-span-2 lg:col-start-1 lg:row-start-2">
+							<TraceCard replay={replay} />
+						</div>
+						<div className="relative lg:col-start-3 lg:row-start-1">
+							<RunDetailsCard replay={replay} />
+						</div>
+						<aside className="relative lg:col-start-3 lg:row-start-2">
+							<SpanDetailAside replay={replay} />
+						</aside>
 					</div>
-					<div className="lg:col-span-2 lg:col-start-1 lg:row-start-2">
-						<TraceCard replay={replay} />
-					</div>
-					<div className="relative lg:col-start-3 lg:row-start-1">
-						<RunDetailsCard replay={replay} />
-					</div>
-					<aside className="relative lg:col-start-3 lg:row-start-2">
-						<SpanDetailAside replay={replay} />
-					</aside>
+					<TranscriptCard replay={replay} />
 				</div>
 			</SpanSelectionProvider>
 		</PlayerProvider>
@@ -218,10 +227,11 @@ function TraceCard({ replay }: { replay: ReplayDetailResponse }) {
 }
 
 function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
+	const hasMetrics = replay.turn_metrics.length > 0;
 	const hasUsage = replay.model_usage.length > 0;
 	const hasTools = replay.tool_calls.length > 0;
 	const hasConfig = replay.run_config !== null && replay.run_config !== undefined;
-	if (!hasUsage && !hasTools && !hasConfig) return null;
+	if (!hasMetrics && !hasUsage && !hasTools && !hasConfig) return null;
 	return (
 		<Card className="gap-0 overflow-hidden p-0 lg:absolute lg:inset-0 lg:flex lg:flex-col">
 			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4 lg:shrink-0">
@@ -230,6 +240,7 @@ function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
 				</CardTitle>
 			</CardHeader>
 			<CardContent className="scroll-panel divide-y divide-border/50 p-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+				{hasMetrics && <TurnMetricsSection turns={replay.turn_metrics} />}
 				{hasUsage && <ModelUsageSection usage={replay.model_usage} />}
 				{hasTools && <ToolCallsSection toolCalls={replay.tool_calls} />}
 				{hasConfig && <RunConfigSection runConfig={replay.run_config} />}
