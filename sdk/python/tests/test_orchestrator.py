@@ -5,7 +5,9 @@ verdict off the SSE `evaluation_complete` event and returns
 
 from __future__ import annotations
 
+import io
 import json
+import wave
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -127,6 +129,28 @@ class StubRuntime(Runtime):
         self.closed = True
 
 
+def _wav_48k_mono(ms: int = 20) -> bytes:
+    """Valid 48 kHz / mono / 16-bit WAV of silence — what the server's
+    turn-audio endpoint serves and the prefetch decoder enforces."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(48_000)
+        w.writeframes(b"\x00\x00" * (48_000 * ms // 1000))
+    return buf.getvalue()
+
+
+def _mock_turn_audio(mock: respx.MockRouter) -> respx.Route:
+    """Register the prefetch GET for any conversation/turn. One regex route
+    instead of per-turn registrations — tests don't care which idx."""
+    return mock.get(url__regex=r"/v1/conversations/[0-9a-f]{64}/turns/\d+/audio").mock(
+        return_value=httpx.Response(
+            200, content=_wav_48k_mono(), headers={"content-type": "audio/wav"}
+        )
+    )
+
+
 def _make_wav(tmp_path: Path) -> Path:
     # Minimal valid bytes — server doesn't decode in unit tests, we just
     # need a file the SDK can open + send. Server-side WAV decoding is
@@ -156,6 +180,7 @@ async def test_full_chain_returns_replay_result_with_passed_true(tmp_path: Path)
         post_conv = mock.post("/v1/conversations").mock(
             return_value=httpx.Response(200, json=_conversation_upsert_response())
         )
+        _mock_turn_audio(mock)
         post_replay = mock.post("/v1/replays").mock(
             return_value=httpx.Response(201, json=_replay_response(replay_id))
         )
@@ -239,6 +264,7 @@ async def test_passed_false_when_an_assertion_fails(tmp_path: Path):
         mock.post("/v1/conversations").mock(
             return_value=httpx.Response(200, json=_conversation_upsert_response())
         )
+        _mock_turn_audio(mock)
         mock.post("/v1/replays").mock(
             return_value=httpx.Response(201, json=_replay_response(replay_id))
         )
@@ -298,6 +324,7 @@ async def test_orchestrator_does_not_fetch_enrichment_or_patch_on_success(tmp_pa
         mock.post("/v1/conversations").mock(
             return_value=httpx.Response(200, json=_conversation_upsert_response())
         )
+        _mock_turn_audio(mock)
         mock.post("/v1/replays").mock(
             return_value=httpx.Response(201, json=_replay_response(replay_id))
         )
@@ -348,6 +375,7 @@ async def test_server_chain_failure_raises_replay_evaluation_error(tmp_path: Pat
         mock.post("/v1/conversations").mock(
             return_value=httpx.Response(200, json=_conversation_upsert_response())
         )
+        _mock_turn_audio(mock)
         mock.post("/v1/replays").mock(
             return_value=httpx.Response(201, json=_replay_response(replay_id))
         )
@@ -388,6 +416,7 @@ async def test_driver_runtime_typed_failure_patches_failed_and_raises():
         mock.post("/v1/conversations").mock(
             return_value=httpx.Response(200, json=_conversation_upsert_response())
         )
+        _mock_turn_audio(mock)
         mock.post("/v1/replays").mock(
             return_value=httpx.Response(201, json=_replay_response(replay_id))
         )
@@ -464,6 +493,7 @@ async def test_conversations_post_carries_assertions_and_judges_in_spec_json(tmp
         post_conv = mock.post("/v1/conversations").mock(
             return_value=httpx.Response(200, json=_conversation_upsert_response())
         )
+        _mock_turn_audio(mock)
         mock.post("/v1/replays").mock(
             return_value=httpx.Response(201, json=_replay_response(replay_id))
         )
@@ -518,3 +548,73 @@ async def test_server_error_on_conversations_post_raises_xray_server_error():
                 runtime=StubRuntime(),
                 xray_url="http://test.local",
             )
+
+
+class _InjectableStubRuntime(StubRuntime):
+    """StubRuntime + UserAudioInjectable, so the test can observe what the
+    orchestrator prefetched."""
+
+    def __init__(self, **kw: object) -> None:
+        super().__init__(full_audio_path=str(kw["full_audio_path"]))
+        self.injected: dict[int, bytes] | None = None
+
+    def inject_user_audio(self, audio: dict[int, bytes]) -> None:
+        self.injected = dict(audio)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_prefetches_user_turn_audio_and_injects_it(tmp_path: Path):
+    """Every user turn's audio is GET from the server after the upsert and
+    handed to the runtime before `run` — the driver never synthesizes or
+    reads local files. Agent turns are not fetched."""
+    wav = _make_wav(tmp_path)
+    replay_id = "00000000-0000-0000-0000-000000000eee"
+    conversation = Conversation(
+        name="x",
+        turns=[
+            Turn.user("hi", key="u0"),
+            Turn.agent(key="a0"),
+            Turn.user("bye", key="u1"),
+        ],
+    )
+
+    with respx.mock(base_url="http://test.local") as mock:
+        mock.post("/v1/conversations").mock(
+            return_value=httpx.Response(200, json=_conversation_upsert_response())
+        )
+        audio_route = _mock_turn_audio(mock)
+        mock.post("/v1/replays").mock(
+            return_value=httpx.Response(201, json=_replay_response(replay_id))
+        )
+        mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
+        mock.post(f"/v1/replays/{replay_id}/analyze").mock(
+            return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
+        )
+        _mock_sse_endpoint(
+            mock,
+            replay_id,
+            _sse_stream(
+                [
+                    (
+                        "evaluation_complete",
+                        {
+                            "type": "evaluation_complete",
+                            "result": _eval_complete_payload(replay_id=replay_id),
+                        },
+                    )
+                ]
+            ),
+        )
+
+        runtime = _InjectableStubRuntime(full_audio_path=str(wav))
+        await run(conversation=conversation, runtime=runtime, xray_url="http://test.local")
+
+    # Two user turns fetched (idx 0 and 2); the agent turn (idx 1) is not.
+    # The injected key set proves which idx values were fetched — the respx
+    # CallList's request chain is Unknown-typed (see pyproject pyright note),
+    # so the per-URL assertion lives in the injected map instead.
+    assert audio_route.call_count == 2
+    assert runtime.injected is not None
+    assert sorted(runtime.injected.keys()) == [0, 2]
+    # 20ms of 48kHz mono int16 silence = 960 samples * 2 bytes.
+    assert runtime.injected[0] == b"\x00\x00" * 960

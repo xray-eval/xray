@@ -7,7 +7,7 @@ import { sliceTurnAudio } from "@/server/audio/audio.slice.ts";
 import { deriveTurns } from "@/server/audio/audio.turns.ts";
 import type { StereoWav } from "@/server/audio/audio.types.ts";
 import { runVadOnChannel } from "@/server/audio/audio.vad.ts";
-import { downsamplePcm, readStereoWav } from "@/server/audio/audio.wav.ts";
+import { readStereoWav, resamplePcm } from "@/server/audio/audio.wav.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
 import { findReplay, markReplayFailed } from "@/server/replays/replays.service.ts";
 import {
@@ -81,8 +81,8 @@ export function makeAnalyzeProcessor(
 		const wav = readStereoWav(wavBytes);
 		events.emit(replayId, { type: "progress", percent: 10, step: "vad" });
 
-		const userPcm = downsamplePcm(wav.left, wav.sampleRate, VAD_SAMPLE_RATE);
-		const agentPcm = downsamplePcm(wav.right, wav.sampleRate, VAD_SAMPLE_RATE);
+		const userPcm = resamplePcm(wav.left, wav.sampleRate, VAD_SAMPLE_RATE);
+		const agentPcm = resamplePcm(wav.right, wav.sampleRate, VAD_SAMPLE_RATE);
 
 		const userSegments = runVadOnChannel(userPcm, VAD_SAMPLE_RATE);
 		const agentSegments = runVadOnChannel(agentPcm, VAD_SAMPLE_RATE);

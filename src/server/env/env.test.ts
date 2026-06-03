@@ -42,6 +42,21 @@ describe("loadEnv", () => {
 		expect(env.XRAY_JUDGE_PROVIDER).toBe("mistral");
 	});
 
+	test("accepts the TTS selector, model, and voice overrides", () => {
+		const env = loadEnv({
+			XRAY_TTS_PROVIDER: "mistral",
+			XRAY_TTS_MODEL: "voxtral-mini-tts-2603",
+			XRAY_TTS_VOICE: "en_paul_neutral",
+		});
+		expect(env.XRAY_TTS_PROVIDER).toBe("mistral");
+		expect(env.XRAY_TTS_MODEL).toBe("voxtral-mini-tts-2603");
+		expect(env.XRAY_TTS_VOICE).toBe("en_paul_neutral");
+	});
+
+	test("throws InvalidEnvError on an unknown TTS provider selector", () => {
+		expect(() => loadEnv({ XRAY_TTS_PROVIDER: "elevenlabs" })).toThrow(InvalidEnvError);
+	});
+
 	test("throws InvalidEnvError on an unknown provider selector", () => {
 		expect(() => loadEnv({ XRAY_TRANSCRIPTION_PROVIDER: "deepgram" })).toThrow(InvalidEnvError);
 	});

@@ -245,14 +245,18 @@ down, judge LLM unavailable) raise `xray.ReplayEvaluationError`.
 
 User-turn audio formats:
 
-- `RecordedAudio(path=...)` — 48 kHz mono int16 WAV on disk.
-- `TtsAudio()` — synthesized via OpenAI TTS at runtime
-  (`OPENAI_API_KEY` required; the key stays in your process, never
-  reaches xray).
+- `RecordedAudio(path=...)` — 48 kHz mono int16 WAV on disk, uploaded
+  to xray with the conversation spec.
+- `TtsAudio()` (or no `audio` at all) — synthesized **server-side**
+  during the conversation upsert, by the provider the xray server is
+  configured with (`XRAY_TTS_PROVIDER`: OpenAI / Google / Mistral).
+  The generated audio is stored content-addressed and its sha256 is
+  part of the conversation hash; the driver pulls the exact bytes back
+  before joining the room. No TTS key in the SDK's process.
 
 For Cartesia / 11Labs / Deepgram, synthesize externally and pass the
-output as `RecordedAudio` — multi-provider TTS Protocol is on the
-roadmap.
+output as `RecordedAudio` — additional server-side TTS providers are
+one file each in `src/server/tts/`.
 
 ---
 
@@ -340,9 +344,12 @@ This release moves assertion + judge evaluation onto the server.
   emits `evaluation_complete` with the full `ReplayResult` payload.
 - **`GET /v1/replays/:id/result`** — fetches the same payload outside
   the SSE stream for late subscribers.
-- **Server requires `OPENAI_API_KEY`** at runtime for Whisper +
-  judge calls. Set `XRAY_JUDGE_MODEL` to override the default
-  (`gpt-4o`).
+- **Server requires a provider key** at runtime (`OPENAI_API_KEY`,
+  `GOOGLE_API_KEY`, or `MISTRAL_API_KEY`) for TTS + transcription +
+  judge calls. Per-stage overrides: `XRAY_TTS_PROVIDER` /
+  `XRAY_TRANSCRIPTION_PROVIDER` / `XRAY_JUDGE_PROVIDER`, plus
+  `XRAY_TTS_MODEL` / `XRAY_TTS_VOICE` / `XRAY_TRANSCRIPTION_MODEL` /
+  `XRAY_JUDGE_MODEL`.
 - **No more SDK-side enrichment fetch / final PATCH.** The SDK only
   PATCHes when the driver itself fails (mixdown error, missing audio
   file).

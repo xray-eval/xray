@@ -40,6 +40,9 @@ const EnvSchema = v.object({
 		v.picklist(["openai-whisper", "google-gemini", "mistral-voxtral"]),
 	),
 	XRAY_JUDGE_PROVIDER: v.optional(v.picklist(["openai", "google-gemini", "mistral"])),
+	// TTS runs during POST /v1/conversations (user-turn audio synthesis),
+	// not in the analyze chain — but the selector follows the same pattern.
+	XRAY_TTS_PROVIDER: v.optional(v.picklist(["openai", "google-gemini", "mistral"])),
 	// Override the transcription model. Defaults to whisper-1 (OpenAI),
 	// gemini-2.5-flash (Google), or voxtral-mini-2602 (Mistral) inside the
 	// respective provider when unset.
@@ -48,6 +51,13 @@ const EnvSchema = v.object({
 	// gemini-3.5-flash (Google), or mistral-medium-2604 (Mistral) inside the
 	// respective provider when unset.
 	XRAY_JUDGE_MODEL: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// Override the TTS model. Defaults to gpt-4o-mini-tts (OpenAI),
+	// gemini-2.5-flash-preview-tts (Google), or voxtral-mini-tts-2603
+	// (Mistral) inside the respective provider when unset.
+	XRAY_TTS_MODEL: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// Default voice for synthesized user turns. A turn's explicit `voice_id`
+	// wins over this; this wins over the provider's built-in default.
+	XRAY_TTS_VOICE: v.optional(v.pipe(v.string(), v.nonEmpty())),
 });
 
 export type Env = v.InferOutput<typeof EnvSchema>;

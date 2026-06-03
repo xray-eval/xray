@@ -13,7 +13,7 @@ foreign types — we Protocol-type them.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Literal, Protocol, runtime_checkable
 
 # LiveKit's ParticipantKind picklist (livekit-api access_token.py). Mirrored
@@ -146,16 +146,6 @@ class LkApiModule(Protocol):
     VideoGrants: Callable[..., LkVideoGrants]
 
 
-class OpenAiTtsFn(Protocol):
-    """Test-injected TTS hook called as ``await fn(text=, voice=, model=)``.
-
-    Returns ``bytes`` of raw 24 kHz int16 PCM. Modeled as a Protocol so
-    fakes match by shape (matching ``no-any.md`` — no ``Callable[..., Any]``).
-    """
-
-    def __call__(self, *, text: str, voice: str, model: str) -> Awaitable[bytes]: ...
-
-
 __all__ = [
     "LkAccessToken",
     "LkApiModule",
@@ -173,5 +163,4 @@ __all__ = [
     "LkTrackPublishOptions",
     "LkTranscriptionSegment",
     "LkVideoGrants",
-    "OpenAiTtsFn",
 ]

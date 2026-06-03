@@ -4,7 +4,10 @@ import { describeRoute } from "hono-openapi";
 import { match, P } from "ts-pattern";
 import * as v from "valibot";
 
-import { saveRecordedConversationAudio } from "@/server/audio/audio.service.ts";
+import {
+	readConversationTurnAudio,
+	saveRecordedConversationAudio,
+} from "@/server/audio/audio.service.ts";
 import { MAX_AUDIO_BYTES } from "@/server/audio/audio.types.ts";
 import {
 	BodyTooLargeResponseSchema,
@@ -16,6 +19,10 @@ import { listReplaysForConversation } from "@/server/replays/replays.service.ts"
 import { ListReplaysResponseSchema } from "@/server/replays/replays.types.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
+import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
+import { TtsProviderError } from "@/server/tts/tts.errors.ts";
+import { createTurnSynthesizer } from "@/server/tts/tts.synthesis.ts";
+import type { TtsProvider } from "@/server/tts/tts.types.ts";
 
 import {
 	ConversationBodyTooLargeError,
@@ -25,11 +32,15 @@ import {
 	MalformedConversationBodyError,
 	MissingSpecPartError,
 	RecordedAudioUploadKeyError,
+	TtsTurnMissingTextError,
+	TtsTurnRoleError,
+	TurnAudioNotFoundError,
 } from "./conversations.errors.ts";
 import {
 	canonicalizeAndHashSpec,
 	ensureConversation,
 	getConversationByHash,
+	getConversationSpec,
 	listConversations,
 	materializeRequestTurns,
 	toConversationResponse,
@@ -44,7 +55,17 @@ import {
 
 const MAX_CONVERSATION_MULTIPART_BYTES = 512 * 1024 * 1024;
 
-export function createConversationsRouter(store: Store, audioRoot: string): Hono {
+export interface ConversationsTtsDeps {
+	readonly provider: TtsProvider;
+	/** Operator default voice (XRAY_TTS_VOICE). */
+	readonly voiceOverride?: string;
+}
+
+export function createConversationsRouter(
+	store: Store,
+	audioRoot: string,
+	tts: ConversationsTtsDeps,
+): Hono {
 	const router = new Hono();
 
 	router.post(
@@ -106,9 +127,18 @@ export function createConversationsRouter(store: Store, audioRoot: string): Hono
 			const { spec, audioBytesByKey } = await parseMultipartConversationBody(body);
 			const parsed = v.safeParse(CreateConversationRequestSchema, spec);
 			if (!parsed.success) throw new InvalidConversationRequestError(parsed.issues);
+			// Per-request synthesizer: its in-flight memo dedupes repeated
+			// text within this spec without growing app-lifetime state.
+			const synthesizeTurn = createTurnSynthesizer({
+				store,
+				audioRoot,
+				provider: tts.provider,
+				...(tts.voiceOverride !== undefined ? { voiceOverride: tts.voiceOverride } : {}),
+			});
 			const { canonicalTurns, audioWrites } = await materializeRequestTurns(
 				parsed.output.turns,
 				audioBytesByKey,
+				synthesizeTurn,
 			);
 			const { json: turnsJson, hash } = await canonicalizeAndHashSpec(
 				canonicalTurns,
@@ -204,6 +234,73 @@ export function createConversationsRouter(store: Store, audioRoot: string): Hono
 	);
 
 	router.get(
+		"/conversations/:hash/turns/:idx/audio",
+		describeRoute({
+			tags: ["Conversations"],
+			summary: "Stream one turn's input audio",
+			description:
+				"Serves the 48kHz mono WAV for a user turn — the SDK-uploaded recording for `recorded` turns, the server-synthesized speech for `tts` turns. The driver prefetches these before joining the room, so the bytes the agent hears are exactly the bytes the conversation hash pinned.",
+			parameters: [
+				{
+					in: "path",
+					name: "hash",
+					required: true,
+					schema: openApiSchemaFromValibot(ConversationHashSchema),
+				},
+				{
+					in: "path",
+					name: "idx",
+					required: true,
+					schema: { type: "integer", minimum: 0 },
+				},
+			],
+			responses: {
+				"200": {
+					description: "WAV bytes (48kHz mono int16).",
+					content: { "audio/wav": { schema: { type: "string", format: "binary" } } },
+				},
+				"400": {
+					description: "Hash or turn index failed validation.",
+					content: {
+						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
+					},
+				},
+				"404": {
+					description:
+						"Conversation not found, turn index out of range, or the turn has no audio (agent turns never do).",
+					content: {
+						"application/json": {
+							schema: openApiSchemaFromValibot(ConversationNotFoundResponseSchema),
+						},
+					},
+				},
+			},
+		}),
+		async (c) => {
+			const hash = parseConversationHash(c.req.param("hash"));
+			const idx = parseTurnIdx(c.req.param("idx"));
+			const spec = getConversationSpec(store, hash);
+			if (spec === undefined) throw new ConversationNotFoundError(hash);
+			const turn = spec.turns[idx];
+			const audio = turn?.audio;
+			if (audio === undefined) throw new TurnAudioNotFoundError(hash, idx);
+			const { stream, contentLength, contentType } = await readConversationTurnAudio(
+				audioRoot,
+				audio.kind,
+				audio.sha256,
+				() => new TurnAudioNotFoundError(hash, idx),
+			);
+			return c.body(stream, 200, {
+				"Content-Type": contentType,
+				"Content-Length": String(contentLength),
+				// Content-addressed: the sha256 in the path of the stored file
+				// guarantees the bytes never change for this (hash, idx).
+				"Cache-Control": "private, max-age=31536000, immutable",
+			});
+		},
+	);
+
+	router.get(
 		"/conversations/:hash/replays",
 		describeRoute({
 			tags: ["Conversations"],
@@ -288,6 +385,39 @@ export function createConversationsRouter(store: Store, audioRoot: string): Hono
 					404,
 				),
 			)
+			.with(P.instanceOf(TurnAudioNotFoundError), (e) =>
+				c.json(
+					{
+						error: "turn_audio_not_found",
+						conversation_hash: e.conversationHash,
+						turn_idx: e.turnIdx,
+					},
+					404,
+				),
+			)
+			.with(P.instanceOf(TtsTurnMissingTextError), (e) =>
+				c.json({ error: "tts_turn_missing_text", turn_idx: e.turnIdx }, 400),
+			)
+			.with(P.instanceOf(TtsTurnRoleError), (e) =>
+				c.json({ error: "tts_turn_invalid_role", turn_idx: e.turnIdx }, 400),
+			)
+			// Operator misconfiguration, not a client bug: the spec declares
+			// tts turns but no TTS-capable provider key is set. 503 so the SDK
+			// can show "set <env var> on the xray server and retry".
+			.with(P.instanceOf(MissingProviderCredentialError), (e) =>
+				c.json({ error: "tts_provider_unconfigured", env_var: e.envVar }, 503),
+			)
+			.with(P.instanceOf(TtsProviderError), (e) => {
+				console.error("tts synthesis failed during conversation upsert", e);
+				return c.json(
+					{
+						error: "tts_synthesis_failed",
+						provider: e.provider,
+						status_code: e.statusCode,
+					},
+					502,
+				);
+			})
 			.with(P.instanceOf(Error), (e) => {
 				console.error("unhandled error during conversation request", e);
 				return c.json({ error: "internal_error" }, 500);
@@ -298,6 +428,20 @@ export function createConversationsRouter(store: Store, audioRoot: string): Hono
 	);
 
 	return router;
+}
+
+const TurnIdxSchema = v.pipe(
+	v.string(),
+	v.regex(/^\d{1,4}$/, "Turn index must be a non-negative integer"),
+	v.transform(Number),
+	v.integer(),
+	v.minValue(0),
+);
+
+function parseTurnIdx(raw: string): number {
+	const result = v.safeParse(TurnIdxSchema, raw);
+	if (!result.success) throw new InvalidConversationHashError(result.issues);
+	return result.output;
 }
 
 function parseConversationHash(raw: string): string {

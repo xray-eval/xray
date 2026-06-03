@@ -1,6 +1,12 @@
 import { InvalidWavFormatError } from "./audio.errors.ts";
 import type { StereoWav } from "./audio.types.ts";
-import { downsamplePcm, readStereoWav, writeStereoWav } from "./audio.wav.ts";
+import {
+	readMonoWav,
+	readStereoWav,
+	resamplePcm,
+	writeMonoWav,
+	writeStereoWav,
+} from "./audio.wav.ts";
 import { describe, expect, it } from "bun:test";
 
 function makeSineStereo(seconds: number): StereoWav {
@@ -209,10 +215,10 @@ describe("readStereoWav — hardening", () => {
 	});
 });
 
-describe("downsamplePcm", () => {
+describe("resamplePcm", () => {
 	it("returns the input when src and dst rates match", () => {
 		const pcm = new Int16Array([1, 2, 3, 4, 5]);
-		const out = downsamplePcm(pcm, 48_000, 48_000);
+		const out = resamplePcm(pcm, 48_000, 48_000);
 		expect(out).toBe(pcm);
 	});
 
@@ -222,7 +228,45 @@ describe("downsamplePcm", () => {
 		for (let i = 0; i < samples; i++) {
 			pcm[i] = i & 0x7fff;
 		}
-		const out = downsamplePcm(pcm, 48_000, 16_000);
+		const out = resamplePcm(pcm, 48_000, 16_000);
 		expect(out.length).toBe(1600);
+	});
+
+	it("upsamples 24k→48k to twice the length, interpolating between samples", () => {
+		const pcm = new Int16Array([0, 100, 200]);
+		const out = resamplePcm(pcm, 24_000, 48_000);
+		expect(out.length).toBe(6);
+		expect(out[0]).toBe(0);
+		expect(out[1]).toBe(50);
+		expect(out[2]).toBe(100);
+		expect(out[3]).toBe(150);
+		expect(out[4]).toBe(200);
+	});
+});
+
+describe("readMonoWav", () => {
+	it("round-trips writeMonoWav output at an arbitrary sample rate", () => {
+		const pcm = new Int16Array([0, 1000, -1000, 32767, -32768]);
+		const bytes = writeMonoWav(pcm, 24_000);
+		const parsed = readMonoWav(bytes);
+		expect(parsed.sampleRate).toBe(24_000);
+		expect([...parsed.pcm]).toEqual([...pcm]);
+	});
+
+	it("throws InvalidWavFormatError on a stereo file", () => {
+		const stereo = writeStereoWav({
+			sampleRate: 48_000,
+			bitsPerSample: 16,
+			left: new Int16Array([1, 2]),
+			right: new Int16Array([3, 4]),
+		});
+		expect(() => readMonoWav(stereo)).toThrow(InvalidWavFormatError);
+	});
+
+	it("throws InvalidWavFormatError when the declared data chunk overruns the buffer", () => {
+		const bytes = writeMonoWav(new Int16Array([1, 2, 3]), 24_000);
+		const view = new DataView(bytes.buffer);
+		view.setUint32(40, 0xffff_ffff, true);
+		expect(() => readMonoWav(bytes)).toThrow(InvalidWavFormatError);
 	});
 });

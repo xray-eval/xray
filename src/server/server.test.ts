@@ -4,6 +4,7 @@ import { makeReplayEvents } from "./replays/replays.events.ts";
 import { createApp } from "./server.ts";
 import type { Store } from "./store/store.ts";
 import { makeTempStore } from "./store/test-utils.ts";
+import { makeFakeTtsProvider } from "./tts/tts.test-utils.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 let store: Store;
@@ -17,6 +18,7 @@ beforeEach(() => {
 		audioRoot: audio.path,
 		jobRunner: makeFakeJobRunner(),
 		events: makeReplayEvents(),
+		ttsProvider: makeFakeTtsProvider(),
 	});
 });
 

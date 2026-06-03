@@ -25,8 +25,11 @@ def test_replay_spec_payload_matches_wire_shape():
     )
     payload = c.to_conversation_spec_payload()
     assert payload["name"] == "My conv"
+    # A user turn with no explicit audio defaults to server-side TTS —
+    # emitted explicitly so the server synthesizes exactly the turns the
+    # wire declares. Agent turns never carry audio.
     assert payload["turns"] == [
-        {"role": "user", "text": "hi there", "key": "u0"},
+        {"role": "user", "text": "hi there", "key": "u0", "audio": {"kind": "tts"}},
         {"role": "agent", "key": "a0"},
     ]
     # SDK does no hashing — server is the sole authority.

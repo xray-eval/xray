@@ -38,6 +38,7 @@ import io
 import json
 import logging
 import signal
+import wave
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass
@@ -75,7 +76,13 @@ from xray.errors import (
 )
 from xray.otel import attach_replay_baggage
 from xray.otel import install as install_otel
-from xray.runtime.base import Runtime, RuntimeBindable, RuntimeResult, StoppableRuntime
+from xray.runtime.base import (
+    Runtime,
+    RuntimeBindable,
+    RuntimeResult,
+    StoppableRuntime,
+    UserAudioInjectable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +164,14 @@ async def run(
         )
         conversation_hash = conversation_upsert.hash
 
+        # 1b. Prefetch every user turn's audio (server-synthesized tts or
+        # the recorded WAV the upsert just stored) BEFORE creating the
+        # Replay row — a prefetch failure aborts cleanly with no orphan
+        # `pending` replay to garbage-collect.
+        user_audio = await _prefetch_user_audio(
+            client=client, conversation=conversation, conversation_hash=conversation_hash
+        )
+
         # 2. Create Replay eagerly so the runtime can propagate the id
         # via OTEL baggage BEFORE the dev's agent emits its first span.
         create_body: ReplayCreateBody = {"conversation_hash": conversation_hash}
@@ -177,6 +192,7 @@ async def run(
             conversation_hash=conversation_hash,
             replay_id=replay_id,
             runtime=runtime,
+            user_audio=user_audio,
         )
 
 
@@ -260,6 +276,7 @@ async def _drive_replay(
     runtime: Runtime,
     sigint_routing: bool = False,
     require_audio: bool = False,
+    user_audio: dict[int, bytes] | None = None,
 ) -> ReplayResult:
     """Steps 3-8 of the orchestrator: bind the runtime, install the OTEL
     pipeline, run, upload the mixdown, kick off /analyze, wait for the
@@ -276,6 +293,8 @@ async def _drive_replay(
     """
     if isinstance(runtime, RuntimeBindable):
         runtime.bind(replay_id=replay_id, conversation_hash=conversation_hash)
+    if user_audio is not None and isinstance(runtime, UserAudioInjectable):
+        runtime.inject_user_audio(user_audio)
     tracer_provider: TracerProvider = install_otel(endpoint=xray_url)
     baggage_token: contextvars.Token[Context] = attach_replay_baggage(
         replay_id=replay_id,
@@ -651,6 +670,62 @@ def _check_recorded_audio_exists(conversation: Conversation) -> None:
         path = Path(audio.path)
         if not path.is_file():
             raise AudioMissingError(f"recorded audio file not found: {path}", turn_idx=idx)
+
+
+# Matches the runtime's publish format (livekit.py SAMPLE_RATE et al.) and
+# the server's stored-turn-audio contract: 48 kHz / mono / 16-bit.
+_TURN_AUDIO_RATE = 48_000
+_TURN_AUDIO_CHANNELS = 1
+_TURN_AUDIO_SAMPLE_WIDTH = 2
+
+
+async def _prefetch_user_audio(
+    *,
+    client: httpx.AsyncClient,
+    conversation: Conversation,
+    conversation_hash: str,
+) -> dict[int, bytes]:
+    """Fetch every user turn's audio from the server and decode to raw
+    PCM keyed by turn idx. The server is the single audio source — the
+    synthesized tts WAVs and the content-addressed recorded WAVs both
+    come back through the same endpoint, so the driver publishes exactly
+    the bytes the conversation hash pinned."""
+    audio: dict[int, bytes] = {}
+    for idx, turn in enumerate(conversation.turns):
+        if turn.role != "user":
+            continue
+        endpoint = f"/v1/conversations/{conversation_hash}/turns/{idx}/audio"
+        r = await client.get(endpoint)
+        _raise_for_status_typed(r, f"GET {endpoint}")
+        audio[idx] = _wav_bytes_to_pcm(r.content, turn_idx=idx)
+    return audio
+
+
+def _wav_bytes_to_pcm(data: bytes, *, turn_idx: int) -> bytes:
+    """Decode a server-served turn WAV to raw PCM, enforcing the
+    48 kHz / mono / 16-bit contract — a mismatch is a server bug we want
+    pinned to the turn rather than surfacing as distorted playback."""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as w:
+            rate = w.getframerate()
+            channels = w.getnchannels()
+            width = w.getsampwidth()
+            pcm = w.readframes(w.getnframes())
+    except (wave.Error, EOFError) as e:
+        raise AudioMissingError(
+            f"turn {turn_idx}: server returned an unreadable WAV: {e}", turn_idx=turn_idx
+        ) from e
+    if (
+        rate != _TURN_AUDIO_RATE
+        or channels != _TURN_AUDIO_CHANNELS
+        or width != _TURN_AUDIO_SAMPLE_WIDTH
+    ):
+        raise AudioMissingError(
+            f"turn {turn_idx}: server returned {rate} Hz / {channels} ch / {width * 8}-bit "
+            f"audio, expected {_TURN_AUDIO_RATE} Hz / {_TURN_AUDIO_CHANNELS} ch / 16-bit",
+            turn_idx=turn_idx,
+        )
+    return pcm
 
 
 @contextmanager
