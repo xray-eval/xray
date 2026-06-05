@@ -31,6 +31,25 @@ describe("loadEnv", () => {
 		expect(() => loadEnv({ XRAY_DATA_DIR: "" })).toThrow(InvalidEnvError);
 	});
 
+	test("accepts the Mistral provider selectors and MISTRAL_API_KEY", () => {
+		const env = loadEnv({
+			MISTRAL_API_KEY: "mk-x",
+			XRAY_TRANSCRIPTION_PROVIDER: "mistral-voxtral",
+			XRAY_JUDGE_PROVIDER: "mistral",
+		});
+		expect(env.MISTRAL_API_KEY).toBe("mk-x");
+		expect(env.XRAY_TRANSCRIPTION_PROVIDER).toBe("mistral-voxtral");
+		expect(env.XRAY_JUDGE_PROVIDER).toBe("mistral");
+	});
+
+	test("throws InvalidEnvError on an unknown provider selector", () => {
+		expect(() => loadEnv({ XRAY_TRANSCRIPTION_PROVIDER: "deepgram" })).toThrow(InvalidEnvError);
+	});
+
+	test("throws InvalidEnvError on empty MISTRAL_API_KEY", () => {
+		expect(() => loadEnv({ MISTRAL_API_KEY: "" })).toThrow(InvalidEnvError);
+	});
+
 	test("throws InvalidEnvError on non-numeric PORT", () => {
 		expect(() => loadEnv({ PORT: "not-a-number" })).toThrow(InvalidEnvError);
 	});
