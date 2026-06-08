@@ -1,31 +1,19 @@
 import * as v from "valibot";
 
 import { makeFetch } from "@/server/core/test-utils.ts";
+import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
-import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import { createOpenAIJudgeProvider } from "./judges.openai.ts";
 import { describe, expect, it } from "bun:test";
 
-const ChatBodySchema = v.object({
-	model: v.optional(v.unknown()),
-	temperature: v.optional(v.unknown()),
-	response_format: v.optional(v.unknown()),
-});
-type ChatBody = v.InferOutput<typeof ChatBodySchema>;
+// The request/parse/error behavior is covered once in
+// judges.openai-compatible.test.ts. This file pins only what the OpenAI
+// wrapper configures: its url, default model, and credential env var.
 
-function asChatBody(value: unknown): ChatBody | null {
-	const result = v.safeParse(ChatBodySchema, value);
-	return result.success ? result.output : null;
-}
-
-const ResponseFormatSchema = v.object({
-	type: v.optional(v.unknown()),
-});
-type ResponseFormat = v.InferOutput<typeof ResponseFormatSchema>;
-
-function asResponseFormat(value: unknown): ResponseFormat | null {
-	const result = v.safeParse(ResponseFormatSchema, value);
-	return result.success ? result.output : null;
+const ModelSchema = v.object({ model: v.optional(v.unknown()) });
+function observedModel(body: unknown): unknown {
+	const result = v.safeParse(ModelSchema, body);
+	return result.success ? result.output.model : undefined;
 }
 
 function chatResponse(content: string): Response {
@@ -36,34 +24,28 @@ function chatResponse(content: string): Response {
 }
 
 describe("createOpenAIJudgeProvider", () => {
-	it("posts to /v1/chat/completions with json_object response_format, pinned gpt-4o snapshot, temperature 0", async () => {
+	it("posts to the OpenAI chat URL with the pinned gpt-4o snapshot and parses the verdict", async () => {
 		let observedUrl = "";
-		let observedAuth = "";
-		let observedBody: ChatBody = {};
-		const fetchImpl = makeFetch(({ url, headers, body }) => {
+		let model: unknown;
+		const fetchImpl = makeFetch(({ url, body }) => {
 			observedUrl = url;
-			observedAuth = headers.get("authorization") ?? "";
-			const parsed = asChatBody(body);
-			if (parsed !== null) observedBody = parsed;
-			return chatResponse(JSON.stringify({ score: 80, reason: "matches" }));
+			model = observedModel(body);
+			return chatResponse(JSON.stringify({ score: 72, reason: "agent confirmed the booking" }));
 		});
 		const provider = createOpenAIJudgeProvider({ apiKey: () => "sk-test", fetchImpl });
-		await provider.judge({ systemPrompt: "sys", userPrompt: "user" });
+		expect(provider.name).toBe("openai");
+		const out = await provider.judge({ systemPrompt: "sys", userPrompt: "user" });
 		expect(observedUrl).toBe("https://api.openai.com/v1/chat/completions");
-		expect(observedAuth).toBe("Bearer sk-test");
-		// Pinned snapshot, not the floating `gpt-4o` alias — verdict
-		// stability across days.
-		expect(observedBody.model).toBe("gpt-4o-2024-08-06");
-		expect(observedBody.temperature).toBe(0);
-		const rf = asResponseFormat(observedBody.response_format);
-		expect(rf?.type).toBe("json_object");
+		// Pinned snapshot, not the floating `gpt-4o` alias — verdict stability.
+		expect(model).toBe("gpt-4o-2024-08-06");
+		expect(provider.model).toBe("gpt-4o-2024-08-06");
+		expect(out.score).toBe(72);
 	});
 
 	it("respects an explicit model override", async () => {
-		let observedModel = "";
+		let model: unknown;
 		const fetchImpl = makeFetch(({ body }) => {
-			const parsed = asChatBody(body);
-			if (parsed !== null && typeof parsed.model === "string") observedModel = parsed.model;
+			model = observedModel(body);
 			return chatResponse(JSON.stringify({ score: 90, reason: "ok" }));
 		});
 		const provider = createOpenAIJudgeProvider({
@@ -72,60 +54,18 @@ describe("createOpenAIJudgeProvider", () => {
 			fetchImpl,
 		});
 		await provider.judge({ systemPrompt: "s", userPrompt: "u" });
-		expect(observedModel).toBe("gpt-4o-mini");
+		expect(model).toBe("gpt-4o-mini");
 	});
 
-	it("returns the parsed score + reason on a valid response", async () => {
-		const fetchImpl = makeFetch(() =>
-			chatResponse(JSON.stringify({ score: 72, reason: "agent confirmed the booking" })),
-		);
-		const provider = createOpenAIJudgeProvider({ apiKey: () => "sk", fetchImpl });
-		const out = await provider.judge({ systemPrompt: "s", userPrompt: "u" });
-		expect(out.score).toBe(72);
-		expect(out.reason).toBe("agent confirmed the booking");
-	});
-
-	it("rounds non-integer scores to the nearest integer", async () => {
-		const fetchImpl = makeFetch(() => chatResponse(JSON.stringify({ score: 87.6, reason: "x" })));
-		const provider = createOpenAIJudgeProvider({ apiKey: () => "sk", fetchImpl });
-		const out = await provider.judge({ systemPrompt: "s", userPrompt: "u" });
-		expect(out.score).toBe(88);
-	});
-
-	it("throws JudgeProviderError on 4xx/5xx, preserving status code", async () => {
-		const fetchImpl = makeFetch(() => new Response("nope", { status: 401 }));
-		const provider = createOpenAIJudgeProvider({ apiKey: () => "sk", fetchImpl });
+	it("names OPENAI_API_KEY in the missing-credential error", async () => {
+		const provider = createOpenAIJudgeProvider({ apiKey: () => undefined, fetchImpl: fetch });
 		const err = await provider.judge({ systemPrompt: "s", userPrompt: "u" }).then(
 			() => null,
 			(e: unknown) => e,
 		);
-		if (!(err instanceof JudgeProviderError)) {
-			throw new Error(`expected JudgeProviderError, got ${err}`);
+		if (!(err instanceof MissingProviderCredentialError)) {
+			throw new Error(`expected MissingProviderCredentialError, got ${err}`);
 		}
-		expect(err.statusCode).toBe(401);
-	});
-
-	it("throws JudgeOutputParseError when the model's content is not valid JSON", async () => {
-		const fetchImpl = makeFetch(() => chatResponse("not json"));
-		const provider = createOpenAIJudgeProvider({ apiKey: () => "sk", fetchImpl });
-		await expect(provider.judge({ systemPrompt: "s", userPrompt: "u" })).rejects.toBeInstanceOf(
-			JudgeOutputParseError,
-		);
-	});
-
-	it("throws JudgeOutputParseError when score is outside 0..100", async () => {
-		const fetchImpl = makeFetch(() => chatResponse(JSON.stringify({ score: 150, reason: "x" })));
-		const provider = createOpenAIJudgeProvider({ apiKey: () => "sk", fetchImpl });
-		await expect(provider.judge({ systemPrompt: "s", userPrompt: "u" })).rejects.toBeInstanceOf(
-			JudgeOutputParseError,
-		);
-	});
-
-	it("throws JudgeOutputParseError when reason is missing", async () => {
-		const fetchImpl = makeFetch(() => chatResponse(JSON.stringify({ score: 50 })));
-		const provider = createOpenAIJudgeProvider({ apiKey: () => "sk", fetchImpl });
-		await expect(provider.judge({ systemPrompt: "s", userPrompt: "u" })).rejects.toBeInstanceOf(
-			JudgeOutputParseError,
-		);
+		expect(err.envVar).toBe("OPENAI_API_KEY");
 	});
 });
