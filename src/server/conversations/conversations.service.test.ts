@@ -1,6 +1,7 @@
 import type { Judge } from "@/server/judges/judges.types.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
+import { TtsTurnMissingTextError, TtsTurnRoleError } from "./conversations.errors.ts";
 import {
 	canonicalizeAndHashSpec,
 	canonicalStringify,
@@ -14,6 +15,26 @@ import {
 import { makeTurns } from "./conversations.test-utils.ts";
 import type { ConversationTurn } from "./conversations.types.ts";
 import { describe, expect, it } from "bun:test";
+
+/** Deterministic stand-in for the tts synthesizer: sha derived from the
+ *  call inputs so tests can assert which (text, voice) was synthesized. */
+function fakeSynthesizer(): {
+	synthesize: (input: { text: string; voiceId?: string }) => Promise<{ sha256: string }>;
+	calls: { text: string; voiceId?: string }[];
+} {
+	const calls: { text: string; voiceId?: string }[] = [];
+	return {
+		calls,
+		async synthesize(input) {
+			calls.push(input);
+			const tag = `${input.text}|${input.voiceId ?? ""}`;
+			const hex = [...new TextEncoder().encode(tag)]
+				.map((b) => b.toString(16).padStart(2, "0"))
+				.join("");
+			return { sha256: hex.padEnd(64, "0").slice(0, 64) };
+		},
+	};
+}
 
 async function hashOf(
 	turns: readonly ConversationTurn[],
@@ -348,6 +369,7 @@ describe("materializeRequestTurns", () => {
 				{ role: "agent", assertions: [] },
 			],
 			map,
+			fakeSynthesizer().synthesize,
 		);
 		expect(audioWrites).toHaveLength(1);
 		const sha = audioWrites[0]?.sha256 ?? "";
@@ -369,6 +391,7 @@ describe("materializeRequestTurns", () => {
 					},
 				],
 				new Map(),
+				fakeSynthesizer().synthesize,
 			),
 		).rejects.toThrow(/upload_key/);
 	});
@@ -378,11 +401,13 @@ describe("materializeRequestTurns", () => {
 			materializeRequestTurns(
 				[{ role: "user", text: "hi", assertions: [] }],
 				new Map<string, Uint8Array<ArrayBuffer>>([["orphan", new Uint8Array([0])]]),
+				fakeSynthesizer().synthesize,
 			),
 		).rejects.toThrow(/orphan/);
 	});
 
-	it("passes through TTS audio turns unchanged", async () => {
+	it("synthesizes TTS turns and substitutes the generated audio sha into the canonical form", async () => {
+		const synth = fakeSynthesizer();
 		const { canonicalTurns } = await materializeRequestTurns(
 			[
 				{
@@ -394,7 +419,83 @@ describe("materializeRequestTurns", () => {
 				{ role: "agent", assertions: [] },
 			],
 			new Map(),
+			synth.synthesize,
 		);
-		expect(canonicalTurns[0]?.audio).toEqual({ kind: "tts", voice_id: "nova" });
+		expect(synth.calls).toEqual([{ text: "hi", voiceId: "nova" }]);
+		const audio = canonicalTurns[0]?.audio;
+		if (audio?.kind !== "tts") throw new Error(`expected tts audio, got ${JSON.stringify(audio)}`);
+		expect(audio.sha256).toMatch(/^[0-9a-f]{64}$/);
+		expect(audio.voice_id).toBe("nova");
+		expect(canonicalTurns[1]?.audio).toBeUndefined();
+	});
+
+	it("omits voice_id from the canonical tts ref when the spec didn't set one", async () => {
+		const synth = fakeSynthesizer();
+		const { canonicalTurns } = await materializeRequestTurns(
+			[{ role: "user", text: "hi", audio: { kind: "tts" }, assertions: [] }],
+			new Map(),
+			synth.synthesize,
+		);
+		expect(synth.calls).toEqual([{ text: "hi" }]);
+		const audio = canonicalTurns[0]?.audio;
+		if (audio?.kind !== "tts") throw new Error("expected tts audio");
+		expect("voice_id" in audio).toBe(false);
+	});
+
+	it("throws TtsTurnMissingTextError for a tts turn without text", async () => {
+		await expect(
+			materializeRequestTurns(
+				[{ role: "user", audio: { kind: "tts" }, assertions: [] }],
+				new Map(),
+				fakeSynthesizer().synthesize,
+			),
+		).rejects.toBeInstanceOf(TtsTurnMissingTextError);
+	});
+
+	it("throws TtsTurnRoleError for a tts audio ref on an agent turn", async () => {
+		await expect(
+			materializeRequestTurns(
+				[{ role: "agent", text: "x", audio: { kind: "tts" }, assertions: [] }],
+				new Map(),
+				fakeSynthesizer().synthesize,
+			),
+		).rejects.toBeInstanceOf(TtsTurnRoleError);
+	});
+
+	it("validates every tts turn up front — a later invalid turn bills no earlier synthesis", async () => {
+		const synth = fakeSynthesizer();
+		await expect(
+			materializeRequestTurns(
+				[
+					{ role: "user", text: "first", audio: { kind: "tts" }, assertions: [] },
+					{ role: "user", audio: { kind: "tts" }, assertions: [] },
+				],
+				new Map(),
+				synth.synthesize,
+			),
+		).rejects.toBeInstanceOf(TtsTurnMissingTextError);
+		expect(synth.calls).toEqual([]);
+	});
+
+	it("cancels in-flight tts synthesis when a sibling synthesis fails", async () => {
+		let firstSignal: AbortSignal | undefined;
+		const synth = (input: { text: string }, signal?: AbortSignal): Promise<{ sha256: string }> => {
+			if (input.text === "boom") return Promise.reject(new Error("provider boom"));
+			firstSignal = signal;
+			const { promise, reject } = Promise.withResolvers<{ sha256: string }>();
+			signal?.addEventListener("abort", () => reject(new Error("cancelled")));
+			return promise;
+		};
+		await expect(
+			materializeRequestTurns(
+				[
+					{ role: "user", text: "slow", audio: { kind: "tts" }, assertions: [] },
+					{ role: "user", text: "boom", audio: { kind: "tts" }, assertions: [] },
+				],
+				new Map(),
+				synth,
+			),
+		).rejects.toThrow();
+		expect(firstSignal?.aborted).toBe(true);
 	});
 });

@@ -4,6 +4,7 @@ import {
 	ConversationNotFoundError,
 	InvalidConversationHashError,
 	InvalidConversationRequestError,
+	InvalidTurnIndexError,
 	MalformedConversationBodyError,
 	MissingSpecPartError,
 	RecordedAudioUploadKeyError,
@@ -40,6 +41,22 @@ describe("ConversationError subclasses", () => {
 		]);
 		expect(e).toBeInstanceOf(ConversationError);
 		expect(e.name).toBe("InvalidConversationRequestError");
+		expect(e.issues).toHaveLength(1);
+	});
+
+	it("InvalidTurnIndexError carries issues + name", () => {
+		const e = new InvalidTurnIndexError([
+			{
+				kind: "schema",
+				type: "x",
+				input: undefined,
+				expected: null,
+				received: "undefined",
+				message: "m",
+			},
+		]);
+		expect(e).toBeInstanceOf(ConversationError);
+		expect(e.name).toBe("InvalidTurnIndexError");
 		expect(e.issues).toHaveLength(1);
 	});
 

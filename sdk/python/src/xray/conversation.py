@@ -45,8 +45,14 @@ class RecordedAudio:
 
 @dataclass(frozen=True)
 class TtsAudio:
-    """Synthesize from ``Turn.text`` via OpenAI TTS. Cached per
-    conversation at ``~/.cache/xray-py/<hash>/<voice_id>.wav``."""
+    """Synthesize from ``Turn.text`` **server-side** during the
+    conversation upsert. The xray server picks the TTS provider
+    (``XRAY_TTS_PROVIDER`` — OpenAI / Google / Mistral), stores the
+    generated 48 kHz WAV content-addressed, and folds its sha256 into the
+    conversation hash; the driver pulls the bytes back before the run.
+    ``voice_id`` is provider-specific and wins over the server's
+    ``XRAY_TTS_VOICE`` default. A user turn with no ``audio`` at all is
+    equivalent to ``TtsAudio()``."""
 
     voice_id: str | None = None
     kind: Literal["tts"] = field(default="tts", init=False)
@@ -351,6 +357,12 @@ def _turn_to_wire(turn: Turn, turn_idx: int) -> TurnWirePayload:
         out["key"] = turn.key
     if turn.audio is not None:
         out["audio"] = _audio_to_wire(turn.audio, turn_idx)
+    elif turn.role == "user":
+        # A user turn always needs audio for the driver to publish. No
+        # explicit ref means server-side TTS — emitted explicitly so the
+        # server never has to guess (it synthesizes exactly the turns
+        # whose wire form says `tts`).
+        out["audio"] = {"kind": "tts"}
     if len(turn.assertions) > 0:
         out["assertions"] = [a.to_wire() for a in turn.assertions]
     return out

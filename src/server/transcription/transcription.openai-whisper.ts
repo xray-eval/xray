@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
+import { mergeAbortSignals } from "@/server/core/abort.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 
@@ -47,18 +48,6 @@ export interface OpenAIWhisperOptions {
 	readonly model?: string;
 	readonly fetchImpl?: FetchLike;
 	readonly timeoutMs?: number;
-}
-
-/**
- * Combine an external AbortSignal (e.g. shared by sibling Promise.all
- * Whisper calls) with the internal per-request timeout. When either fires,
- * the merged signal aborts — so a failing sibling cancels the in-flight
- * siblings instead of letting them keep burning the API quota.
- */
-function mergeAbortSignals(external: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	const timeoutSignal = AbortSignal.timeout(timeoutMs);
-	if (external === undefined) return timeoutSignal;
-	return AbortSignal.any([external, timeoutSignal]);
 }
 
 /**

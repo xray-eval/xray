@@ -14,6 +14,7 @@ WebSocket runtimes that don't need replay-id propagation can omit it.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -73,6 +74,22 @@ class RuntimeBindable(Protocol):
 
 
 @runtime_checkable
+class UserAudioInjectable(Protocol):
+    """Optional contract for runtimes that play scripted user-turn audio.
+    The orchestrator prefetches every user turn's 48 kHz mono PCM from
+    the server (``GET /v1/conversations/:hash/turns/:idx/audio``) and
+    hands the map (turn idx → PCM bytes) to the runtime before ``run``.
+    Runtimes without scripted user audio (live mic) simply don't
+    implement it.
+
+    Structural — ``isinstance(rt, UserAudioInjectable)`` works because of
+    ``@runtime_checkable``.
+    """
+
+    def inject_user_audio(self, audio: Mapping[int, bytes]) -> None: ...
+
+
+@runtime_checkable
 class StoppableRuntime(Protocol):
     """Optional contract for runtimes that run open-endedly until told to
     stop — e.g. a live mic session that ends on Ctrl+C. ``xray.run_live``
@@ -91,4 +108,5 @@ __all__ = [
     "RuntimeBindable",
     "RuntimeResult",
     "StoppableRuntime",
+    "UserAudioInjectable",
 ]

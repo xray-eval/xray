@@ -19,15 +19,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from xray import Conversation, SimulatedSipCall, Turn
-from xray.conversation import RecordedAudio, TtsAudio
-from xray.errors import AgentNotJoinedError, RuntimeBindError
+from xray.errors import AgentNotJoinedError, AudioMissingError, RuntimeBindError
 from xray.runtime.livekit import (
-    NUM_CHANNELS,
     SAMPLE_RATE,
     SAMPLE_WIDTH_BYTES,
     LiveKitRuntime,
     _TurnSegment,
-    _upsample_2x_int16,
     write_stereo_mixdown,
 )
 
@@ -197,19 +194,11 @@ def _make_silence_pcm(ms: int) -> bytes:
     return b"\x00\x00" * sample_count
 
 
-def _write_recorded_wav(path: Path, ms: int = 40) -> None:
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(NUM_CHANNELS)
-        w.setsampwidth(SAMPLE_WIDTH_BYTES)
-        w.setframerate(SAMPLE_RATE)
-        w.writeframes(_make_silence_pcm(ms))
-
-
 def _runtime(
     tmp_path: Path,
     lk_rtc: Any,
     lk_api: Any,
-    openai_tts: Any | None = None,
+    user_audio: dict[int, bytes] | None = None,
 ) -> LiveKitRuntime:
     rt = LiveKitRuntime(
         url="wss://fake",
@@ -220,9 +209,9 @@ def _runtime(
         mixdown_dir=tmp_path / "mix",
         _lk_rtc=lk_rtc,
         _lk_api=lk_api,
-        _openai_tts=openai_tts,
     )
     rt.bind(replay_id="rep-1", conversation_hash="a" * 64)
+    rt.inject_user_audio(user_audio if user_audio is not None else {0: _make_silence_pcm(40)})
     return rt
 
 
@@ -267,10 +256,20 @@ def test_runtime_threads_simulated_sip_into_minted_token():
     assert attrs["sip.phoneNumber"] == "+15551234567"
 
 
-def test_upsample_2x_doubles_sample_count():
-    pcm = b"\x00\x10" * 100  # 100 samples
-    out = _upsample_2x_int16(pcm)
-    assert len(out) == len(pcm) * 2
+def test_missing_injected_audio_raises_audio_missing(tmp_path: Path):
+    """A user turn whose idx has no injected PCM is a wiring bug — the
+    runtime fails fast with the turn pinned instead of publishing
+    silence."""
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join()])
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api, user_audio={})
+
+    conv = Conversation(name="c", turns=[Turn.user("hi", key="u0")])
+
+    with pytest.raises(AudioMissingError) as exc:
+        asyncio.run(rt.run(conv))
+    assert exc.value.failure_reason == "audio_missing"
+    assert exc.value.turn_idx == 0
 
 
 def test_write_stereo_mixdown_round_trips(tmp_path: Path):
@@ -310,17 +309,14 @@ def test_write_stereo_mixdown_handles_empty_segments(tmp_path: Path):
         assert w.getnframes() == 0
 
 
-def test_runtime_publishes_recorded_user_turn_and_produces_mixdown(tmp_path: Path):
-    wav_path = tmp_path / "u0.wav"
-    _write_recorded_wav(wav_path, ms=40)
-
+def test_runtime_publishes_injected_user_turn_and_produces_mixdown(tmp_path: Path):
     rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join()])
     api = _build_fake_lk_api()
-    rt = _runtime(tmp_path, rtc, api)
+    rt = _runtime(tmp_path, rtc, api, user_audio={0: _make_silence_pcm(40)})
 
     conv = Conversation(
         name="c",
-        turns=[Turn.user("hi", key="u0", audio=RecordedAudio(path=str(wav_path)))],
+        turns=[Turn.user("hi", key="u0")],
     )
 
     result = asyncio.run(rt.run(conv))
@@ -337,9 +333,6 @@ def test_runtime_publishes_recorded_user_turn_and_produces_mixdown(tmp_path: Pat
 
 
 def test_runtime_captures_agent_turn_via_transcription(tmp_path: Path):
-    wav_path = tmp_path / "u0.wav"
-    _write_recorded_wav(wav_path, ms=40)
-
     track_event = _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)])
     track_obj = track_event[1][0]
     transcription_event = _stage_transcription_final("confirmed at 7pm")
@@ -368,7 +361,7 @@ def test_runtime_captures_agent_turn_via_transcription(tmp_path: Path):
     conv = Conversation(
         name="c",
         turns=[
-            Turn.user("hello", key="u0", audio=RecordedAudio(path=str(wav_path))),
+            Turn.user("hello", key="u0"),
             Turn.agent(key="a0"),
         ],
     )
@@ -402,9 +395,6 @@ def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
     ``examples/livekit-voice-agent/`` as a 2-turn server-derived VAD
     output for a 3-turn conversation)."""
 
-    wav_path = tmp_path / "u0.wav"
-    _write_recorded_wav(wav_path, ms=40)
-
     track_event = _stage_agent_track([_make_silence_pcm(20)])
     track_obj = track_event[1][0]
     # Fire a final segment for the FIRST agent turn during its frame play.
@@ -427,7 +417,7 @@ def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
     track_obj._xray_after_frame_callbacks = [_fire_first]
 
     api = _build_fake_lk_api()
-    rt = _runtime(tmp_path, rtc, api)
+    rt = _runtime(tmp_path, rtc, api, user_audio={1: _make_silence_pcm(40)})
     rt.agent_turn_timeout_s = 0.3
 
     # Wrap _play_user_turn to fire the stale event AFTER the user turn
@@ -446,7 +436,7 @@ def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
         name="c",
         turns=[
             Turn.agent(key="a0"),
-            Turn.user("hi", key="u0", audio=RecordedAudio(path=str(wav_path))),
+            Turn.user("hi", key="u0"),
             Turn.agent(key="a1"),
         ],
     )
@@ -494,16 +484,13 @@ def test_user_turn_emits_xray_turn_span(tmp_path: Path, monkeypatch: pytest.Monk
     # the in-memory exporter.
     monkeypatch.setattr(livekit_mod, "_TRACER", provider.get_tracer("xray-py-driver", "0.0.1"))
 
-    wav_path = tmp_path / "u0.wav"
-    _write_recorded_wav(wav_path, ms=40)
-
     rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join()])
     api = _build_fake_lk_api()
     rt = _runtime(tmp_path, rtc, api)
 
     conv = Conversation(
         name="c",
-        turns=[Turn.user("hello there", key="u0", audio=RecordedAudio(path=str(wav_path)))],
+        turns=[Turn.user("hello there", key="u0")],
     )
     asyncio.run(rt.run(conv))
 
@@ -541,9 +528,6 @@ def test_driver_emits_xray_turn_for_user_and_agent(tmp_path: Path, monkeypatch: 
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     monkeypatch.setattr(livekit_mod, "_TRACER", provider.get_tracer("xray-py-driver", "0.0.1"))
 
-    wav_path = tmp_path / "u0.wav"
-    _write_recorded_wav(wav_path, ms=40)
-
     track_event = _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)])
     track_obj = track_event[1][0]
     transcription_event = _stage_transcription_final("confirmed at 7pm")
@@ -568,7 +552,7 @@ def test_driver_emits_xray_turn_for_user_and_agent(tmp_path: Path, monkeypatch: 
     conv = Conversation(
         name="c",
         turns=[
-            Turn.user("hello", key="u0", audio=RecordedAudio(path=str(wav_path))),
+            Turn.user("hello", key="u0"),
             Turn.agent(key="a0"),
         ],
     )
@@ -608,31 +592,20 @@ def test_driver_emits_xray_turn_for_user_and_agent(tmp_path: Path, monkeypatch: 
     assert user_attrs.get("xray.turn.idx") != agent_attrs.get("xray.turn.idx")
 
 
-def test_tts_path_uses_openai_injection_and_caches(tmp_path: Path):
-    calls: list[dict[str, Any]] = []
+def test_injected_audio_is_published_verbatim(tmp_path: Path):
+    """The runtime publishes exactly the injected PCM — no resampling, no
+    local synthesis, no filesystem reads. Frame count over the audio
+    source must equal ceil(samples / SAMPLES_PER_FRAME)."""
+    pcm = _make_silence_pcm(40)  # 40ms @ 48kHz = 1920 samples = 2 frames
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join()])
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api, user_audio={0: pcm})
 
-    async def _fake_tts(text: str, voice: str, model: str) -> bytes:
-        calls.append({"text": text, "voice": voice, "model": model})
-        return b"\x00\x00" * 480  # 20 ms of 24 kHz silence (480 samples)
+    conv = Conversation(name="conv-x", turns=[Turn.user("hello world", key="u0")])
+    result = asyncio.run(rt.run(conv))
 
-    rtc1 = _build_fake_lk_rtc(staged_events=[_stage_agent_join()])
-    api1 = _build_fake_lk_api()
-    rt1 = _runtime(tmp_path, rtc1, api1, openai_tts=_fake_tts)
-
-    conv = Conversation(
-        name="conv-x",
-        turns=[Turn.user("hello world", key="u0", audio=TtsAudio())],
-    )
-
-    asyncio.run(rt1.run(conv))
-    assert len(calls) == 1
-
-    # Second run with a fresh runtime hitting the same cache_root must
-    # NOT call TTS again — the cached WAV satisfies the request.
-    rtc2 = _build_fake_lk_rtc(staged_events=[_stage_agent_join()])
-    api2 = _build_fake_lk_api()
-    rt2 = _runtime(tmp_path, rtc2, api2, openai_tts=_fake_tts)
-    rt2.replay_id = "rep-2"
-
-    asyncio.run(rt2.run(conv))
-    assert len(calls) == 1
+    room = rtc.Room.rooms[0]
+    track = room.local_participant.publish_track.await_args.args[0]
+    published = b"".join(bytes(f.data) for f in track.source.captured)
+    assert published == pcm
+    assert result.full_audio_path is not None

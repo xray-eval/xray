@@ -75,6 +75,18 @@ export class InvalidConversationHashError extends ConversationError {
 	}
 }
 
+/** Path-param turn index failed validation (non-numeric / out of the
+ *  accepted range) on `GET /v1/conversations/:hash/turns/:idx/audio`. */
+export class InvalidTurnIndexError extends ConversationError {
+	readonly issues: readonly BaseIssue<unknown>[];
+
+	constructor(issues: readonly BaseIssue<unknown>[]) {
+		super("Invalid turn index in path");
+		this.name = "InvalidTurnIndexError";
+		this.issues = issues;
+	}
+}
+
 /** `GET /v1/conversations/:hash` looked up a hash that doesn't exist. */
 export class ConversationNotFoundError extends ConversationError {
 	readonly conversationHash: string;
@@ -110,5 +122,40 @@ export class RecordedAudioUploadKeyError extends ConversationError {
 		this.name = "RecordedAudioUploadKeyError";
 		this.uploadKey = uploadKey;
 		this.reason = reason;
+	}
+}
+
+/** A `{kind: "tts"}` turn arrived without `text` — nothing to synthesize. */
+export class TtsTurnMissingTextError extends ConversationError {
+	readonly turnIdx: number;
+	constructor(turnIdx: number) {
+		super(`Turn ${turnIdx} requests TTS synthesis but carries no text`);
+		this.name = "TtsTurnMissingTextError";
+		this.turnIdx = turnIdx;
+	}
+}
+
+/** A `{kind: "tts"}` audio ref landed on an agent turn. Agent audio is
+ *  observed at runtime, never synthesized — this is a spec authoring bug,
+ *  failed fast with the turn index. */
+export class TtsTurnRoleError extends ConversationError {
+	readonly turnIdx: number;
+	constructor(turnIdx: number) {
+		super(`Turn ${turnIdx} is an agent turn — TTS audio refs are only valid on user turns`);
+		this.name = "TtsTurnRoleError";
+		this.turnIdx = turnIdx;
+	}
+}
+
+/** `GET /v1/conversations/:hash/turns/:idx/audio` hit a turn with no audio
+ *  (agent turn / out-of-range idx) or a missing audio file. */
+export class TurnAudioNotFoundError extends ConversationError {
+	readonly conversationHash: string;
+	readonly turnIdx: number;
+	constructor(conversationHash: string, turnIdx: number) {
+		super(`Conversation "${conversationHash}" turn ${turnIdx} has no audio`);
+		this.name = "TurnAudioNotFoundError";
+		this.conversationHash = conversationHash;
+		this.turnIdx = turnIdx;
 	}
 }

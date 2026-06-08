@@ -9,6 +9,10 @@ import { createGoogleGeminiTranscriptionProvider } from "@/server/transcription/
 import { createMistralVoxtralProvider } from "@/server/transcription/transcription.mistral-voxtral.ts";
 import { createOpenAIWhisperProvider } from "@/server/transcription/transcription.openai-whisper.ts";
 import type { TranscriptionProvider } from "@/server/transcription/transcription.types.ts";
+import { createGoogleGeminiTtsProvider } from "@/server/tts/tts.google-gemini.ts";
+import { createMistralTtsProvider } from "@/server/tts/tts.mistral.ts";
+import { createOpenAITtsProvider } from "@/server/tts/tts.openai.ts";
+import type { TtsProvider } from "@/server/tts/tts.types.ts";
 
 import { AmbiguousProviderConfigError } from "./providers.errors.ts";
 
@@ -84,6 +88,47 @@ export function buildTranscriptionProvider(cfg: Env): TranscriptionProvider {
 		)
 		.with("mistral-voxtral", () =>
 			createMistralVoxtralProvider({
+				apiKey: () => cfg.MISTRAL_API_KEY,
+				...(modelOverride !== undefined ? { model: modelOverride } : {}),
+			}),
+		)
+		.exhaustive();
+}
+
+export function buildTtsProvider(cfg: Env): TtsProvider {
+	const kind = resolveProviderKind(cfg.XRAY_TTS_PROVIDER, "XRAY_TTS_PROVIDER", [
+		{
+			kind: "openai" as const,
+			keyEnvVar: "OPENAI_API_KEY",
+			hasKey: cfg.OPENAI_API_KEY !== undefined,
+		},
+		{
+			kind: "google-gemini" as const,
+			keyEnvVar: "GOOGLE_API_KEY",
+			hasKey: cfg.GOOGLE_API_KEY !== undefined,
+		},
+		{
+			kind: "mistral" as const,
+			keyEnvVar: "MISTRAL_API_KEY",
+			hasKey: cfg.MISTRAL_API_KEY !== undefined,
+		},
+	]);
+	const modelOverride = cfg.XRAY_TTS_MODEL;
+	return match(kind)
+		.with("openai", () =>
+			createOpenAITtsProvider({
+				apiKey: () => cfg.OPENAI_API_KEY,
+				...(modelOverride !== undefined ? { model: modelOverride } : {}),
+			}),
+		)
+		.with("google-gemini", () =>
+			createGoogleGeminiTtsProvider({
+				apiKey: () => cfg.GOOGLE_API_KEY,
+				...(modelOverride !== undefined ? { model: modelOverride } : {}),
+			}),
+		)
+		.with("mistral", () =>
+			createMistralTtsProvider({
 				apiKey: () => cfg.MISTRAL_API_KEY,
 				...(modelOverride !== undefined ? { model: modelOverride } : {}),
 			}),

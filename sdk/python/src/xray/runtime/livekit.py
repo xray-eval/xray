@@ -5,17 +5,18 @@ each user turn as a real audio track, captures the agent's audio +
 transcripts, and tees both into a single stereo WAV mixdown (left =
 user, right = agent) at ``~/.cache/xray-py/replays/<replay>.wav``.
 
-User-side audio is sourced from a :class:`RecordedAudio` (WAV on disk)
-or a :class:`TtsAudio` (synthesized via OpenAI TTS and cached at
-``~/.cache/xray-py/<conversation_hash>/<sha256(text,voice,model)[:16]>.wav``).
-
-The dev's OpenAI key stays in *their* process: the SDK calls OpenAI
-directly when synthesizing, never via xray.
+User-side audio is **server-fed**: the orchestrator prefetches every
+user turn's 48 kHz mono WAV from
+``GET /v1/conversations/:hash/turns/:idx/audio`` (the SDK-uploaded
+recording for ``recorded`` turns, the server-synthesized speech for
+``tts`` turns) and injects the PCM via :meth:`inject_user_audio` before
+``run``. The runtime itself never touches a TTS provider or the local
+filesystem for input audio — the bytes the agent hears are exactly the
+bytes the conversation hash pinned.
 
 Type safety: every LiveKit object reaches us through a Protocol from
 ``_livekit_types`` — no ``Any`` for foreign types. Branches over the
-``AudioRef`` discriminated union and the ``Role`` Literal end in
-``assert_never``.
+``Role`` Literal end in ``assert_never``.
 """
 
 from __future__ import annotations
@@ -23,29 +24,23 @@ from __future__ import annotations
 import array
 import asyncio
 import contextlib
-import hashlib
 import importlib
-import json
 import logging
-import os
 import time
 import wave
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, Final
+from typing import Final
 
-import httpx
 from opentelemetry import baggage, context, trace
 from typing_extensions import assert_never, override
 
 from xray.conversation import (
     AgentResponse,
     Conversation,
-    RecordedAudio,
     Role,
-    TtsAudio,
     Turn,
 )
 from xray.errors import (
@@ -64,7 +59,6 @@ from xray.runtime._livekit_types import (
     LkRtcModule,
     LkTrack,
     LkTranscriptionSegment,
-    OpenAiTtsFn,
 )
 from xray.runtime.base import Runtime, RuntimeResult
 from xray.runtime.sip import SimulatedSipCall
@@ -72,16 +66,13 @@ from xray.runtime.sip import SimulatedSipCall
 logger = logging.getLogger(__name__)
 
 # LiveKit's default is 48 kHz mono. Matching the source rate avoids an
-# in-process resampler dep (audioop is deprecated on 3.13+).
+# in-process resampler dep (audioop is deprecated on 3.13+). The server
+# stores all turn audio at this rate, so injected PCM needs no conversion.
 SAMPLE_RATE: Final[int] = 48000
 NUM_CHANNELS: Final[int] = 1
 SAMPLE_WIDTH_BYTES: Final[int] = 2  # int16
 FRAME_MS: Final[int] = 20
 SAMPLES_PER_FRAME: Final[int] = SAMPLE_RATE * FRAME_MS // 1000
-
-# OpenAI TTS returns raw int16 PCM at 24 kHz when response_format='pcm'.
-# We linearly upsample to 48 kHz so it matches the LiveKit AudioSource.
-_OPENAI_TTS_INPUT_RATE: Final[int] = 24000
 
 
 # Tracer used by the driver to emit per-user-turn ``xray.turn`` spans.
@@ -122,9 +113,9 @@ class _TurnSegment:
 
 @dataclass
 class LiveKitRuntime(Runtime):
-    """Joins a LiveKit room as the user-side test driver. Plays per-turn
-    audio (recorded or OpenAI-TTS), captures the agent's transcripts +
-    audio, and writes one stereo WAV mixdown per replay.
+    """Joins a LiveKit room as the user-side test driver. Plays the
+    orchestrator-injected per-turn audio, captures the agent's
+    transcripts + audio, and writes one stereo WAV mixdown per replay.
 
     Despite living under ``xray.runtime``, this is the *user* side, not
     the agent side — the LiveKit Agents agent worker is the *other*
@@ -147,15 +138,14 @@ class LiveKitRuntime(Runtime):
     # Injection points for tests. None ⇒ load the real packages.
     _lk_rtc: LkRtcModule | None = None
     _lk_api: LkApiModule | None = None
-    _openai_tts: OpenAiTtsFn | None = None
 
     # Populated by the orchestrator before ``run`` is called.
     replay_id: str | None = None
     conversation_hash: str | None = None
-
-    OPENAI_API_URL: ClassVar[str] = "https://api.openai.com/v1/audio/speech"
-    DEFAULT_OPENAI_TTS_MODEL: ClassVar[str] = "gpt-4o-mini-tts"
-    DEFAULT_OPENAI_TTS_VOICE: ClassVar[str] = "alloy"
+    # Per-turn 48 kHz mono int16 PCM, keyed by turn idx. The orchestrator
+    # prefetches every user turn's audio from the server and injects it
+    # here via ``inject_user_audio`` before ``run``.
+    user_audio: dict[int, bytes] = field(default_factory=dict[int, bytes])
 
     def bind(
         self,
@@ -166,6 +156,11 @@ class LiveKitRuntime(Runtime):
         """Called by the orchestrator once it knows the Replay's id."""
         self.replay_id = replay_id
         self.conversation_hash = conversation_hash
+
+    def inject_user_audio(self, audio: Mapping[int, bytes]) -> None:
+        """Receive the orchestrator-prefetched per-turn PCM (48 kHz mono
+        int16), keyed by turn idx. Called before ``run``."""
+        self.user_audio = dict(audio)
 
     @override
     async def run(self, conversation: Conversation) -> RuntimeResult:
@@ -262,13 +257,11 @@ class LiveKitRuntime(Runtime):
     ) -> tuple[list[_TurnSegment], list[AgentResponse]]:
         segments: list[_TurnSegment] = []
         responses: list[AgentResponse] = []
-        conv_hash = self.conversation_hash or "unbound"
         for idx, turn in enumerate(conversation.turns):
             async with _scoped_turn(idx, key=turn.key):
                 match turn.role:
                     case "user":
                         user_seg = await self._play_user_turn(
-                            conv_hash=conv_hash,
                             idx=idx,
                             turn=turn,
                             audio_source=audio_source,
@@ -294,13 +287,12 @@ class LiveKitRuntime(Runtime):
     async def _play_user_turn(
         self,
         *,
-        conv_hash: str,
         idx: int,
         turn: Turn,
         audio_source: LkAudioSource,
         lk_rtc: LkRtcModule,
     ) -> _TurnSegment:
-        pcm = await self._load_or_synth_user_pcm(conv_hash=conv_hash, idx=idx, turn=turn)
+        pcm = self._injected_user_pcm(idx)
         transcript = turn.text or ""
         segment = _TurnSegment(role="user", idx=idx, key=turn.key, transcript=transcript)
         # Emit an ``xray.turn`` span scoped to the audio publish so the
@@ -454,69 +446,21 @@ class LiveKitRuntime(Runtime):
             raise MixdownError(f"could not write mixdown WAV: {e}") from e
         return out_path
 
-    async def _load_or_synth_user_pcm(self, *, conv_hash: str, idx: int, turn: Turn) -> bytes:
-        match turn.audio:
-            case RecordedAudio(path=path):
-                return _read_wav_as_pcm48k_mono(Path(path), turn_idx=idx)
-            case TtsAudio(voice_id=voice_id):
-                return await self._synth_tts_pcm(
-                    conv_hash=conv_hash, idx=idx, turn=turn, voice_id=voice_id
-                )
-            case None:
-                # No explicit audio → fall back to TTS. The missing-text
-                # case is raised inside _synth_tts_pcm.
-                return await self._synth_tts_pcm(
-                    conv_hash=conv_hash, idx=idx, turn=turn, voice_id=None
-                )
-            case _:
-                assert_never(turn.audio)
-
-    async def _synth_tts_pcm(
-        self, *, conv_hash: str, idx: int, turn: Turn, voice_id: str | None
-    ) -> bytes:
-        if turn.text is None:
+    def _injected_user_pcm(self, idx: int) -> bytes:
+        """PCM for user turn ``idx`` from the orchestrator-injected map.
+        Absence is a programming error in the calling layer (prefetch
+        skipped, or the runtime was run without an orchestrator) — not a
+        recoverable condition, so it raises ``AudioMissingError`` with the
+        turn pinned."""
+        pcm = self.user_audio.get(idx)
+        if pcm is None:
             raise AudioMissingError(
-                f"turn {idx}: TTS requested but no text provided",
+                f"turn {idx}: no injected user audio — run the runtime via xray.run() "
+                "(the orchestrator prefetches turn audio from the server), or inject "
+                "PCM via inject_user_audio().",
                 turn_idx=idx,
             )
-        api_key = os.environ.get("OPENAI_API_KEY")
-        # Tests inject ``_openai_tts`` directly so the OpenAI key check
-        # is skipped — otherwise CI would need OPENAI_API_KEY just to run
-        # unit tests that never hit the network.
-        if not api_key and self._openai_tts is None:
-            raise AudioMissingError(
-                f"turn {idx}: TTS requested but OPENAI_API_KEY is not set",
-                turn_idx=idx,
-            )
-        voice = voice_id or os.environ.get("OPENAI_TTS_VOICE", self.DEFAULT_OPENAI_TTS_VOICE)
-        model = os.environ.get("OPENAI_TTS_MODEL", self.DEFAULT_OPENAI_TTS_MODEL)
-        return await self._tts_to_cached_pcm(
-            conv_hash=conv_hash, text=turn.text, voice=voice, model=model, api_key=api_key or ""
-        )
-
-    async def _tts_to_cached_pcm(
-        self, *, conv_hash: str, text: str, voice: str, model: str, api_key: str
-    ) -> bytes:
-        cache_dir = self.cache_root / conv_hash
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        fingerprint = hashlib.sha256(
-            json.dumps(
-                {"text": text, "voice": voice, "model": model},
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()[:16]
-        cached = cache_dir / f"{fingerprint}.wav"
-        if cached.exists():
-            return _read_wav_as_pcm48k_mono(cached, turn_idx=None)
-
-        if self._openai_tts is not None:
-            pcm_24k = await self._openai_tts(text=text, voice=voice, model=model)
-        else:
-            pcm_24k = await _openai_tts_pcm(text=text, voice=voice, model=model, api_key=api_key)
-        pcm_48k = _upsample_2x_int16(pcm_24k)
-        _write_pcm_as_wav(pcm_48k, cached, sample_rate=SAMPLE_RATE)
-        return pcm_48k
+        return pcm
 
     def _mint_token(self, lk_api: LkApiModule) -> str:
         """JWT for the user-side driver. The replay context rides on the
@@ -610,87 +554,6 @@ def mint_user_token(
         builder = builder.with_kind("sip")
     builder = builder.with_attributes(attributes)
     return builder.to_jwt()
-
-
-def _read_wav_as_pcm48k_mono(path: Path, *, turn_idx: int | None) -> bytes:
-    """Read a WAV file and return its PCM bytes. Requires 48 kHz / mono /
-    16-bit signed so we don't need a runtime resampler."""
-    if not path.exists():
-        raise AudioMissingError(f"recorded audio not found: {path}", turn_idx=turn_idx)
-    try:
-        with wave.open(str(path), "rb") as w:
-            sample_rate = w.getframerate()
-            channels = w.getnchannels()
-            sample_width = w.getsampwidth()
-            frame_count = w.getnframes()
-            pcm = w.readframes(frame_count)
-    except wave.Error as e:
-        raise AudioMissingError(f"invalid WAV file at {path}: {e}", turn_idx=turn_idx) from e
-    if sample_rate != SAMPLE_RATE or channels != NUM_CHANNELS or sample_width != 2:
-        raise AudioMissingError(
-            f"recorded audio at {path} must be 48000 Hz, 1 channel, 16-bit (got "
-            f"{sample_rate} Hz, {channels} ch, {sample_width * 8}-bit). Re-encode with "
-            "`ffmpeg -i in.wav -ar 48000 -ac 1 -sample_fmt s16 out.wav`.",
-            turn_idx=turn_idx,
-        )
-    return pcm
-
-
-def _write_pcm_as_wav(pcm: bytes, path: Path, *, sample_rate: int) -> None:
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(NUM_CHANNELS)
-        w.setsampwidth(SAMPLE_WIDTH_BYTES)
-        w.setframerate(sample_rate)
-        w.writeframes(pcm)
-
-
-def _upsample_2x_int16(pcm: bytes) -> bytes:
-    """Cheap 2x linear-interpolation upsampler. Sufficient for voice
-    intelligibility — we avoid pulling in scipy/audioop just for this."""
-    src = array.array("h")
-    src.frombytes(pcm)
-    n = len(src)
-    if n == 0:
-        return b""
-    out = array.array("h", bytes(n * 4))  # 2x samples, 2 bytes each
-    out[0::2] = src
-    # Interpolated midpoint between consecutive samples; last midpoint
-    # repeats the final sample so the output length stays exactly 2x.
-    out[1 : 2 * (n - 1) : 2] = array.array(
-        "h", [(a + b) // 2 for a, b in zip(src, src[1:], strict=False)]
-    )
-    out[-1] = src[-1]
-    return out.tobytes()
-
-
-async def _openai_tts_pcm(
-    *,
-    text: str,
-    voice: str,
-    model: str,
-    api_key: str,
-) -> bytes:
-    """Call OpenAI's /v1/audio/speech with response_format='pcm'. Returns
-    raw int16 PCM at 24 kHz."""
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            LiveKitRuntime.OPENAI_API_URL,
-            json={
-                "model": model,
-                "voice": voice,
-                "input": text,
-                "response_format": "pcm",
-            },
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        if response.status_code >= 400:
-            raise AudioMissingError(
-                f"OpenAI TTS returned HTTP {response.status_code}: {response.text[:200]}"
-            )
-        return response.content
 
 
 def write_stereo_mixdown(*, segments: list[_TurnSegment], out_path: Path) -> None:

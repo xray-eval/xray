@@ -8,6 +8,9 @@ import {
 	makeCreateReplayRequest,
 } from "@/server/replays/replays.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
+import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
+import { TtsProviderError } from "@/server/tts/tts.errors.ts";
+import { makeFakeTtsProvider } from "@/server/tts/tts.test-utils.ts";
 
 import { createConversationsRouter } from "./conversations.router.ts";
 import { MAX_CONVERSATION_BODY_BYTES } from "./conversations.types.ts";
@@ -19,15 +22,19 @@ afterEach(() => {
 	while (cleanups.length > 0) cleanups.pop()?.();
 });
 
-function makeApp() {
+function makeApp(tts?: Parameters<typeof createConversationsRouter>[2]) {
 	const store = makeTempStore();
 	const { path: audioRoot, dispose } = makeTempAudioRoot();
 	cleanups.push(dispose);
 	cleanups.push(() => {
 		store.close();
 	});
-	const app = new Hono().route("/v1", createConversationsRouter(store, audioRoot));
-	return { app, store, audioRoot, dispose };
+	const ttsProvider = makeFakeTtsProvider();
+	const app = new Hono().route(
+		"/v1",
+		createConversationsRouter(store, audioRoot, tts ?? { provider: ttsProvider }),
+	);
+	return { app, store, audioRoot, ttsProvider, dispose };
 }
 
 async function postConversation(app: Hono, form: FormData): Promise<Response> {
@@ -309,5 +316,197 @@ describe("GET /v1/conversations/:hash/replays", () => {
 		const { app } = makeApp();
 		const res = await app.request(`/v1/conversations/${"e".repeat(64)}/replays`);
 		expect(res.status).toBe(404);
+	});
+});
+
+describe("POST /v1/conversations — tts synthesis", () => {
+	const TtsTurnAudioSchema = v.object({
+		kind: v.literal("tts"),
+		sha256: v.string(),
+		voice_id: v.optional(v.string()),
+	});
+	const TtsResponseSchema = v.object({
+		hash: v.string(),
+		turns: v.array(v.object({ audio: v.optional(v.unknown()) })),
+	});
+
+	function ttsSpec(text = "hello there") {
+		return {
+			name: "tts-conv",
+			turns: [
+				{ role: "user", text, audio: { kind: "tts", voice_id: "nova" } },
+				{ role: "agent", key: "a0" },
+			],
+		};
+	}
+
+	it("synthesizes the turn and returns a canonical tts ref carrying the audio sha", async () => {
+		const { app, ttsProvider } = makeApp();
+		const res = await postConversation(app, specForm(ttsSpec()));
+		expect(res.status).toBe(200);
+		const body = await readJson(res, TtsResponseSchema);
+		const audio = v.parse(TtsTurnAudioSchema, body.turns[0]?.audio);
+		expect(audio.sha256).toMatch(/^[0-9a-f]{64}$/);
+		expect(audio.voice_id).toBe("nova");
+		expect(ttsProvider.calls).toEqual([{ text: "hello there", voice: "nova" }]);
+	});
+
+	it("reuses the synth cache on a re-POST: same hash, no second provider call", async () => {
+		const { app, ttsProvider } = makeApp();
+		const first = await postConversation(app, specForm(ttsSpec()));
+		const second = await postConversation(app, specForm(ttsSpec()));
+		const firstBody = await readJson(first, TtsResponseSchema);
+		const secondBody = await readJson(second, TtsResponseSchema);
+		expect(secondBody.hash).toBe(firstBody.hash);
+		expect(ttsProvider.calls).toHaveLength(1);
+	});
+
+	it("returns 400 tts_turn_missing_text when a tts turn has no text", async () => {
+		const { app } = makeApp();
+		const spec = {
+			name: "n",
+			turns: [
+				{ role: "user", audio: { kind: "tts" } },
+				{ role: "agent", key: "a0" },
+			],
+		};
+		const res = await postConversation(app, specForm(spec));
+		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string(), turn_idx: v.number() }));
+		expect(body.error).toBe("tts_turn_missing_text");
+		expect(body.turn_idx).toBe(0);
+	});
+
+	it("returns 400 tts_turn_invalid_role for a tts ref on an agent turn", async () => {
+		const { app } = makeApp();
+		const spec = {
+			name: "n",
+			turns: [
+				{ role: "user", text: "hi" },
+				{ role: "agent", audio: { kind: "tts" } },
+			],
+		};
+		const res = await postConversation(app, specForm(spec));
+		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string(), turn_idx: v.number() }));
+		expect(body.error).toBe("tts_turn_invalid_role");
+		expect(body.turn_idx).toBe(1);
+	});
+
+	it("returns 503 tts_provider_unconfigured when the provider has no credential", async () => {
+		const provider = makeFakeTtsProvider({
+			error: new MissingProviderCredentialError("MISTRAL_API_KEY"),
+		});
+		const { app } = makeApp({ provider });
+		const res = await postConversation(app, specForm(ttsSpec()));
+		expect(res.status).toBe(503);
+		const body = await readJson(res, v.object({ error: v.string(), env_var: v.string() }));
+		expect(body.error).toBe("tts_provider_unconfigured");
+		expect(body.env_var).toBe("MISTRAL_API_KEY");
+	});
+
+	it("returns 502 tts_synthesis_failed when the upstream provider errors", async () => {
+		const provider = makeFakeTtsProvider({
+			error: new TtsProviderError("mistral", "rate limited", 429),
+		});
+		const { app } = makeApp({ provider });
+		const res = await postConversation(app, specForm(ttsSpec()));
+		expect(res.status).toBe(502);
+		const body = await readJson(res, v.object({ error: v.string(), provider: v.string() }));
+		expect(body.error).toBe("tts_synthesis_failed");
+		expect(body.provider).toBe("mistral");
+	});
+});
+
+describe("GET /v1/conversations/:hash/turns/:idx/audio", () => {
+	it("serves the synthesized wav for a tts turn", async () => {
+		const { app } = makeApp();
+		const posted = await postConversation(
+			app,
+			specForm({
+				name: "n",
+				turns: [
+					{ role: "user", text: "hi", audio: { kind: "tts" } },
+					{ role: "agent", key: "a0" },
+				],
+			}),
+		);
+		const { hash } = await readJson(posted, v.object({ hash: v.string() }));
+		const res = await app.request(`/v1/conversations/${hash}/turns/0/audio`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toBe("audio/wav");
+		const bytes = new Uint8Array(await res.arrayBuffer());
+		// RIFF magic — the body is a real wav, not JSON.
+		expect([...bytes.slice(0, 4)]).toEqual([0x52, 0x49, 0x46, 0x46]);
+	});
+
+	it("serves the uploaded wav for a recorded turn", async () => {
+		const { app } = makeApp();
+		const wav = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4]);
+		const form = new FormData();
+		form.set(
+			"spec",
+			JSON.stringify({
+				name: "n",
+				turns: [
+					{ role: "user", text: "hi", audio: { kind: "recorded", upload_key: "audio_0" } },
+					{ role: "agent", key: "a0" },
+				],
+			}),
+		);
+		form.set("audio_0", new File([wav], "audio_0.wav", { type: "audio/wav" }));
+		const posted = await postConversation(app, form);
+		expect(posted.status).toBe(200);
+		const { hash } = await readJson(posted, v.object({ hash: v.string() }));
+		const res = await app.request(`/v1/conversations/${hash}/turns/0/audio`);
+		expect(res.status).toBe(200);
+		const bytes = new Uint8Array(await res.arrayBuffer());
+		expect([...bytes]).toEqual([...wav]);
+	});
+
+	it("returns 404 turn_audio_not_found for an agent turn", async () => {
+		const { app } = makeApp();
+		const posted = await postConversation(
+			app,
+			specForm({
+				name: "n",
+				turns: [
+					{ role: "user", text: "hi", audio: { kind: "tts" } },
+					{ role: "agent", key: "a0" },
+				],
+			}),
+		);
+		const { hash } = await readJson(posted, v.object({ hash: v.string() }));
+		const res = await app.request(`/v1/conversations/${hash}/turns/1/audio`);
+		expect(res.status).toBe(404);
+		const body = await readJson(res, v.object({ error: v.string() }));
+		expect(body.error).toBe("turn_audio_not_found");
+	});
+
+	it("returns 404 for an out-of-range turn idx and unknown hash", async () => {
+		const { app } = makeApp();
+		const posted = await postConversation(
+			app,
+			specForm({
+				name: "n",
+				turns: [
+					{ role: "user", text: "hi", audio: { kind: "tts" } },
+					{ role: "agent", key: "a0" },
+				],
+			}),
+		);
+		const { hash } = await readJson(posted, v.object({ hash: v.string() }));
+		expect((await app.request(`/v1/conversations/${hash}/turns/9/audio`)).status).toBe(404);
+		expect((await app.request(`/v1/conversations/${"d".repeat(64)}/turns/0/audio`)).status).toBe(
+			404,
+		);
+	});
+
+	it("returns 400 invalid_turn_index for a malformed turn idx", async () => {
+		const { app } = makeApp();
+		const res = await app.request(`/v1/conversations/${"d".repeat(64)}/turns/zero/audio`);
+		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string() }));
+		expect(body.error).toBe("invalid_turn_index");
 	});
 });

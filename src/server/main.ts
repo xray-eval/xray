@@ -12,7 +12,11 @@ import { makeEvaluateReplayProcessor } from "./jobs/evaluate-replay/evaluate-rep
 import type { JobRunner } from "./jobs/jobs.bunqueue.ts";
 import { createJobRunner } from "./jobs/jobs.bunqueue.ts";
 import { JobRunnerNotInitializedError } from "./jobs/jobs.errors.ts";
-import { buildJudgeProvider, buildTranscriptionProvider } from "./providers/providers.ts";
+import {
+	buildJudgeProvider,
+	buildTranscriptionProvider,
+	buildTtsProvider,
+} from "./providers/providers.ts";
 import { makeReplayEvents } from "./replays/replays.events.ts";
 import { markReplayFailed } from "./replays/replays.service.ts";
 import { createApp } from "./server.ts";
@@ -34,6 +38,7 @@ const events = makeReplayEvents();
 // selection logic + its branch tests live in `providers/providers.ts`.
 const transcriptionProvider = buildTranscriptionProvider(env);
 const judgeProvider = buildJudgeProvider(env);
+const ttsProvider = buildTtsProvider(env);
 
 // bunqueue opens its own SQLite file alongside `xray.db` (see
 // `.claude/rules/single-image-distribution.md`'s "one volume, two files"
@@ -82,7 +87,13 @@ runnerRef = createJobRunner({
 });
 const jobRunner: JobRunner = lazyRunner;
 
-const app = createApp(store, { audioRoot, jobRunner, events });
+const app = createApp(store, {
+	audioRoot,
+	jobRunner,
+	events,
+	ttsProvider,
+	...(env.XRAY_TTS_VOICE !== undefined ? { ttsVoice: env.XRAY_TTS_VOICE } : {}),
+});
 
 const server = Bun.serve({
 	port: env.PORT,

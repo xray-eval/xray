@@ -53,7 +53,28 @@ export async function saveRecordedConversationAudio(
 	sha256: string,
 	bytes: Uint8Array<ArrayBuffer>,
 ): Promise<string> {
-	const relativePath = recordedRelativePath(sha256);
+	return saveContentAddressedAudio(
+		audioRoot,
+		conversationAudioRelativePath("recorded", sha256),
+		bytes,
+	);
+}
+
+/** Save a server-synthesized turn WAV under `tts/<sha256>.wav`. Same
+ *  content-addressed, atomic-rename semantics as the recorded variant. */
+export async function saveTtsConversationAudio(
+	audioRoot: string,
+	sha256: string,
+	bytes: Uint8Array<ArrayBuffer>,
+): Promise<string> {
+	return saveContentAddressedAudio(audioRoot, conversationAudioRelativePath("tts", sha256), bytes);
+}
+
+async function saveContentAddressedAudio(
+	audioRoot: string,
+	relativePath: string,
+	bytes: Uint8Array<ArrayBuffer>,
+): Promise<string> {
 	const absolutePath = resolveInsideRoot(audioRoot, relativePath);
 	await mkdir(dirname(absolutePath), { recursive: true });
 	const tmpPath = `${absolutePath}.tmp-${randomUUID()}`;
@@ -67,8 +88,31 @@ export async function saveRecordedConversationAudio(
 	return relativePath;
 }
 
-function recordedRelativePath(sha256: string): string {
-	return join("recorded", `${sha256}.wav`);
+/** Relative path of a conversation-input audio file: `recorded/` for
+ *  SDK-uploaded WAVs, `tts/` for server-synthesized ones. Both are
+ *  content-addressed by the sha256 the conversation's canonical turn
+ *  carries. */
+export function conversationAudioRelativePath(kind: "recorded" | "tts", sha256: string): string {
+	return join(kind, `${sha256}.wav`);
+}
+
+/** Stream a conversation turn's input audio (recorded or tts) by its
+ *  content sha. Throws `makeNotFoundError()` when the file is absent. */
+export async function readConversationTurnAudio(
+	audioRoot: string,
+	kind: "recorded" | "tts",
+	sha256: string,
+	makeNotFoundError: () => Error,
+): Promise<AudioStream> {
+	const relativePath = conversationAudioRelativePath(kind, sha256);
+	const absolutePath = resolveInsideRoot(audioRoot, relativePath);
+	const file = Bun.file(absolutePath);
+	if (!(await file.exists())) throw makeNotFoundError();
+	return {
+		stream: file.stream(),
+		contentLength: file.size,
+		contentType: "audio/wav",
+	};
 }
 
 /** Upload the full-replay stereo WAV mixdown. */

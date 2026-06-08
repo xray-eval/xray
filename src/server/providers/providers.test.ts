@@ -4,6 +4,7 @@ import { AmbiguousProviderConfigError } from "./providers.errors.ts";
 import {
 	buildJudgeProvider,
 	buildTranscriptionProvider,
+	buildTtsProvider,
 	resolveProviderKind,
 } from "./providers.ts";
 import { describe, expect, it } from "bun:test";
@@ -116,6 +117,44 @@ describe("buildTranscriptionProvider", () => {
 	it("throws when two keys are set and no selector is given", () => {
 		expect(() =>
 			buildTranscriptionProvider(makeEnv({ OPENAI_API_KEY: "sk-x", MISTRAL_API_KEY: "mk-x" })),
+		).toThrow(AmbiguousProviderConfigError);
+	});
+});
+
+describe("buildTtsProvider", () => {
+	it("builds the OpenAI TTS provider when only OPENAI_API_KEY is set", () => {
+		const p = buildTtsProvider(makeEnv({ OPENAI_API_KEY: "sk-x" }));
+		expect(p.name).toBe("openai");
+		expect(p.model).toBe("gpt-4o-mini-tts");
+		expect(p.defaultVoice).toBe("alloy");
+	});
+
+	it("builds the Gemini TTS provider when only GOOGLE_API_KEY is set", () => {
+		const p = buildTtsProvider(makeEnv({ GOOGLE_API_KEY: "AIza-x" }));
+		expect(p.name).toBe("google-gemini");
+		expect(p.model).toBe("gemini-2.5-flash-preview-tts");
+	});
+
+	it("builds the Mistral TTS provider when only MISTRAL_API_KEY is set", () => {
+		const p = buildTtsProvider(makeEnv({ MISTRAL_API_KEY: "mk-x" }));
+		expect(p.name).toBe("mistral");
+		expect(p.model).toBe("voxtral-mini-tts-2603");
+		expect(p.defaultVoice).toBe("en_paul_neutral");
+	});
+
+	it("honors the explicit selector over key inference", () => {
+		const p = buildTtsProvider(makeEnv({ OPENAI_API_KEY: "sk-x", XRAY_TTS_PROVIDER: "mistral" }));
+		expect(p.name).toBe("mistral");
+	});
+
+	it("applies XRAY_TTS_MODEL as the model override", () => {
+		const p = buildTtsProvider(makeEnv({ MISTRAL_API_KEY: "mk-x", XRAY_TTS_MODEL: "tts-next" }));
+		expect(p.model).toBe("tts-next");
+	});
+
+	it("throws when two keys are set and no selector is given", () => {
+		expect(() =>
+			buildTtsProvider(makeEnv({ OPENAI_API_KEY: "sk-x", GOOGLE_API_KEY: "AIza-x" })),
 		).toThrow(AmbiguousProviderConfigError);
 	});
 });

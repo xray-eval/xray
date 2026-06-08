@@ -57,6 +57,34 @@ export const conversations = sqliteTable(
 	],
 );
 
+// TTS synthesis cache — maps the deterministic config fingerprint
+// (sha256 over {provider, model, voice, text}) to the sha256 of the
+// generated 48kHz mono WAV stored at `<audioRoot>/tts/<audio_sha256>.wav`.
+//
+// Why this table exists: the conversation hash folds in the *output*
+// audio sha256 (generated audio is part of the test identity, like
+// recorded audio), but TTS output is non-deterministic — the same text
+// re-synthesized yields different bytes. Without this index, every
+// re-POST of an unchanged spec would re-synthesize, produce new bytes,
+// and fork the conversation onto a new hash. The fingerprint lookup makes
+// the upsert deterministic: same spec + same TTS config → same cached
+// audio sha → same conversation hash.
+export const ttsSynthCache = sqliteTable(
+	"tts_synth_cache",
+	{
+		fingerprint: text("fingerprint").primaryKey(),
+		audioSha256: text("audio_sha256").notNull(),
+		provider: text("provider").notNull(),
+		model: text("model").notNull(),
+		voice: text("voice").notNull(),
+		createdAt: text("created_at").notNull(),
+	},
+	(t) => [
+		check("tts_synth_cache_fingerprint_ck", sql`length(${t.fingerprint}) = 64`),
+		check("tts_synth_cache_audio_sha256_ck", sql`length(${t.audioSha256}) = 64`),
+	],
+);
+
 // Replays — one execution of one Conversation.
 //
 // Lifecycle is server-owned: the driver POSTs to create (`pending`), PATCHes
