@@ -689,16 +689,22 @@ async def _prefetch_user_audio(
     PCM keyed by turn idx. The server is the single audio source — the
     synthesized tts WAVs and the content-addressed recorded WAVs both
     come back through the same endpoint, so the driver publishes exactly
-    the bytes the conversation hash pinned."""
-    audio: dict[int, bytes] = {}
-    for idx, turn in enumerate(conversation.turns):
-        if turn.role != "user":
-            continue
+    the bytes the conversation hash pinned.
+
+    The turns are fetched concurrently: by the time we reach here the
+    audio is already stored server-side, so each GET is an independent
+    read with nothing to serialize — a sequential loop would just stack
+    round-trips and slow startup."""
+
+    async def fetch_one(idx: int) -> tuple[int, bytes]:
         endpoint = f"/v1/conversations/{conversation_hash}/turns/{idx}/audio"
         r = await client.get(endpoint)
         _raise_for_status_typed(r, f"GET {endpoint}")
-        audio[idx] = _wav_bytes_to_pcm(r.content, turn_idx=idx)
-    return audio
+        return idx, _wav_bytes_to_pcm(r.content, turn_idx=idx)
+
+    user_turn_indices = [idx for idx, turn in enumerate(conversation.turns) if turn.role == "user"]
+    pairs = await asyncio.gather(*(fetch_one(idx) for idx in user_turn_indices))
+    return dict(pairs)
 
 
 def _wav_bytes_to_pcm(data: bytes, *, turn_idx: int) -> bytes:

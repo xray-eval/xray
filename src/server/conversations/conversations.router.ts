@@ -29,6 +29,7 @@ import {
 	ConversationNotFoundError,
 	InvalidConversationHashError,
 	InvalidConversationRequestError,
+	InvalidTurnIndexError,
 	MalformedConversationBodyError,
 	MissingSpecPartError,
 	RecordedAudioUploadKeyError,
@@ -353,6 +354,9 @@ export function createConversationsRouter(
 			.with(P.instanceOf(InvalidConversationHashError), (e) =>
 				c.json({ error: "invalid_conversation_hash", issues: sanitizeIssues(e.issues) }, 400),
 			)
+			.with(P.instanceOf(InvalidTurnIndexError), (e) =>
+				c.json({ error: "invalid_turn_index", issues: sanitizeIssues(e.issues) }, 400),
+			)
 			.with(
 				P.union(
 					P.instanceOf(InvalidConversationRequestError),
@@ -440,7 +444,7 @@ const TurnIdxSchema = v.pipe(
 
 function parseTurnIdx(raw: string): number {
 	const result = v.safeParse(TurnIdxSchema, raw);
-	if (!result.success) throw new InvalidConversationHashError(result.issues);
+	if (!result.success) throw new InvalidTurnIndexError(result.issues);
 	return result.output;
 }
 

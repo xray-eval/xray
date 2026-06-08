@@ -18,8 +18,13 @@ export interface TurnSynthesisInput {
 
 /** Synthesize one tts turn (or return its cached result): resolves the
  *  voice chain, checks the fingerprint cache, and on miss generates +
- *  stores the 48kHz mono WAV content-addressed under `tts/`. */
-export type TurnSynthesizer = (input: TurnSynthesisInput) => Promise<{ sha256: string }>;
+ *  stores the 48kHz mono WAV content-addressed under `tts/`. The optional
+ *  `signal` is shared across a request's turns so one synthesis failure
+ *  cancels the in-flight siblings. */
+export type TurnSynthesizer = (
+	input: TurnSynthesisInput,
+	signal?: AbortSignal,
+) => Promise<{ sha256: string }>;
 
 export interface TurnSynthesizerDeps {
 	readonly store: Store;
@@ -46,7 +51,7 @@ export interface TurnSynthesizerDeps {
  */
 export function createTurnSynthesizer(deps: TurnSynthesizerDeps): TurnSynthesizer {
 	const inFlight = new Map<string, Promise<{ sha256: string }>>();
-	return (input) => {
+	return (input, signal) => {
 		const voice = input.voiceId ?? deps.voiceOverride ?? deps.provider.defaultVoice;
 		const fingerprintInput = JSON.stringify([
 			deps.provider.name,
@@ -58,7 +63,7 @@ export function createTurnSynthesizer(deps: TurnSynthesizerDeps): TurnSynthesize
 			const fingerprint = await sha256Hex(new TextEncoder().encode(fingerprintInput));
 			const existing = inFlight.get(fingerprint);
 			if (existing !== undefined) return existing;
-			const fresh = synthesizeOrReuse(deps, fingerprint, input.text, voice);
+			const fresh = synthesizeOrReuse(deps, fingerprint, input.text, voice, signal);
 			inFlight.set(fingerprint, fresh);
 			return fresh;
 		})();
@@ -71,6 +76,7 @@ async function synthesizeOrReuse(
 	fingerprint: string,
 	text: string,
 	voice: string,
+	signal: AbortSignal | undefined,
 ): Promise<{ sha256: string }> {
 	const cached = deps.store.db
 		.select()
@@ -82,7 +88,11 @@ async function synthesizeOrReuse(
 		if (await file.exists()) return { sha256: cached.audioSha256 };
 	}
 
-	const result = await deps.provider.synthesize({ text, voice });
+	const result = await deps.provider.synthesize({
+		text,
+		voice,
+		...(signal !== undefined ? { signal } : {}),
+	});
 	const pcm48k = resamplePcm(result.pcm, result.sampleRate, TARGET_SAMPLE_RATE);
 	const wavBytes = writeMonoWav(pcm48k, TARGET_SAMPLE_RATE);
 	const sha256 = await sha256Hex(wavBytes);

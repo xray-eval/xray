@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
+import { mergeAbortSignals } from "@/server/core/abort.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
 import { extractGeminiText } from "@/server/core/gemini.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
@@ -41,12 +42,6 @@ export interface GoogleGeminiTranscriptionOptions {
 	readonly model?: string;
 	readonly fetchImpl?: FetchLike;
 	readonly timeoutMs?: number;
-}
-
-function mergeAbortSignals(external: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	const timeoutSignal = AbortSignal.timeout(timeoutMs);
-	if (external === undefined) return timeoutSignal;
-	return AbortSignal.any([external, timeoutSignal]);
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

@@ -75,6 +75,18 @@ export class InvalidConversationHashError extends ConversationError {
 	}
 }
 
+/** Path-param turn index failed validation (non-numeric / out of the
+ *  accepted range) on `GET /v1/conversations/:hash/turns/:idx/audio`. */
+export class InvalidTurnIndexError extends ConversationError {
+	readonly issues: readonly BaseIssue<unknown>[];
+
+	constructor(issues: readonly BaseIssue<unknown>[]) {
+		super("Invalid turn index in path");
+		this.name = "InvalidTurnIndexError";
+		this.issues = issues;
+	}
+}
+
 /** `GET /v1/conversations/:hash` looked up a hash that doesn't exist. */
 export class ConversationNotFoundError extends ConversationError {
 	readonly conversationHash: string;

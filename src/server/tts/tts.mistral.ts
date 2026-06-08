@@ -2,6 +2,7 @@ import * as v from "valibot";
 
 import { InvalidWavFormatError } from "@/server/audio/audio.errors.ts";
 import { readMonoWav } from "@/server/audio/audio.wav.ts";
+import { mergeAbortSignals } from "@/server/core/abort.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
@@ -134,10 +135,4 @@ export function createMistralTtsProvider(opts: MistralTtsOptions): TtsProvider {
 			}
 		},
 	};
-}
-
-function mergeAbortSignals(external: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	const timeoutSignal = AbortSignal.timeout(timeoutMs);
-	if (external === undefined) return timeoutSignal;
-	return AbortSignal.any([external, timeoutSignal]);
 }

@@ -43,6 +43,7 @@ async function materializeOneTurn(
 	turnIdx: number,
 	sha256ByKey: ReadonlyMap<string, string>,
 	synthesizeTurn: TurnSynthesizer,
+	signal: AbortSignal,
 ): Promise<ConversationTurn> {
 	const { audio, ...rest } = turn;
 	return match(audio)
@@ -52,10 +53,13 @@ async function materializeOneTurn(
 			if (turn.text === undefined || turn.text.length === 0) {
 				throw new TtsTurnMissingTextError(turnIdx);
 			}
-			const { sha256 } = await synthesizeTurn({
-				text: turn.text,
-				...(a.voice_id !== undefined ? { voiceId: a.voice_id } : {}),
-			});
+			const { sha256 } = await synthesizeTurn(
+				{
+					text: turn.text,
+					...(a.voice_id !== undefined ? { voiceId: a.voice_id } : {}),
+				},
+				signal,
+			);
 			return {
 				...rest,
 				audio: {
@@ -84,7 +88,10 @@ async function materializeOneTurn(
  *
  * Hashing and synthesis fan out via `Promise.all` so independent WAVs
  * digest / synthesize in parallel — both are the dominant cost on this
- * path.
+ * path. tts turns are validated (role + text) before any synthesis fires,
+ * and a shared `AbortController` cancels the in-flight siblings the moment
+ * one fails — a malformed or failing turn never leaves earlier turns
+ * billing the provider.
  *
  * Throws `RecordedAudioUploadKeyError` with `reason="missing"` when a turn
  * references a key absent from the multipart body, or with
@@ -109,6 +116,17 @@ export async function materializeRequestTurns(
 		if (!audioBytesByKey.has(key)) throw new RecordedAudioUploadKeyError(key, "missing");
 	}
 
+	// Validate every tts turn before any synthesis fans out: synthesis bills
+	// the provider, so a malformed turn must fail before turn 0 is charged —
+	// the Promise.all below starts every turn's synthesis at once.
+	requestTurns.forEach((turn, idx) => {
+		if (turn.audio?.kind !== "tts") return;
+		if (turn.role !== "user") throw new TtsTurnRoleError(idx);
+		if (turn.text === undefined || turn.text.length === 0) {
+			throw new TtsTurnMissingTextError(idx);
+		}
+	});
+
 	const hashed = await Promise.all(
 		[...audioBytesByKey].map(async ([key, bytes]) => ({
 			key,
@@ -117,9 +135,21 @@ export async function materializeRequestTurns(
 		})),
 	);
 	const sha256ByKey = new Map(hashed.map(({ key, sha256 }) => [key, sha256] as const));
-	const canonicalTurns = await Promise.all(
-		requestTurns.map((turn, idx) => materializeOneTurn(turn, idx, sha256ByKey, synthesizeTurn)),
-	);
+	// Shared controller so one synthesis rejection cancels the in-flight
+	// siblings instead of letting them keep billing — mirrors the analyze
+	// chain's transcription fan-out.
+	const controller = new AbortController();
+	let canonicalTurns: ConversationTurn[];
+	try {
+		canonicalTurns = await Promise.all(
+			requestTurns.map((turn, idx) =>
+				materializeOneTurn(turn, idx, sha256ByKey, synthesizeTurn, controller.signal),
+			),
+		);
+	} catch (cause) {
+		controller.abort();
+		throw cause;
+	}
 	const audioWrites: PendingAudioWrite[] = hashed.map(({ sha256, bytes }) => ({ sha256, bytes }));
 	return { canonicalTurns, audioWrites };
 }

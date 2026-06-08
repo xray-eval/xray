@@ -502,9 +502,11 @@ describe("GET /v1/conversations/:hash/turns/:idx/audio", () => {
 		);
 	});
 
-	it("returns 400 for a malformed turn idx", async () => {
+	it("returns 400 invalid_turn_index for a malformed turn idx", async () => {
 		const { app } = makeApp();
 		const res = await app.request(`/v1/conversations/${"d".repeat(64)}/turns/zero/audio`);
 		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string() }));
+		expect(body.error).toBe("invalid_turn_index");
 	});
 });

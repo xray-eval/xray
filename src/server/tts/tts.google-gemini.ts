@@ -1,5 +1,6 @@
 import * as v from "valibot";
 
+import { mergeAbortSignals } from "@/server/core/abort.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
@@ -191,10 +192,4 @@ function parseRateFromMimeType(mimeType: string | undefined): number | null {
 	const match = /rate=(\d+)/.exec(mimeType);
 	const rate = match?.[1] !== undefined ? Number(match[1]) : Number.NaN;
 	return Number.isInteger(rate) && rate > 0 ? rate : null;
-}
-
-function mergeAbortSignals(external: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	const timeoutSignal = AbortSignal.timeout(timeoutMs);
-	if (external === undefined) return timeoutSignal;
-	return AbortSignal.any([external, timeoutSignal]);
 }

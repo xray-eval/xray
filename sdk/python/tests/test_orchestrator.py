@@ -5,6 +5,7 @@ verdict off the SSE `evaluation_complete` event and returns
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import wave
@@ -618,3 +619,71 @@ async def test_orchestrator_prefetches_user_turn_audio_and_injects_it(tmp_path: 
     assert sorted(runtime.injected.keys()) == [0, 2]
     # 20ms of 48kHz mono int16 silence = 960 samples * 2 bytes.
     assert runtime.injected[0] == b"\x00\x00" * 960
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_prefetches_user_turn_audio_concurrently(tmp_path: Path):
+    """The per-turn audio GETs fire concurrently — a sequential await-in-loop
+    would cap in-flight requests at 1 and serialize startup."""
+    wav = _make_wav(tmp_path)
+    replay_id = "00000000-0000-0000-0000-000000000fff"
+    conversation = Conversation(
+        name="x",
+        turns=[
+            Turn.user("a", key="u0"),
+            Turn.user("b", key="u1"),
+            Turn.agent(key="a0"),
+            Turn.user("c", key="u2"),
+        ],
+    )
+    in_flight = 0
+    max_in_flight = 0
+
+    async def audio_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        # Yield twice so every sibling coroutine has a chance to enter before
+        # any returns — under a sequential loop only one is ever in flight.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        in_flight -= 1
+        return httpx.Response(200, content=_wav_48k_mono(), headers={"content-type": "audio/wav"})
+
+    with respx.mock(base_url="http://test.local") as mock:
+        mock.post("/v1/conversations").mock(
+            return_value=httpx.Response(200, json=_conversation_upsert_response())
+        )
+        mock.get(url__regex=r"/v1/conversations/[0-9a-f]{64}/turns/\d+/audio").mock(
+            side_effect=audio_handler
+        )
+        mock.post("/v1/replays").mock(
+            return_value=httpx.Response(201, json=_replay_response(replay_id))
+        )
+        mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
+        mock.post(f"/v1/replays/{replay_id}/analyze").mock(
+            return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
+        )
+        _mock_sse_endpoint(
+            mock,
+            replay_id,
+            _sse_stream(
+                [
+                    (
+                        "evaluation_complete",
+                        {
+                            "type": "evaluation_complete",
+                            "result": _eval_complete_payload(replay_id=replay_id),
+                        },
+                    )
+                ]
+            ),
+        )
+
+        runtime = _InjectableStubRuntime(full_audio_path=str(wav))
+        await run(conversation=conversation, runtime=runtime, xray_url="http://test.local")
+
+    assert runtime.injected is not None
+    assert sorted(runtime.injected.keys()) == [0, 1, 3]
+    # All 3 user turns in flight at once; the old sequential loop capped this at 1.
+    assert max_in_flight == 3

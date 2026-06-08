@@ -461,4 +461,41 @@ describe("materializeRequestTurns", () => {
 			),
 		).rejects.toBeInstanceOf(TtsTurnRoleError);
 	});
+
+	it("validates every tts turn up front — a later invalid turn bills no earlier synthesis", async () => {
+		const synth = fakeSynthesizer();
+		await expect(
+			materializeRequestTurns(
+				[
+					{ role: "user", text: "first", audio: { kind: "tts" }, assertions: [] },
+					{ role: "user", audio: { kind: "tts" }, assertions: [] },
+				],
+				new Map(),
+				synth.synthesize,
+			),
+		).rejects.toBeInstanceOf(TtsTurnMissingTextError);
+		expect(synth.calls).toEqual([]);
+	});
+
+	it("cancels in-flight tts synthesis when a sibling synthesis fails", async () => {
+		let firstSignal: AbortSignal | undefined;
+		const synth = (input: { text: string }, signal?: AbortSignal): Promise<{ sha256: string }> => {
+			if (input.text === "boom") return Promise.reject(new Error("provider boom"));
+			firstSignal = signal;
+			const { promise, reject } = Promise.withResolvers<{ sha256: string }>();
+			signal?.addEventListener("abort", () => reject(new Error("cancelled")));
+			return promise;
+		};
+		await expect(
+			materializeRequestTurns(
+				[
+					{ role: "user", text: "slow", audio: { kind: "tts" }, assertions: [] },
+					{ role: "user", text: "boom", audio: { kind: "tts" }, assertions: [] },
+				],
+				new Map(),
+				synth,
+			),
+		).rejects.toThrow();
+		expect(firstSignal?.aborted).toBe(true);
+	});
 });
