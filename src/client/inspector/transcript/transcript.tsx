@@ -6,7 +6,11 @@ import { cn } from "@/client/lib/utils.ts";
 
 import type { ReplayDetailResponse, TurnRole } from "../../api/api.types.ts";
 import type { TranscriptEntry } from "./transcript-model.ts";
-import { activeTurnIndex, activeWordIndex, buildTranscriptView } from "./transcript-model.ts";
+import {
+	activeTurnIndex,
+	activeWordIndexForEntry,
+	buildTranscriptView,
+} from "./transcript-model.ts";
 
 export function TranscriptCard({ replay }: { replay: ReplayDetailResponse }) {
 	// Memoized so each entry keeps a stable reference across playhead ticks —
@@ -129,7 +133,7 @@ function TranscriptText({
 	currentMs: number | null;
 }) {
 	if (entry.words === null || currentMs === null) return <>{entry.text}</>;
-	const active = activeWordIndex(entry.words, currentMs);
+	const active = activeWordIndexForEntry(entry, currentMs);
 	return (
 		<>
 			{entry.words.map((word, i) => (

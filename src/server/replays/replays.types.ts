@@ -89,7 +89,12 @@ export const SpeechSegmentResponseSchema = v.object({
 });
 export type SpeechSegmentResponse = v.InferOutput<typeof SpeechSegmentResponseSchema>;
 
-/** One word with its on-recording timing, parsed from `turn_transcripts.words_json`. */
+/**
+ * One word, parsed from `turn_transcripts.words_json`. Timings are 0-based
+ * within the turn's audio slice (Whisper transcribes the per-turn slice cut at
+ * `voice_start_ms`), not recording-absolute — the inspector shifts by the
+ * turn's voice-window start when syncing words to the playhead.
+ */
 export const TranscriptWordSchema = v.object({
 	text: v.string(),
 	start_ms: v.number(),
@@ -227,8 +232,6 @@ export const JudgeOutcomeResponseSchema = v.object({
 	reason: v.nullable(v.string()),
 });
 export type JudgeOutcomeResponse = v.InferOutput<typeof JudgeOutcomeResponseSchema>;
-
-// TurnMetricsResponseSchema is defined above (it rides the replay detail too).
 
 export const ReplayResultSchema = v.object({
 	replay_id: v.string(),

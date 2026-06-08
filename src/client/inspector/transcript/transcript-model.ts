@@ -52,3 +52,14 @@ export function activeWordIndex(words: readonly TranscriptWord[] | null, ms: num
 	if (words === null) return -1;
 	return words.findIndex((w) => ms >= w.start_ms && ms < w.end_ms);
 }
+
+/**
+ * Index of the active word for a playhead expressed in recording-absolute ms.
+ * Word timings are 0-based within the turn's audio slice (Whisper transcribes
+ * the per-turn slice cut at `voice_start_ms`), so the absolute playhead is
+ * shifted by `voiceStartMs` before matching — otherwise no word ever lights up
+ * on any turn that doesn't start at recording t=0.
+ */
+export function activeWordIndexForEntry(entry: TranscriptEntry, playheadMs: number): number {
+	return activeWordIndex(entry.words, playheadMs - entry.voiceStartMs);
+}

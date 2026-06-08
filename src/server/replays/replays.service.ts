@@ -335,8 +335,8 @@ export interface MarkReplayFailedOptions {
  * Hydrate the `ReplayResult` payload for a completed replay. Returns
  * `undefined` if the replay doesn't exist or hasn't reached the
  * `replay_evaluations` write — late SSE subscribers and the GET
- * /v1/replays/:id/result handler share this. Two queries plus row-side
- * joins; the table sizes per-replay are tiny.
+ * /v1/replays/:id/result handler share this. A handful of small per-replay
+ * reads joined row-side; the table sizes per-replay are tiny.
  */
 export function getReplayResult(store: Store, id: string): ReplayResult | undefined {
 	const replay = findReplay(store, id);

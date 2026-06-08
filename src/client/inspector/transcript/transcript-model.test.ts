@@ -4,7 +4,12 @@ import type {
 	TurnTranscriptResponse,
 } from "@/client/api/api.types.ts";
 
-import { activeTurnIndex, activeWordIndex, buildTranscriptView } from "./transcript-model.ts";
+import {
+	activeTurnIndex,
+	activeWordIndex,
+	activeWordIndexForEntry,
+	buildTranscriptView,
+} from "./transcript-model.ts";
 import { describe, expect, it } from "bun:test";
 
 function turn(overrides: Partial<ReplayTurnResponse>): ReplayTurnResponse {
@@ -86,5 +91,40 @@ describe("activeWordIndex", () => {
 	it("returns -1 when words are null or no word covers the ms", () => {
 		expect(activeWordIndex(null, 500)).toBe(-1);
 		expect(activeWordIndex(words, 405)).toBe(-1);
+	});
+});
+
+describe("activeWordIndexForEntry", () => {
+	// Whisper transcribes each turn's audio slice (cut at voice_start_ms), so the
+	// stored word timings are 0-based within the turn — NOT recording-absolute.
+	// The playhead is recording-absolute, so it must be shifted by voiceStartMs
+	// before matching a word.
+	const entry = buildTranscriptView(
+		[
+			transcript({
+				turn_idx: 0,
+				words: [
+					{ text: "Sure,", start_ms: 0, end_ms: 400 },
+					{ text: "where", start_ms: 410, end_ms: 700 },
+					{ text: "to?", start_ms: 710, end_ms: 900 },
+				],
+			}),
+		],
+		[turn({ idx: 0, voice_start_ms: 3100, voice_end_ms: 4000 })],
+	)[0];
+
+	it("shifts the absolute playhead into the turn's slice before matching", () => {
+		if (entry === undefined) throw new Error("expected a transcript entry");
+		// Recording ms 3100 == slice 0 == start of "Sure,".
+		expect(activeWordIndexForEntry(entry, 3100)).toBe(0);
+		// Recording ms 3600 == slice 500 == inside "where".
+		expect(activeWordIndexForEntry(entry, 3600)).toBe(1);
+	});
+
+	it("does not treat slice-relative values as absolute (regression)", () => {
+		if (entry === undefined) throw new Error("expected a transcript entry");
+		// ms 500 is a valid word offset, but as an ABSOLUTE playhead the turn
+		// (slice starts at 3100) hasn't begun — no word is active.
+		expect(activeWordIndexForEntry(entry, 500)).toBe(-1);
 	});
 });

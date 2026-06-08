@@ -54,10 +54,12 @@ function buildReplay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetai
 				turn_idx: 1,
 				text: "Sure, where to?",
 				language: "en",
+				// 0-based within the turn's audio slice (slice cut at voice_start_ms),
+				// which is how the analyze chain actually stores them.
 				words: [
-					{ text: "Sure,", start_ms: 3100, end_ms: 3500 },
-					{ text: "where", start_ms: 3510, end_ms: 3800 },
-					{ text: "to?", start_ms: 3810, end_ms: 4000 },
+					{ text: "Sure,", start_ms: 0, end_ms: 400 },
+					{ text: "where", start_ms: 410, end_ms: 700 },
+					{ text: "to?", start_ms: 710, end_ms: 900 },
 				],
 				duration_ms: 3300,
 				provider: "openai_whisper",
