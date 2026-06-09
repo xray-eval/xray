@@ -31,6 +31,7 @@ import type {
 } from "@/server/store/types.ts";
 
 import {
+	CorruptEvaluationStatusError,
 	ReplayLifecycleTransitionError,
 	ReplayNotFoundError,
 	ReplayNotReadyForAnalysisError,
@@ -52,6 +53,7 @@ import type {
 	TurnTranscriptResponse,
 	UpdateReplayRequest,
 } from "./replays.types.ts";
+import { projectTurnMetrics } from "./turn-metrics.ts";
 
 export interface CreateReplayOptions {
 	now?: () => string;
@@ -382,10 +384,10 @@ export function getReplayResult(store: Store, id: string): ReplayResult | undefi
 }
 
 /**
- * Project per-turn timing — one row per turn (from `replay_turns`), with
- * `replay_metrics` values joined in by turn idx (null when the metrics stage
- * hasn't run). Shared by the replay detail (Run details UI) and the evaluation
- * result (SDK `ReplayResult.metrics`) so both stay in lockstep.
+ * Read this replay's turns + metrics and project them via the shared
+ * `projectTurnMetrics`. Used by the replay-detail read (Run details UI) and
+ * the GET /result hydration path; the SSE `evaluation_complete` payloads built
+ * in the analyze jobs call the same projector, so all three stay byte-identical.
  */
 function buildTurnMetrics(store: Store, id: string): TurnMetricsResponse[] {
 	const turnRows = store.db
@@ -394,32 +396,17 @@ function buildTurnMetrics(store: Store, id: string): TurnMetricsResponse[] {
 		.where(eq(replayTurns.replayId, id))
 		.orderBy(asc(replayTurns.idx))
 		.all();
-	const metricByTurnIdx = new Map(
-		store.db
-			.select()
-			.from(replayMetrics)
-			.where(eq(replayMetrics.replayId, id))
-			.all()
-			.map((m) => [m.turnIdx, m]),
-	);
-	return turnRows.map((turn) => {
-		const m = metricByTurnIdx.get(turn.idx);
-		return {
-			turn_idx: turn.idx,
-			role: turn.role,
-			agent_response_ms: m?.agentResponseMs ?? null,
-			ttft_ms: m?.ttftMs ?? null,
-			interrupted: m?.interrupted ?? false,
-			interruption_start_ms: m?.interruptionStartMs ?? null,
-		};
-	});
+	const metricRows = store.db
+		.select()
+		.from(replayMetrics)
+		.where(eq(replayMetrics.replayId, id))
+		.all();
+	return projectTurnMetrics(turnRows, metricRows);
 }
 
 function assertionStatusFor(raw: string): "passed" | "failed" | "errored" {
 	if (raw === "passed" || raw === "failed" || raw === "errored") return raw;
-	// CHECK constraint guards the column; this branch only fires on a
-	// corrupt manual UPDATE.
-	throw new Error(`unexpected evaluation status "${raw}"`);
+	throw new CorruptEvaluationStatusError(raw);
 }
 
 /**

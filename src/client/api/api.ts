@@ -112,3 +112,8 @@ export function compareReplays(
 export function replayAudioUrl(replayId: string): string {
 	return `/v1/replays/${replayId}/audio`;
 }
+
+/** SSE endpoint streaming `state` / `progress` / `evaluation_complete` / `failed` for one replay. */
+export function replayEventsUrl(replayId: string): string {
+	return `/v1/replays/${replayId}/events`;
+}

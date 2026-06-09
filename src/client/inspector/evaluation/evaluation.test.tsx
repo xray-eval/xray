@@ -126,3 +126,38 @@ describe("EvaluationPanel gating", () => {
 		expect(screen.queryByText("No verdict")).toBeNull();
 	});
 });
+
+describe("EvaluationPanel errors", () => {
+	it("renders an unavailable notice when the result fetch fails", async () => {
+		server.use(
+			http.get(`http://localhost/v1/replays/${REPLAY_ID}/result`, () =>
+				HttpResponse.json({ error: "boom" }, { status: 500 }),
+			),
+		);
+		renderPanel();
+		await waitFor(() => screen.getByText(/Evaluation result is unavailable/i));
+	});
+
+	it("marks an errored assertion with the warning glyph, distinct from failed", async () => {
+		mockResult(
+			makeReplayResult({
+				passed: false,
+				assertions: [
+					makeAssertionOutcome({
+						turn_idx: 0,
+						status: "errored",
+						kind: "tool_called",
+						message: "tool-call lookup threw",
+					}),
+				],
+			}),
+		);
+		renderPanel();
+
+		// passed=false auto-expands the breakdown, so the per-assertion glyph
+		// renders without a click. `errored` is the warning triangle.
+		await waitFor(() => screen.getByText("Failed"));
+		expect(screen.getByLabelText("errored")).toBeTruthy();
+		expect(screen.getByText(/tool-call lookup threw/)).toBeTruthy();
+	});
+});

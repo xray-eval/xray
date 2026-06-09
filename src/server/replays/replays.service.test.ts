@@ -402,6 +402,32 @@ describe("buildReplayDetail — transcripts projection", () => {
 		expect(detail.transcripts[0]?.text).toBe("hi");
 		store.close();
 	});
+
+	it("degrades valid-JSON-but-wrong-shape words to null instead of throwing", async () => {
+		const store = makeTempStore();
+		const { replayId } = await seedReplay(store);
+		store.db
+			.insert(turnTranscripts)
+			.values({
+				replayId,
+				turnIdx: 0,
+				text: "hi",
+				language: null,
+				// Parses as JSON, but the elements miss startMs/endMs — the schema
+				// rejects it, so the v.safeParse failure branch must degrade to null.
+				wordsJson: JSON.stringify([{ text: "hi" }]),
+				durationMs: 300,
+				provider: "openai_whisper",
+				model: "whisper-1",
+			})
+			.run();
+
+		const detail = getReplay(store, replayId);
+
+		expect(detail.transcripts[0]?.words).toBeNull();
+		expect(detail.transcripts[0]?.text).toBe("hi");
+		store.close();
+	});
 });
 
 describe("getReplayResult — interruption timing", () => {

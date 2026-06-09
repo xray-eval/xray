@@ -50,7 +50,11 @@ export function activeTurnIndex(entries: readonly TranscriptEntry[], sec: number
 /** Index of the word whose [start_ms, end_ms) window contains `ms`, or -1. */
 export function activeWordIndex(words: readonly TranscriptWord[] | null, ms: number): number {
 	if (words === null) return -1;
-	return words.findIndex((w) => ms >= w.start_ms && ms < w.end_ms);
+	// Half-open [start, end) for normal words. The `=== start` arm also lights a
+	// zero-width word (start === end, reachable when two timings round to the
+	// same ms) at its single instant — `ms < end` alone is unsatisfiable there,
+	// so the word would otherwise never highlight.
+	return words.findIndex((w) => ms >= w.start_ms && (ms < w.end_ms || ms === w.start_ms));
 }
 
 /**

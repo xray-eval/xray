@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { match, P } from "ts-pattern";
 
 import { SpecVadMismatchError } from "@/server/assertions/assertions.errors.ts";
@@ -15,8 +15,8 @@ import type {
 	AssertionOutcomeResponse,
 	JudgeOutcomeResponse,
 	ReplayResult,
-	TurnMetricsResponse,
 } from "@/server/replays/replays.types.ts";
+import { projectTurnMetrics } from "@/server/replays/turn-metrics.ts";
 import {
 	assertionResults,
 	judgeResults,
@@ -79,6 +79,25 @@ export function makeEvaluateReplayProcessor(
 		}
 
 		try {
+			// Advance the analysis step to `evaluate` so the inspector's progress
+			// bar lights its final node while assertions + judges run (judges can
+			// be slow LLM calls). Guarded on the `analyzing` claim — a concurrent
+			// failure/PATCH that already moved the row off `analyzing` must not be
+			// dragged back to `evaluate`.
+			const claimedEvaluate = store.db
+				.update(replays)
+				.set({ analysisStep: "evaluate" })
+				.where(and(eq(replays.id, replayId), eq(replays.lifecycleState, "analyzing")))
+				.returning({ id: replays.id })
+				.all();
+			if (claimedEvaluate.length > 0) {
+				events.emit(replayId, {
+					type: "state",
+					lifecycle_state: "analyzing",
+					analysis_step: "evaluate",
+				});
+			}
+
 			const spec = getConversationSpec(store, replay.conversationHash);
 			if (spec === undefined) {
 				throw new JobProcessingError(replayId, `conversation ${replay.conversationHash} not found`);
@@ -249,7 +268,7 @@ export function makeEvaluateReplayProcessor(
 				passed,
 				assertions: assertionOutcomes,
 				judges: judgeOutcomes,
-				metrics: { turns: buildTurnMetricsResponse(turnRows, metricRows) },
+				metrics: { turns: projectTurnMetrics(turnRows, metricRows) },
 			};
 
 			events.emit(replayId, {
@@ -329,24 +348,6 @@ function buildJudgeTurns(
 		out.push({ turnIdx: t.turnIdx, role, text: t.text });
 	}
 	return out;
-}
-
-function buildTurnMetricsResponse(
-	turnRows: readonly ReplayTurnRow[],
-	metricRows: readonly ReplayMetricRow[],
-): TurnMetricsResponse[] {
-	const metricByTurnIdx = new Map(metricRows.map((m) => [m.turnIdx, m]));
-	return turnRows.map((turn) => {
-		const metric = metricByTurnIdx.get(turn.idx);
-		return {
-			turn_idx: turn.idx,
-			role: turn.role,
-			agent_response_ms: metric?.agentResponseMs ?? null,
-			ttft_ms: metric?.ttftMs ?? null,
-			interrupted: metric?.interrupted ?? false,
-			interruption_start_ms: metric?.interruptionStartMs ?? null,
-		};
-	});
 }
 
 async function runOneJudge(

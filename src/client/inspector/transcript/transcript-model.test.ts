@@ -92,6 +92,16 @@ describe("activeWordIndex", () => {
 		expect(activeWordIndex(null, 500)).toBe(-1);
 		expect(activeWordIndex(words, 405)).toBe(-1);
 	});
+
+	it("lights a zero-width word at its exact start ms", () => {
+		// Two timings rounded to the same ms — the first word is zero-width.
+		const stutter: TranscriptWord[] = [
+			{ text: "I", start_ms: 100, end_ms: 100 },
+			{ text: "I", start_ms: 100, end_ms: 400 },
+		];
+		expect(activeWordIndex(stutter, 100)).toBe(0);
+		expect(activeWordIndex(stutter, 200)).toBe(1);
+	});
 });
 
 describe("activeWordIndexForEntry", () => {

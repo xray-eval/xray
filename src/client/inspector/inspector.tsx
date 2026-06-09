@@ -36,6 +36,7 @@ import { formatTimestamp } from "../format.ts";
 import { RunStatusBadge } from "../replay-status/replay-status.tsx";
 import { AnalysisProgress } from "./analysis-progress/analysis-progress.tsx";
 import { EvaluationPanel } from "./evaluation/evaluation.tsx";
+import { useReplayLiveUpdates } from "./live-updates/replay-live-updates.ts";
 import { TurnMetricsSection } from "./metrics/turn-metrics.tsx";
 import { TranscriptCard } from "./transcript/transcript.tsx";
 
@@ -138,6 +139,9 @@ export function Inspector() {
 }
 
 function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
+	// Stream live analysis transitions so a replay opened mid-analysis advances
+	// without a manual reload. No-op once the replay reaches a terminal state.
+	useReplayLiveUpdates(replay.id, replay.lifecycle_state);
 	return (
 		<PlayerProvider>
 			<SpanSelectionProvider>

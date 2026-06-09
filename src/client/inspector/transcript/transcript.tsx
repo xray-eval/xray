@@ -134,16 +134,25 @@ function TranscriptText({
 }) {
 	if (entry.words === null || currentMs === null) return <>{entry.text}</>;
 	const active = activeWordIndexForEntry(entry, currentMs);
+	// Key by each word's running character offset — not start/end ms (which
+	// collide when two words round to the same window) and not the array index
+	// (lint/suspicious/noArrayIndexKey). The offset strictly increases, so it's
+	// unique even for repeated tokens at identical timings.
+	let charOffset = 0;
 	return (
 		<>
-			{entry.words.map((word, i) => (
-				<span
-					key={`${word.start_ms}-${word.end_ms}`}
-					className={cn(i === active && "rounded-[3px] bg-foreground/15 text-foreground")}
-				>
-					{word.text}{" "}
-				</span>
-			))}
+			{entry.words.map((word, i) => {
+				const key = `${charOffset}:${word.text}`;
+				charOffset += word.text.length + 1;
+				return (
+					<span
+						key={key}
+						className={cn(i === active && "rounded-[3px] bg-foreground/15 text-foreground")}
+					>
+						{word.text}{" "}
+					</span>
+				);
+			})}
 		</>
 	);
 }
