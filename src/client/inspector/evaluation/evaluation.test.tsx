@@ -135,7 +135,8 @@ describe("EvaluationPanel errors", () => {
 			),
 		);
 		renderPanel();
-		await waitFor(() => screen.getByText(/Evaluation result is unavailable/i));
+		const alert = await waitFor(() => screen.getByRole("alert"));
+		expect(alert.textContent).toMatch(/Evaluation result is unavailable/i);
 	});
 
 	it("marks an errored assertion with the warning glyph, distinct from failed", async () => {

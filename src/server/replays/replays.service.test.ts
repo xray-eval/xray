@@ -403,6 +403,30 @@ describe("buildReplayDetail — transcripts projection", () => {
 		store.close();
 	});
 
+	it("collapses an empty words array to null so the client never maps over zero words", async () => {
+		const store = makeTempStore();
+		const { replayId } = await seedReplay(store);
+		store.db
+			.insert(turnTranscripts)
+			.values({
+				replayId,
+				turnIdx: 0,
+				text: "hi",
+				language: null,
+				wordsJson: "[]",
+				durationMs: 300,
+				provider: "openai_whisper",
+				model: "whisper-1",
+			})
+			.run();
+
+		const detail = getReplay(store, replayId);
+
+		expect(detail.transcripts[0]?.words).toBeNull();
+		expect(detail.transcripts[0]?.text).toBe("hi");
+		store.close();
+	});
+
 	it("degrades valid-JSON-but-wrong-shape words to null instead of throwing", async () => {
 		const store = makeTempStore();
 		const { replayId } = await seedReplay(store);

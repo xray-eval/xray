@@ -218,7 +218,10 @@ function buildReplayDetail(store: Store, r: ReplayRow): ReplayDetailResponse {
 // `words_json` is written by the analyze chain as `[{text, startMs, endMs}]`,
 // but it crosses the text→JSON boundary on the way back out — validate it
 // rather than trust the column. A malformed value degrades to plain text
-// (words=null) instead of throwing, matching `parseSpanAttributes`.
+// (words=null) instead of throwing, matching `parseSpanAttributes`. An empty
+// array collapses to null too: word-level highlight is all-or-nothing, and a
+// `[]` would make the client map the active turn over zero words (its text
+// would briefly vanish).
 const StoredWordsSchema = v.array(
 	v.object({ text: v.string(), startMs: v.number(), endMs: v.number() }),
 );
@@ -232,7 +235,7 @@ function parseTranscriptWords(wordsJson: string | null): TranscriptWord[] | null
 		return null;
 	}
 	const parsed = v.safeParse(StoredWordsSchema, raw);
-	if (!parsed.success) return null;
+	if (!parsed.success || parsed.output.length === 0) return null;
 	return parsed.output.map((w) => ({ text: w.text, start_ms: w.startMs, end_ms: w.endMs }));
 }
 

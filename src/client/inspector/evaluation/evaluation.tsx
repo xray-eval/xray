@@ -48,7 +48,9 @@ export function EvaluationPanel({
 		))
 		.with({ status: "error" }, () => (
 			<Card className="gap-0 overflow-hidden p-0">
-				<p className="px-6 py-5 text-sm text-muted-foreground">Evaluation result is unavailable.</p>
+				<p role="alert" className="px-6 py-5 text-sm text-muted-foreground">
+					Evaluation result is unavailable.
+				</p>
 			</Card>
 		))
 		.with({ status: "success" }, (q) => <EvaluationCard result={q.data} />)
