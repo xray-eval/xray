@@ -3,7 +3,8 @@ import { and, asc, eq } from "drizzle-orm";
 import { getConversationSpec } from "@/server/conversations/conversations.service.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
 import { findReplay, markReplayFailed } from "@/server/replays/replays.service.ts";
-import type { ReplayResult, TurnMetricsResponse } from "@/server/replays/replays.types.ts";
+import type { ReplayResult } from "@/server/replays/replays.types.ts";
+import { projectTurnMetrics } from "@/server/replays/turn-metrics.ts";
 import {
 	replayEvaluations,
 	replayMetrics,
@@ -152,7 +153,7 @@ export function makeCalculateMetricsProcessor(
 					passed: true,
 					assertions: [],
 					judges: [],
-					metrics: { turns: buildLiveTurnMetrics(turns, rows) },
+					metrics: { turns: projectTurnMetrics(turns, rows) },
 				};
 				events.emit(replayId, {
 					type: "state",
@@ -176,27 +177,6 @@ export function makeCalculateMetricsProcessor(
 			throw new JobProcessingError(replayId, `metrics stage failed: ${detail}`, { cause });
 		}
 	};
-}
-
-type ComputedMetric = ReturnType<typeof computeMetrics>[number];
-
-function buildLiveTurnMetrics(
-	turns: readonly ReplayTurnRow[],
-	metricRows: readonly ComputedMetric[],
-): TurnMetricsResponse[] {
-	const byIdx = new Map(metricRows.map((m) => [m.turnIdx, m]));
-	return [...turns]
-		.sort((a, b) => a.idx - b.idx)
-		.map((turn) => {
-			const metric = byIdx.get(turn.idx);
-			return {
-				turn_idx: turn.idx,
-				role: turn.role,
-				agent_response_ms: metric?.agentResponseMs ?? null,
-				ttft_ms: metric?.ttftMs ?? null,
-				interrupted: metric?.interrupted ?? false,
-			};
-		});
 }
 
 /**

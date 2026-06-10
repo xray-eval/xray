@@ -30,6 +30,8 @@ function buildReplay(
 		run_config,
 		turns,
 		speech_segments: [],
+		transcripts: [],
+		turn_metrics: [],
 		tool_calls: [],
 		model_usage: [],
 		spans: [],

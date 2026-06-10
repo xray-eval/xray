@@ -8,16 +8,22 @@ export type {
 	ListConversationsResponse,
 } from "@/server/conversations/conversations.types.ts";
 export type {
+	AssertionOutcomeResponse,
 	CompareReplaysResponse,
 	CreateReplayRequest,
+	JudgeOutcomeResponse,
 	ListReplaysResponse,
 	ModelUsageResponse,
 	ReplayDetailResponse,
+	ReplayResult,
 	ReplaySummaryResponse,
 	ReplayTurnResponse,
 	SpanResponse,
 	SpeechSegmentResponse,
 	ToolCallResponse,
+	TranscriptWord,
+	TurnMetricsResponse,
+	TurnTranscriptResponse,
 	UpdateReplayRequest,
 } from "@/server/replays/replays.types.ts";
 export type { SpanVocabulary, TurnRole } from "@/server/store/types.ts";

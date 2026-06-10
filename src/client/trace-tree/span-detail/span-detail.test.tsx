@@ -175,6 +175,8 @@ function replay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetailResp
 		run_config: null,
 		turns: [],
 		speech_segments: [],
+		transcripts: [],
+		turn_metrics: [],
 		tool_calls: [TOOL_CALL],
 		model_usage: [USAGE],
 		spans: [span()],

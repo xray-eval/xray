@@ -1,4 +1,5 @@
 import {
+	CorruptEvaluationStatusError,
 	InvalidCompareSelectionError,
 	InvalidReplayIdError,
 	InvalidReplayRequestError,
@@ -66,5 +67,11 @@ describe("ReplayError subclasses", () => {
 		expect(e.replayId).toBe("r");
 		expect(e.from).toBe("failed");
 		expect(e.to).toBe("completed");
+	});
+	it("CorruptEvaluationStatusError carries the raw status", () => {
+		const e = new CorruptEvaluationStatusError("bogus");
+		expect(e).toBeInstanceOf(ReplayError);
+		expect(e.name).toBe("CorruptEvaluationStatusError");
+		expect(e.rawStatus).toBe("bogus");
 	});
 });

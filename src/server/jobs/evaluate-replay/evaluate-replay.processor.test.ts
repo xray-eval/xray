@@ -203,6 +203,12 @@ describe("evaluate-replay processor", () => {
 		expect(completeEvents[0]?.result.passed).toBe(true);
 		expect(completeEvents[0]?.result.assertions.length).toBe(2);
 		expect(completeEvents[0]?.result.judges.length).toBe(1);
+
+		// The processor stamps + broadcasts the `evaluate` analysis step on entry
+		// so the inspector's progress bar can light its final node while the
+		// assertions/judges run.
+		const evaluateState = seen.find((e) => e.type === "state" && e.analysis_step === "evaluate");
+		expect(evaluateState).toBeDefined();
 	});
 
 	it("aggregates passed=false when any assertion fails", async () => {

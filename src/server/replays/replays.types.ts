@@ -89,6 +89,34 @@ export const SpeechSegmentResponseSchema = v.object({
 });
 export type SpeechSegmentResponse = v.InferOutput<typeof SpeechSegmentResponseSchema>;
 
+/**
+ * One word, parsed from `turn_transcripts.words_json`. Timings are 0-based
+ * within the turn's audio slice (Whisper transcribes the per-turn slice cut at
+ * `voice_start_ms`), not recording-absolute — the inspector shifts by the
+ * turn's voice-window start when syncing words to the playhead.
+ */
+export const TranscriptWordSchema = v.object({
+	text: v.string(),
+	start_ms: v.number(),
+	end_ms: v.number(),
+});
+export type TranscriptWord = v.InferOutput<typeof TranscriptWordSchema>;
+
+/**
+ * Per-turn Whisper transcript. `words` is null when the provider returned no
+ * word-level timings (Gemini) — the UI falls back to plain text in that case.
+ */
+export const TurnTranscriptResponseSchema = v.object({
+	turn_idx: v.number(),
+	text: v.string(),
+	language: v.nullable(v.string()),
+	words: v.nullable(v.array(TranscriptWordSchema)),
+	duration_ms: v.number(),
+	provider: v.string(),
+	model: v.string(),
+});
+export type TurnTranscriptResponse = v.InferOutput<typeof TurnTranscriptResponseSchema>;
+
 export const SpanResponseSchema = v.object({
 	id: v.number(),
 	trace_id: v.string(),
@@ -101,6 +129,21 @@ export const SpanResponseSchema = v.object({
 	attributes_json: v.string(),
 });
 export type SpanResponse = v.InferOutput<typeof SpanResponseSchema>;
+
+/**
+ * Per-turn timing — the silence/gap before an agent responds (`agent_response_ms`),
+ * time-to-first-token, and barge-in. Observability data: rides the replay detail
+ * (Run details UI) AND the evaluation result (SDK `ReplayResult.metrics`).
+ */
+export const TurnMetricsResponseSchema = v.object({
+	turn_idx: v.number(),
+	role: TurnRoleSchema,
+	agent_response_ms: v.nullable(v.number()),
+	ttft_ms: v.nullable(v.number()),
+	interrupted: v.boolean(),
+	interruption_start_ms: v.nullable(v.number()),
+});
+export type TurnMetricsResponse = v.InferOutput<typeof TurnMetricsResponseSchema>;
 
 /** Summary fields returned by `GET /v1/conversations/:hash/replays`. */
 export const ReplaySummaryResponseSchema = v.object({
@@ -128,6 +171,8 @@ export const ReplayDetailResponseSchema = v.object({
 	run_config: v.unknown(),
 	turns: v.array(ReplayTurnResponseSchema),
 	speech_segments: v.array(SpeechSegmentResponseSchema),
+	transcripts: v.array(TurnTranscriptResponseSchema),
+	turn_metrics: v.array(TurnMetricsResponseSchema),
 	tool_calls: v.array(ToolCallResponseSchema),
 	model_usage: v.array(ModelUsageResponseSchema),
 	spans: v.array(SpanResponseSchema),
@@ -187,15 +232,6 @@ export const JudgeOutcomeResponseSchema = v.object({
 	reason: v.nullable(v.string()),
 });
 export type JudgeOutcomeResponse = v.InferOutput<typeof JudgeOutcomeResponseSchema>;
-
-export const TurnMetricsResponseSchema = v.object({
-	turn_idx: v.number(),
-	role: TurnRoleSchema,
-	agent_response_ms: v.nullable(v.number()),
-	ttft_ms: v.nullable(v.number()),
-	interrupted: v.boolean(),
-});
-export type TurnMetricsResponse = v.InferOutput<typeof TurnMetricsResponseSchema>;
 
 export const ReplayResultSchema = v.object({
 	replay_id: v.string(),

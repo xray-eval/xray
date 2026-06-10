@@ -97,6 +97,21 @@ export class ReplayNotReadyForAnalysisError extends ReplayError {
 	}
 }
 
+/**
+ * A persisted assertion/judge status column held a value outside the
+ * `passed | failed | errored` enum. A CHECK constraint guards the column, so
+ * this only fires on a corrupt manual UPDATE — surfaced as a typed error
+ * rather than a raw `Error` so callers can discriminate it.
+ */
+export class CorruptEvaluationStatusError extends ReplayError {
+	readonly rawStatus: string;
+	constructor(rawStatus: string) {
+		super(`unexpected evaluation status "${rawStatus}"`);
+		this.name = "CorruptEvaluationStatusError";
+		this.rawStatus = rawStatus;
+	}
+}
+
 export class InvalidCompareSelectionError extends ReplayError {
 	readonly count: number;
 	readonly min: number;
