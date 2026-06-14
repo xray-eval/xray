@@ -45,7 +45,10 @@ export const RUN_CONFIG_MAX_BYTES = MAX_RUN_CONFIG_BYTES;
 
 export const ToolCallResponseSchema = v.object({
 	id: v.number(),
-	turn_idx: v.nullable(v.number()),
+	// Offset on the audio timeline (ms from recording t=0), derived from
+	// started_at − replays.recording_started_at. Null when either is missing
+	// — the row is still listed; it just can't be placed on the timeline.
+	audio_offset_ms: v.nullable(v.number()),
 	span_id: v.nullable(v.string()),
 	name: v.string(),
 	args_json: v.nullable(v.string()),
@@ -58,13 +61,16 @@ export type ToolCallResponse = v.InferOutput<typeof ToolCallResponseSchema>;
 
 export const ModelUsageResponseSchema = v.object({
 	id: v.number(),
-	turn_idx: v.nullable(v.number()),
+	audio_offset_ms: v.nullable(v.number()),
 	span_id: v.nullable(v.string()),
 	provider: v.nullable(v.string()),
 	model: v.nullable(v.string()),
 	input_tokens: v.nullable(v.number()),
 	output_tokens: v.nullable(v.number()),
 	total_tokens: v.nullable(v.number()),
+	// Model time-to-first-token (ms), from gen_ai.response.time_to_first_chunk.
+	// Null when the agent's instrumentation doesn't emit it.
+	ttft_ms: v.nullable(v.number()),
 	started_at: v.nullable(v.string()),
 	ended_at: v.nullable(v.string()),
 	latency_ms: v.nullable(v.number()),
@@ -127,19 +133,27 @@ export const SpanResponseSchema = v.object({
 	started_at: v.string(),
 	ended_at: v.string(),
 	attributes_json: v.string(),
+	// Offset of started_at on the audio timeline (ms from recording t=0),
+	// derived from started_at − replays.recording_started_at. Null when the
+	// replay has no anchor — the span is then unplaceable and renders untimed.
+	// The single origin for client span placement (spec 0001 §3.2): the client
+	// never re-derives offsets from wall-clock, so it can't diverge from the
+	// assertion evaluator's view.
+	audio_offset_ms: v.nullable(v.number()),
 });
 export type SpanResponse = v.InferOutput<typeof SpanResponseSchema>;
 
 /**
- * Per-turn timing — the silence/gap before an agent responds (`agent_response_ms`),
- * time-to-first-token, and barge-in. Observability data: rides the replay detail
- * (Run details UI) AND the evaluation result (SDK `ReplayResult.metrics`).
+ * Per-turn timing — the silence/gap before an agent responds
+ * (`agent_response_ms`) and barge-in. Observability data: rides the replay
+ * detail (Run details UI) AND the evaluation result (SDK
+ * `ReplayResult.metrics`). Model TTFT is no longer a per-turn metric — it's an
+ * optional per-call attribute (`model_usage.ttft_ms`, spec 0001).
  */
 export const TurnMetricsResponseSchema = v.object({
 	turn_idx: v.number(),
 	role: TurnRoleSchema,
 	agent_response_ms: v.nullable(v.number()),
-	ttft_ms: v.nullable(v.number()),
 	interrupted: v.boolean(),
 	interruption_start_ms: v.nullable(v.number()),
 });
@@ -166,6 +180,11 @@ export const ReplayDetailResponseSchema = v.object({
 	failure_reason: v.nullable(ReplayFailureReasonSchema),
 	started_at: v.string(),
 	finished_at: v.nullable(v.string()),
+	// Wall-clock of audio sample 0 (the timeline origin). The client maps any
+	// wall-clock timestamp (spans, tool calls, model usage) onto the audio
+	// timeline with `started_at − recording_started_at`. Null for older
+	// uploads that omitted the X-Recording-Started-At header.
+	recording_started_at: v.nullable(v.string()),
 	audio_path: v.nullable(v.string()),
 	job_id: v.nullable(v.string()),
 	run_config: v.unknown(),

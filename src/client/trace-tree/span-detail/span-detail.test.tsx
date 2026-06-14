@@ -30,6 +30,7 @@ function span(overrides: Partial<SpanResponse> = {}): SpanResponse {
 		started_at: REPLAY_START,
 		ended_at: "2026-05-25T10:00:04.300Z",
 		attributes_json: '{"gen_ai.operation.name":"chat","gen_ai.usage.input_tokens":1222}',
+		audio_offset_ms: 0,
 		...overrides,
 	};
 }
@@ -66,13 +67,14 @@ function model(overrides: Partial<SpanDetailModel> = {}): SpanDetailModel {
 
 const USAGE: ModelUsageResponse = {
 	id: 1,
-	turn_idx: 0,
+	audio_offset_ms: null,
 	span_id: "span-1",
 	provider: "Gemini",
 	model: "gemini-3.1-flash-live-preview",
 	input_tokens: 1222,
 	output_tokens: 111,
 	total_tokens: 1333,
+	ttft_ms: null,
 	started_at: null,
 	ended_at: null,
 	latency_ms: 4302,
@@ -80,7 +82,7 @@ const USAGE: ModelUsageResponse = {
 
 const TOOL_CALL: ToolCallResponse = {
 	id: 1,
-	turn_idx: 0,
+	audio_offset_ms: null,
 	span_id: "span-1",
 	name: "get_current_year",
 	args_json: "{}",
@@ -170,6 +172,7 @@ function replay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetailResp
 		failure_reason: null,
 		started_at: REPLAY_START,
 		finished_at: null,
+		recording_started_at: null,
 		audio_path: null,
 		job_id: null,
 		run_config: null,

@@ -19,6 +19,17 @@ export class InvalidAudioPathError extends AudioError {
 	}
 }
 
+/** `X-Recording-Started-At` header was present but not a valid ISO timestamp. */
+export class InvalidRecordingStartedAtError extends AudioError {
+	readonly issues: readonly BaseIssue<unknown>[];
+
+	constructor(issues: readonly BaseIssue<unknown>[]) {
+		super("Invalid X-Recording-Started-At header");
+		this.name = "InvalidRecordingStartedAtError";
+		this.issues = issues;
+	}
+}
+
 export class UnsupportedAudioContentTypeError extends AudioError {
 	readonly contentType: string | null;
 

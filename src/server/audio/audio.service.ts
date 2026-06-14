@@ -119,9 +119,19 @@ export async function readConversationTurnAudio(
 export async function uploadReplayAudio(
 	store: Store,
 	audioRoot: string,
-	params: { replayId: string; contentType: AudioContentType; bytes: Uint8Array<ArrayBuffer> },
+	params: {
+		replayId: string;
+		contentType: AudioContentType;
+		bytes: Uint8Array<ArrayBuffer>;
+		/** Wall-clock of audio sample 0 (driver's `min(segment.started_at)`),
+		 *  from the `X-Recording-Started-At` header. `null` when the SDK doesn't
+		 *  send it — span→audio attribution is then skipped (spec 0001). Required
+		 *  (not optional) so a caller can never silently persist a null anchor by
+		 *  forgetting the field; passing `null` is an explicit choice. */
+		recordingStartedAt: string | null;
+	},
 ): Promise<string> {
-	const { replayId, contentType, bytes } = params;
+	const { replayId, contentType, bytes, recordingStartedAt } = params;
 	const existing = findReplay(store, replayId);
 	if (existing === undefined) {
 		throw new AudioReplayNotFoundError(replayId);
@@ -140,7 +150,7 @@ export async function uploadReplayAudio(
 
 	store.db
 		.update(replays)
-		.set({ audioPath: relativePath, lifecycleState: "recording_uploaded" })
+		.set({ audioPath: relativePath, lifecycleState: "recording_uploaded", recordingStartedAt })
 		.where(eq(replays.id, replayId))
 		.run();
 

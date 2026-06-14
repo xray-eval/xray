@@ -48,6 +48,23 @@ export const UploadAudioResponseSchema = v.object({
 });
 export type UploadAudioResponse = v.InferOutput<typeof UploadAudioResponseSchema>;
 
+// Wall-clock (UTC ISO-8601) of audio sample 0, sent as the
+// `X-Recording-Started-At` request header on POST /audio. Optional — older
+// SDKs omit it, in which case span→audio offsets are undefined and attribution
+// is skipped (see spec 0001). When present it must be a valid ISO timestamp.
+//
+// The extra Date.parse gate is load-bearing: valibot's `isoTimestamp()` accepts
+// forms `Date.parse` returns NaN for (e.g. an hour-only offset `…+02`, a space
+// before the offset). Storing one of those would leave the replay looking
+// anchored while every derived `audio_offset_ms` is null — tool/ttft assertions
+// would then report a misleading pass/fail instead of `errored`. Since every
+// consumer maps the anchor via `Date.parse`, reject anything it can't parse.
+export const RecordingStartedAtSchema = v.pipe(
+	v.string(),
+	v.isoTimestamp(),
+	v.check((s) => Number.isFinite(Date.parse(s)), "must be a Date.parse-able ISO-8601 timestamp"),
+);
+
 export interface AudioStream {
 	readonly stream: ReadableStream<Uint8Array>;
 	readonly contentLength: number;

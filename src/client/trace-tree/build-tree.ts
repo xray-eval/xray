@@ -1,7 +1,19 @@
 import type { ReplayTurnResponse, SpanResponse } from "@/client/api/api.types.ts";
 
-import { attributeSpansToTurns, toReplaySeconds } from "./attribution.ts";
+import { attributeSpansToTurns, spanStartSeconds } from "./attribution.ts";
 import type { SpanRow, TraceScale, TreeRow, TurnRow, UntimedGroupRow } from "./trace-tree.types.ts";
+
+/**
+ * A span's start/end on the recording-t=0 axis (seconds). Start comes from the
+ * server-derived `audio_offset_ms` (0 when the span can't be placed — a replay
+ * with no anchor renders every span clustered at 0 rather than at a wrong
+ * wall-clock origin); end is start + the span's own duration.
+ */
+function spanSeconds(span: SpanResponse): { startSec: number; endSec: number } {
+	const startSec = spanStartSeconds(span) ?? 0;
+	const durMs = Math.max(0, Date.parse(span.ended_at) - Date.parse(span.started_at));
+	return { startSec, endSec: startSec + durMs / 1_000 };
+}
 
 export type TreeBuildResult = Readonly<{
 	rows: readonly TreeRow[];
@@ -20,9 +32,8 @@ export type TreeBuildResult = Readonly<{
 export function buildTree(
 	turns: readonly ReplayTurnResponse[],
 	spans: readonly SpanResponse[],
-	replayStartIso: string,
 ): TreeBuildResult {
-	const { perTurn, untimed } = attributeSpansToTurns(turns, spans, replayStartIso);
+	const { perTurn, untimed } = attributeSpansToTurns(turns, spans);
 	const rows: TreeRow[] = [];
 
 	let minSec = Number.POSITIVE_INFINITY;
@@ -49,7 +60,7 @@ export function buildTree(
 			hasChildren: clusterSpans.length > 0,
 		};
 		rows.push(turnRow);
-		appendSpanTree(rows, clusterSpans, turnRow.id, 1, replayStartIso, observe);
+		appendSpanTree(rows, clusterSpans, turnRow.id, 1, observe);
 	}
 
 	if (untimed.length > 0) {
@@ -62,12 +73,10 @@ export function buildTree(
 		};
 		rows.push(untimedRow);
 		for (const span of untimed) {
-			observe(
-				toReplaySeconds(span.started_at, replayStartIso),
-				toReplaySeconds(span.ended_at, replayStartIso),
-			);
+			const { startSec, endSec } = spanSeconds(span);
+			observe(startSec, endSec);
 		}
-		appendSpanTree(rows, untimed, untimedRow.id, 1, replayStartIso, observe);
+		appendSpanTree(rows, untimed, untimedRow.id, 1, observe);
 	}
 
 	const startSec = minSec === Number.POSITIVE_INFINITY ? 0 : Math.min(0, minSec);
@@ -86,7 +95,6 @@ function appendSpanTree(
 	pool: readonly SpanResponse[],
 	rootParentRowId: string,
 	rootDepth: number,
-	replayStartIso: string,
 	observe: (start: number, end: number) => void,
 ): void {
 	const bySpanId = new Map<string, SpanResponse>();
@@ -107,8 +115,7 @@ function appendSpanTree(
 	const visited = new Set<string>();
 	const emit = (span: SpanResponse, depth: number, parentRowId: string): SpanRow => {
 		visited.add(span.span_id);
-		const startedAtSec = toReplaySeconds(span.started_at, replayStartIso);
-		const endedAtSec = toReplaySeconds(span.ended_at, replayStartIso);
+		const { startSec: startedAtSec, endSec: endedAtSec } = spanSeconds(span);
 		observe(startedAtSec, endedAtSec);
 		const children = childrenBySpanId.get(span.span_id) ?? [];
 		const reachableChildren = children.filter((c) => !visited.has(c.span_id));

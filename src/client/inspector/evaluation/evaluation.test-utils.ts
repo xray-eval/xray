@@ -36,7 +36,6 @@ export function makeTurnMetrics(overrides: Partial<TurnMetricsResponse> = {}): T
 		turn_idx: 0,
 		role: "agent",
 		agent_response_ms: 250,
-		ttft_ms: 80,
 		interrupted: false,
 		interruption_start_ms: null,
 		...overrides,

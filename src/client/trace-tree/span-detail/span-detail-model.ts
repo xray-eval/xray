@@ -15,16 +15,6 @@ export function spanDurationMs(startedAt: string, endedAt: string): number {
 }
 
 /**
- * Seconds from replay start to `iso`, the offset the waveform/playhead use.
- * Clamped to 0: a span timestamped before the recording's t=0 has no place on
- * a waveform that starts at 0, same as `spanDurationMs`.
- */
-export function offsetSec(iso: string, replayStartIso: string): number {
-	const sec = (Date.parse(iso) - Date.parse(replayStartIso)) / 1_000;
-	return Number.isFinite(sec) && sec >= 0 ? sec : 0;
-}
-
-/**
  * Parse `spans.attributes_json` into sorted, namespace-split entries. The
  * stored value is always a flat JSON object in practice, but parse
  * defensively: a malformed string or a non-object top level falls back to a
@@ -68,11 +58,13 @@ export function resolveSpanDetail(
 	if (spanId === null) return null;
 	const span = source.spans.find((s) => s.span_id === spanId);
 	if (span === undefined) return null;
+	const durationMs = spanDurationMs(span.started_at, span.ended_at);
+	const startOffsetSec = span.audio_offset_ms === null ? null : span.audio_offset_ms / 1_000;
 	return {
 		span,
-		durationMs: spanDurationMs(span.started_at, span.ended_at),
-		startOffsetSec: offsetSec(span.started_at, source.replayStartIso),
-		endOffsetSec: offsetSec(span.ended_at, source.replayStartIso),
+		durationMs,
+		startOffsetSec,
+		endOffsetSec: startOffsetSec === null ? null : startOffsetSec + durationMs / 1_000,
 		parentName: resolveParentName(span.parent_span_id, source.spans),
 		attributes: parseSpanAttributes(span.attributes_json),
 		usage: source.modelUsage.filter((u) => u.span_id === spanId),

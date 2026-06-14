@@ -53,6 +53,7 @@ import type {
 	TurnTranscriptResponse,
 	UpdateReplayRequest,
 } from "./replays.types.ts";
+import { offsetFromOriginMs } from "./timeline.ts";
 import { projectTurnMetrics } from "./turn-metrics.ts";
 
 export interface CreateReplayOptions {
@@ -79,6 +80,7 @@ export function createReplay(
 		failureReason: null,
 		startedAt,
 		finishedAt: null,
+		recordingStartedAt: null,
 		audioPath: null,
 		runConfigJson: req.run_config === undefined ? null : JSON.stringify(req.run_config),
 		jobId: null,
@@ -194,6 +196,12 @@ function buildReplayDetail(store: Store, r: ReplayRow): ReplayDetailResponse {
 		.where(eq(turnTranscripts.replayId, id))
 		.all();
 	transcriptRows.sort((a, b) => a.turnIdx - b.turnIdx);
+
+	// Parse the timeline origin once for the whole detail payload — every
+	// span / tool_call / model_usage offset measures from the same string.
+	const originMs = r.recordingStartedAt === null ? null : Date.parse(r.recordingStartedAt);
+	const offsetOf = (startedAt: string | null) =>
+		offsetFromOriginMs(startedAt, originMs !== null && Number.isFinite(originMs) ? originMs : null);
 	return {
 		id: r.id,
 		conversation_hash: r.conversationHash,
@@ -202,6 +210,7 @@ function buildReplayDetail(store: Store, r: ReplayRow): ReplayDetailResponse {
 		failure_reason: r.failureReason,
 		started_at: r.startedAt,
 		finished_at: r.finishedAt,
+		recording_started_at: r.recordingStartedAt,
 		audio_path: r.audioPath,
 		job_id: r.jobId,
 		run_config: parseJsonOrNull(r.runConfigJson),
@@ -209,9 +218,9 @@ function buildReplayDetail(store: Store, r: ReplayRow): ReplayDetailResponse {
 		speech_segments: segments.map(toSegmentResponse),
 		transcripts: transcriptRows.map(toTranscriptResponse),
 		turn_metrics: buildTurnMetrics(store, id),
-		tool_calls: toolCallRows.map(toToolCallResponse),
-		model_usage: modelUsageRows.map(toModelUsageResponse),
-		spans: spanRows.map(toSpanResponse),
+		tool_calls: toolCallRows.map((row) => toToolCallResponse(row, offsetOf(row.startedAt))),
+		model_usage: modelUsageRows.map((row) => toModelUsageResponse(row, offsetOf(row.startedAt))),
+		spans: spanRows.map((row) => toSpanResponse(row, offsetOf(row.startedAt))),
 	};
 }
 
@@ -271,10 +280,10 @@ function toSegmentResponse(row: SpeechSegmentRow): SpeechSegmentResponse {
 	};
 }
 
-function toToolCallResponse(row: ToolCallRow): ToolCallResponse {
+function toToolCallResponse(row: ToolCallRow, audioOffsetMs: number | null): ToolCallResponse {
 	return {
 		id: row.id,
-		turn_idx: row.turnIdx,
+		audio_offset_ms: audioOffsetMs,
 		span_id: row.spanId,
 		name: row.name,
 		args_json: row.argsJson,
@@ -285,23 +294,27 @@ function toToolCallResponse(row: ToolCallRow): ToolCallResponse {
 	};
 }
 
-function toModelUsageResponse(row: ModelUsageRow): ModelUsageResponse {
+function toModelUsageResponse(
+	row: ModelUsageRow,
+	audioOffsetMs: number | null,
+): ModelUsageResponse {
 	return {
 		id: row.id,
-		turn_idx: row.turnIdx,
+		audio_offset_ms: audioOffsetMs,
 		span_id: row.spanId,
 		provider: row.provider,
 		model: row.model,
 		input_tokens: row.inputTokens,
 		output_tokens: row.outputTokens,
 		total_tokens: row.totalTokens,
+		ttft_ms: row.ttftMs,
 		started_at: row.startedAt,
 		ended_at: row.endedAt,
 		latency_ms: row.latencyMs,
 	};
 }
 
-function toSpanResponse(row: SpanRow): SpanResponse {
+function toSpanResponse(row: SpanRow, audioOffsetMs: number | null): SpanResponse {
 	return {
 		id: row.id,
 		trace_id: row.traceId,
@@ -312,6 +325,7 @@ function toSpanResponse(row: SpanRow): SpanResponse {
 		started_at: row.startedAt,
 		ended_at: row.endedAt,
 		attributes_json: row.attributesJson,
+		audio_offset_ms: audioOffsetMs,
 	};
 }
 

@@ -15,8 +15,9 @@ const METRIC_HEAD = "h-7 text-[10px] uppercase tracking-wider text-muted-foregro
 
 /**
  * Per-turn timing for the Run details panel: the silence gap before the agent
- * responds (`agent_response_ms`), time-to-first-token, and barge-in. Sits with
- * model usage + tool calls — observability data, not a pass/fail verdict.
+ * responds (`agent_response_ms`) and barge-in. Sits with model usage + tool
+ * calls — observability data, not a pass/fail verdict. (Model TTFT moved to a
+ * per-call attribute on the span detail — spec 0001.)
  */
 export function TurnMetricsSection({ turns }: { turns: TurnMetricsResponse[] }) {
 	if (turns.length === 0) return null;
@@ -36,7 +37,6 @@ export function TurnMetricsSection({ turns }: { turns: TurnMetricsResponse[] }) 
 						<TableHead className={cn(METRIC_HEAD, "w-10 pl-0")}>turn</TableHead>
 						<TableHead className={METRIC_HEAD}>role</TableHead>
 						<TableHead className={cn(METRIC_HEAD, "text-right")}>resp</TableHead>
-						<TableHead className={cn(METRIC_HEAD, "text-right")}>ttft</TableHead>
 						<TableHead className={cn(METRIC_HEAD, "pr-0 text-right")}>barge-in</TableHead>
 					</TableRow>
 				</TableHeader>
@@ -59,9 +59,6 @@ function TurnMetricRow({ turn }: { turn: TurnMetricsResponse }) {
 			<TableCell className="text-foreground/80">{turn.role}</TableCell>
 			<TableCell className="text-right text-foreground/80">
 				{formatMetricMs(turn.agent_response_ms)}
-			</TableCell>
-			<TableCell className="text-right text-foreground/80">
-				{formatMetricMs(turn.ttft_ms)}
 			</TableCell>
 			<TableCell className="pr-0 text-right">
 				{turn.interrupted ? (

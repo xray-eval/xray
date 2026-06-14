@@ -255,10 +255,11 @@ class LiveKitLiveRuntime(Runtime):
             len(user_frames),
             len(agent_frames),
         )
-        mixdown_path = self._write_mixdown(user_frames, agent_frames)
+        mixdown_path, recording_t0 = self._write_mixdown(user_frames, agent_frames)
         return RuntimeResult(
             responses=[],
             full_audio_path=str(mixdown_path) if mixdown_path is not None else None,
+            recording_started_at_epoch=recording_t0,
             full_transcript=None,
         )
 
@@ -335,19 +336,19 @@ class LiveKitLiveRuntime(Runtime):
 
     def _write_mixdown(
         self, user_frames: list[TimedFrame], agent_frames: list[TimedFrame]
-    ) -> Path | None:
+    ) -> tuple[Path | None, float | None]:
         if not user_frames and not agent_frames:
-            return None
+            return None, None
         mixdown_root = self.mixdown_dir or (self.cache_root / "replays")
         mixdown_root.mkdir(parents=True, exist_ok=True)
         out_path = mixdown_root / f"{self.replay_id}.wav"
         try:
-            write_live_mixdown(
+            recording_t0 = write_live_mixdown(
                 user_frames=user_frames, agent_frames=agent_frames, out_path=out_path
             )
         except OSError as e:
             raise MixdownError(f"could not write live mixdown WAV: {e}") from e
-        return out_path
+        return out_path, recording_t0
 
     @override
     async def aclose(self) -> None:

@@ -237,10 +237,11 @@ class LiveKitRuntime(Runtime):
         finally:
             await room.disconnect()
 
-        mixdown_path = self._write_mixdown(segments)
+        mixdown_path, recording_t0 = self._write_mixdown(segments)
         return RuntimeResult(
             responses=responses,
             full_audio_path=str(mixdown_path) if mixdown_path is not None else None,
+            recording_started_at_epoch=recording_t0,
             full_transcript=" ".join(r.transcript for r in responses if r.transcript).strip()
             or None,
         )
@@ -434,17 +435,17 @@ class LiveKitRuntime(Runtime):
             duration_ms=int((segment.ended_at - segment.started_at) * 1000),
         )
 
-    def _write_mixdown(self, segments: list[_TurnSegment]) -> Path | None:
+    def _write_mixdown(self, segments: list[_TurnSegment]) -> tuple[Path | None, float | None]:
         if not segments:
-            return None
+            return None, None
         mixdown_root = self.mixdown_dir or (self.cache_root / "replays")
         mixdown_root.mkdir(parents=True, exist_ok=True)
         out_path = mixdown_root / f"{self.replay_id}.wav"
         try:
-            write_stereo_mixdown(segments=segments, out_path=out_path)
+            recording_t0 = write_stereo_mixdown(segments=segments, out_path=out_path)
         except OSError as e:
             raise MixdownError(f"could not write mixdown WAV: {e}") from e
-        return out_path
+        return out_path, recording_t0
 
     def _injected_user_pcm(self, idx: int) -> bytes:
         """PCM for user turn ``idx`` from the orchestrator-injected map.
@@ -556,7 +557,7 @@ def mint_user_token(
     return builder.to_jwt()
 
 
-def write_stereo_mixdown(*, segments: list[_TurnSegment], out_path: Path) -> None:
+def write_stereo_mixdown(*, segments: list[_TurnSegment], out_path: Path) -> float | None:
     """Write segments as a wall-clock-aligned stereo WAV: left = user,
     right = agent. Each segment is placed at its captured `started_at`
     offset from t0 (the earliest started_at across all segments). Gaps
@@ -568,6 +569,10 @@ def write_stereo_mixdown(*, segments: list[_TurnSegment], out_path: Path) -> Non
     concat) is gone — VAD on the server reads the wall-clock-aligned
     file to derive turn boundaries (`turn_start_ms` / `voice_start_ms`
     in `replay_turns`).
+
+    Returns ``t0`` — the Unix-epoch wall-clock of audio sample 0 — so the
+    orchestrator can send it as the recording anchor. None when no audio
+    was placed (empty WAV).
     """
     placed = [s for s in segments if s.pcm and s.started_at is not None]
     if not placed:
@@ -576,7 +581,7 @@ def write_stereo_mixdown(*, segments: list[_TurnSegment], out_path: Path) -> Non
             w.setnchannels(2)
             w.setsampwidth(SAMPLE_WIDTH_BYTES)
             w.setframerate(SAMPLE_RATE)
-        return
+        return None
 
     t0 = min(s.started_at for s in placed if s.started_at is not None)
     total_samples = 0
@@ -608,13 +613,15 @@ def write_stereo_mixdown(*, segments: list[_TurnSegment], out_path: Path) -> Non
         w.setframerate(SAMPLE_RATE)
         w.writeframes(_interleave_lr(left=bytes(left), right=bytes(right)))
 
+    return t0
+
 
 def write_live_mixdown(
     *,
     user_frames: list[tuple[float, bytes]],
     agent_frames: list[tuple[float, bytes]],
     out_path: Path,
-) -> None:
+) -> float | None:
     """Write a wall-clock-aligned stereo WAV (L = user mic, R = agent) for a
     live session. Each frame is ``(wall_clock_seconds, int16_pcm_bytes)``.
 
@@ -639,7 +646,7 @@ def write_live_mixdown(
             w.setnchannels(2)
             w.setsampwidth(SAMPLE_WIDTH_BYTES)
             w.setframerate(SAMPLE_RATE)
-        return
+        return None
 
     t0 = min(t for t, _pcm in [*user, *agent])
     user_placed, user_total = _place_live_frames(user, t0)
@@ -658,6 +665,8 @@ def write_live_mixdown(
         w.setsampwidth(SAMPLE_WIDTH_BYTES)
         w.setframerate(SAMPLE_RATE)
         w.writeframes(_interleave_lr(left=bytes(left), right=bytes(right)))
+
+    return t0
 
 
 def _place_live_frames(

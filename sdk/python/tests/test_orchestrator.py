@@ -10,6 +10,7 @@ import io
 import json
 import wave
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -108,10 +109,12 @@ class StubRuntime(Runtime):
         responses: list[AgentResponse] | None = None,
         *,
         full_audio_path: str | None = None,
+        recording_started_at_epoch: float | None = None,
         raise_on_run: Exception | None = None,
     ) -> None:
         self.responses = responses or []
         self.full_audio_path = full_audio_path
+        self.recording_started_at_epoch = recording_started_at_epoch
         self.raise_on_run = raise_on_run
         self.bound: dict[str, str] | None = None
         self.closed = False
@@ -123,7 +126,11 @@ class StubRuntime(Runtime):
     async def run(self, conversation: Conversation) -> RuntimeResult:
         if self.raise_on_run is not None:
             raise self.raise_on_run
-        return RuntimeResult(responses=self.responses, full_audio_path=self.full_audio_path)
+        return RuntimeResult(
+            responses=self.responses,
+            full_audio_path=self.full_audio_path,
+            recording_started_at_epoch=self.recording_started_at_epoch,
+        )
 
     @override
     async def aclose(self) -> None:
@@ -228,9 +235,16 @@ async def test_full_chain_returns_replay_result_with_passed_true(tmp_path: Path)
             ),
         )
 
+        # Anchor: wall-clock of mixdown sample 0. Built from a known datetime
+        # so the expected header string is exact, not re-derived via the
+        # helper under test.
+        recording_t0 = datetime(2026, 5, 26, 14, 31, 31, 23000, tzinfo=timezone.utc)
         result = await run(
             conversation=conversation,
-            runtime=StubRuntime(full_audio_path=str(wav)),
+            runtime=StubRuntime(
+                full_audio_path=str(wav),
+                recording_started_at_epoch=recording_t0.timestamp(),
+            ),
             xray_url="http://test.local",
         )
 
@@ -245,6 +259,9 @@ async def test_full_chain_returns_replay_result_with_passed_true(tmp_path: Path)
     assert post_conv.called
     assert post_replay.called
     assert post_audio.called
+    audio_request: object = getattr(post_audio.calls[0], "request", None)
+    assert isinstance(audio_request, httpx.Request)
+    assert audio_request.headers["x-recording-started-at"] == "2026-05-26T14:31:31.023000Z"
     assert post_analyze.called
     assert sse.called
 

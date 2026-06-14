@@ -26,6 +26,7 @@ describe("langfuseVocabulary — generation observations", () => {
 				inputTokens: 100,
 				outputTokens: 25,
 				totalTokens: 125,
+				ttftMs: null,
 				startedAt: "2026-05-18T12:00:00.000Z",
 				endedAt: "2026-05-18T12:00:00.400Z",
 				latencyMs: 400,

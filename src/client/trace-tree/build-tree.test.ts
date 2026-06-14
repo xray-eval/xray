@@ -39,16 +39,13 @@ function span(
 		started_at: new Date(REPLAY_START_MS + offsetStartMs).toISOString(),
 		ended_at: new Date(REPLAY_START_MS + offsetEndMs).toISOString(),
 		attributes_json: "{}",
+		audio_offset_ms: offsetStartMs,
 	};
 }
 
 describe("buildTree", () => {
 	it("emits one row per turn in idx order", () => {
-		const { rows } = buildTree(
-			[turn(0, "user", 0, 2_500), turn(1, "agent", 3_000, 6_500)],
-			[],
-			REPLAY_START,
-		);
+		const { rows } = buildTree([turn(0, "user", 0, 2_500), turn(1, "agent", 3_000, 6_500)], []);
 		const turnRows = rows.filter((r) => r.kind === "turn");
 		expect(turnRows.map((r) => r.kind === "turn" && r.idx)).toEqual([0, 1]);
 	});
@@ -57,7 +54,6 @@ describe("buildTree", () => {
 		const { rows } = buildTree(
 			[turn(0, "user", 0, 2_500)],
 			[span(1, "stt.transcribe", 200, 1_400)],
-			REPLAY_START,
 		);
 		const spanRows = rows.filter((r) => r.kind === "span");
 		expect(spanRows).toHaveLength(1);
@@ -73,7 +69,6 @@ describe("buildTree", () => {
 				span(2, "rag_retrieve", 300, 800, "s-1"),
 				span(3, "openai_embed", 320, 700, "s-2"),
 			],
-			REPLAY_START,
 		);
 		const depthByName = new Map(
 			rows
@@ -89,7 +84,6 @@ describe("buildTree", () => {
 		const { rows } = buildTree(
 			[turn(0, "user", 0, 2_500)],
 			[span(1, "tool_call", 200, 1_400), span(2, "rag_retrieve", 300, 800, "s-1")],
-			REPLAY_START,
 		);
 		const names = rows.map((r) =>
 			r.kind === "span" ? r.name : r.kind === "turn" ? `turn-${r.idx}` : r.id,
@@ -98,11 +92,7 @@ describe("buildTree", () => {
 	});
 
 	it("appends an untimed-group row at the end when spans miss every turn", () => {
-		const { rows } = buildTree(
-			[turn(0, "user", 0, 2_500)],
-			[span(1, "setup", -1_000, -500)],
-			REPLAY_START,
-		);
+		const { rows } = buildTree([turn(0, "user", 0, 2_500)], [span(1, "setup", -1_000, -500)]);
 		expect(rows[rows.length - 2]?.kind).toBe("untimed-group");
 		expect(rows[rows.length - 1]?.kind).toBe("span");
 	});
@@ -111,7 +101,6 @@ describe("buildTree", () => {
 		const { scale } = buildTree(
 			[turn(0, "user", 0, 2_500)],
 			[span(1, "setup", -500, -100), span(2, "stt", 200, 1_400)],
-			REPLAY_START,
 		);
 		expect(scale.startSec).toBeLessThanOrEqual(-0.5);
 		expect(scale.endSec).toBeGreaterThanOrEqual(2.5);
@@ -126,7 +115,7 @@ describe("buildTree", () => {
 		const b = span(2, "b", 300, 500);
 		const cyclicA: typeof a = { ...a, parent_span_id: "s-2" };
 		const cyclicB: typeof b = { ...b, parent_span_id: "s-1" };
-		const { rows } = buildTree([turn(0, "user", 0, 2_500)], [cyclicA, cyclicB], REPLAY_START);
+		const { rows } = buildTree([turn(0, "user", 0, 2_500)], [cyclicA, cyclicB]);
 		const spanRows = rows.filter((r) => r.kind === "span");
 		expect(spanRows.map((r) => r.kind === "span" && r.name).sort()).toEqual(["a", "b"]);
 		for (const r of spanRows) {
@@ -138,7 +127,6 @@ describe("buildTree", () => {
 		const { rows } = buildTree(
 			[turn(0, "user", 0, 2_500), turn(1, "agent", 3_000, 6_500)],
 			[span(1, "stt", 100, 1_000)],
-			REPLAY_START,
 		);
 		const turnRows = rows.filter((r) => r.kind === "turn");
 		expect(turnRows[0]?.kind === "turn" && turnRows[0].hasChildren).toBe(true);

@@ -12,14 +12,12 @@ describe("projectTurnMetrics", () => {
 			{
 				turnIdx: 1,
 				agentResponseMs: 300,
-				ttftMs: 90,
 				interrupted: true,
 				interruptionStartMs: 1200,
 			},
 			{
 				turnIdx: 0,
 				agentResponseMs: null,
-				ttftMs: null,
 				interrupted: false,
 				interruptionStartMs: null,
 			},
@@ -30,7 +28,6 @@ describe("projectTurnMetrics", () => {
 			turn_idx: 1,
 			role: "agent",
 			agent_response_ms: 300,
-			ttft_ms: 90,
 			interrupted: true,
 			interruption_start_ms: 1200,
 		});
@@ -43,7 +40,6 @@ describe("projectTurnMetrics", () => {
 				turn_idx: 0,
 				role: "agent",
 				agent_response_ms: null,
-				ttft_ms: null,
 				interrupted: false,
 				interruption_start_ms: null,
 			},

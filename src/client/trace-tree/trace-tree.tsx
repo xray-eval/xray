@@ -24,7 +24,6 @@ const ZOOM_STEP = 1.5;
 interface TraceTreeProps {
 	turns: readonly ReplayTurnResponse[];
 	spans: readonly SpanResponse[];
-	replayStartIso: string;
 	zoom: number;
 }
 
@@ -32,12 +31,12 @@ type RenderState =
 	| { kind: "empty" }
 	| { kind: "ready"; rows: readonly TreeRow[]; scale: TraceScale };
 
-export function TraceTree({ turns, spans, replayStartIso, zoom }: TraceTreeProps) {
+export function TraceTree({ turns, spans, zoom }: TraceTreeProps) {
 	const state = useMemo<RenderState>(() => {
-		const { rows, scale } = buildTree(turns, spans, replayStartIso);
+		const { rows, scale } = buildTree(turns, spans);
 		if (rows.length === 0) return { kind: "empty" };
 		return { kind: "ready", rows, scale };
-	}, [turns, spans, replayStartIso]);
+	}, [turns, spans]);
 
 	return match(state)
 		.with({ kind: "empty" }, () => <TraceTreeEmpty />)

@@ -36,6 +36,7 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 		const rel = await uploadReplayAudio(store, audio.path, {
 			replayId,
 			contentType: "audio/wav",
+			recordingStartedAt: null,
 			bytes,
 		});
 		expect(rel).toBe(join(replayId, "replay.wav"));
@@ -49,12 +50,14 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 		await uploadReplayAudio(store, audio.path, {
 			replayId,
 			contentType: "audio/wav",
+			recordingStartedAt: null,
 			bytes: fakeAudioBytes(1),
 		});
 		const second = fakeAudioBytes(2);
 		await uploadReplayAudio(store, audio.path, {
 			replayId,
 			contentType: "audio/wav",
+			recordingStartedAt: null,
 			bytes: second,
 		});
 		const result = await readReplayAudio(store, audio.path, replayId);
@@ -80,6 +83,7 @@ describe("uploadReplayAudio / readReplayAudio", () => {
 			uploadReplayAudio(store, audio.path, {
 				replayId: "00000000-0000-0000-0000-000000000099",
 				contentType: "audio/wav",
+				recordingStartedAt: null,
 				bytes: fakeAudioBytes(),
 			}),
 		).rejects.toBeInstanceOf(AudioReplayNotFoundError);
@@ -98,6 +102,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 			uploadReplayAudio(store, audio.path, {
 				replayId,
 				contentType: "audio/wav",
+				recordingStartedAt: null,
 				bytes: fakeAudioBytes(),
 			}),
 		).resolves.toBeString();
@@ -108,6 +113,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 		await uploadReplayAudio(store, audio.path, {
 			replayId,
 			contentType: "audio/wav",
+			recordingStartedAt: null,
 			bytes: fakeAudioBytes(1),
 		});
 		// Now in recording_uploaded — re-upload should still work (e.g.
@@ -116,6 +122,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 			uploadReplayAudio(store, audio.path, {
 				replayId,
 				contentType: "audio/wav",
+				recordingStartedAt: null,
 				bytes: fakeAudioBytes(2),
 			}),
 		).resolves.toBeString();
@@ -132,6 +139,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 			uploadReplayAudio(store, audio.path, {
 				replayId,
 				contentType: "audio/wav",
+				recordingStartedAt: null,
 				bytes: fakeAudioBytes(),
 			}),
 		);
@@ -152,6 +160,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 			uploadReplayAudio(store, audio.path, {
 				replayId,
 				contentType: "audio/wav",
+				recordingStartedAt: null,
 				bytes: fakeAudioBytes(),
 			}),
 		).rejects.toBeInstanceOf(ReplayUploadStateError);
@@ -168,6 +177,7 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 			uploadReplayAudio(store, audio.path, {
 				replayId,
 				contentType: "audio/wav",
+				recordingStartedAt: null,
 				bytes: fakeAudioBytes(),
 			}),
 		).rejects.toBeInstanceOf(ReplayUploadStateError);

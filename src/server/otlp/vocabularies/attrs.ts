@@ -20,6 +20,20 @@ export function asInteger(v: FlatAttributes[string] | undefined): number | null 
 	return null;
 }
 
+/**
+ * Parse a finite floating-point value (number, or numeric string incl.
+ * decimals). Used for semconv durations expressed in seconds — e.g.
+ * `gen_ai.response.time_to_first_chunk` = `0.5`.
+ */
+export function asFiniteNumber(v: FlatAttributes[string] | undefined): number | null {
+	if (typeof v === "number") return Number.isFinite(v) ? v : null;
+	if (typeof v === "string" && v.trim() !== "") {
+		const n = Number(v);
+		return Number.isFinite(n) ? n : null;
+	}
+	return null;
+}
+
 export function safeJsonString(maybeJson: string): string {
 	try {
 		const parsed = JSON.parse(maybeJson);

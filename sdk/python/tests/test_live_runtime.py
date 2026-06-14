@@ -483,10 +483,12 @@ async def test_mic_factory_failure_propagates_and_disconnects(tmp_path: Path):
 def test_write_live_mixdown_wall_clock_aligned(tmp_path: Path):
     # User speaks at t0 for 200ms; agent replies 0.5s in for 500ms.
     # Total span = max(0.0+0.2, 0.5+0.5) = 1.0s = SAMPLE_RATE frames.
+    # Returns t0 — the recording anchor the orchestrator sends on upload.
     user = [(10.0, _silence(200))]
     agent = [(10.5, _silence(500))]
     out = tmp_path / "live.wav"
-    write_live_mixdown(user_frames=user, agent_frames=agent, out_path=out)
+    recording_t0 = write_live_mixdown(user_frames=user, agent_frames=agent, out_path=out)
+    assert recording_t0 == 10.0
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2
         assert w.getnframes() == SAMPLE_RATE
@@ -505,7 +507,8 @@ def test_write_live_mixdown_bursts_laid_sequentially(tmp_path: Path):
 
 def test_write_live_mixdown_empty(tmp_path: Path):
     out = tmp_path / "empty.wav"
-    write_live_mixdown(user_frames=[], agent_frames=[], out_path=out)
+    recording_t0 = write_live_mixdown(user_frames=[], agent_frames=[], out_path=out)
+    assert recording_t0 is None
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2
         assert w.getnframes() == 0

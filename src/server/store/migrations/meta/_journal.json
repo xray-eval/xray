@@ -15,6 +15,13 @@
       "when": 1780499814403,
       "tag": "0001_fast_lightspeed",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1781126983039,
+      "tag": "0002_slim_master_chief",
+      "breakpoints": true
     }
   ]
 }

@@ -38,6 +38,9 @@ export const langfuseVocabulary: SpanVocabularyMatcher = (
 			inputTokens: asInteger(a["langfuse.observation.usage_details.input"]),
 			outputTokens: asInteger(a["langfuse.observation.usage_details.output"]),
 			totalTokens: asInteger(a["langfuse.observation.usage_details.total"]),
+			// TTFT is sourced from the GenAI semconv attribute only (spec 0001);
+			// Langfuse's completion_start_time is a possible future source.
+			ttftMs: null,
 			startedAt,
 			endedAt,
 			latencyMs,

@@ -219,12 +219,7 @@ function TraceCard({ replay }: { replay: ReplayDetailResponse }) {
 				</div>
 			</CardHeader>
 			<CardContent className="h-[560px] px-0 py-0">
-				<TraceTree
-					turns={replay.turns}
-					spans={replay.spans}
-					replayStartIso={replay.started_at}
-					zoom={zoom}
-				/>
+				<TraceTree turns={replay.turns} spans={replay.spans} zoom={zoom} />
 			</CardContent>
 		</Card>
 	);

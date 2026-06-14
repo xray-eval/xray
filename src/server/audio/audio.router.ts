@@ -23,6 +23,7 @@ import {
 	AudioReplayNotFoundError,
 	InvalidAudioExtensionError,
 	InvalidAudioPathError,
+	InvalidRecordingStartedAtError,
 	ReplayUploadStateError,
 	UnsupportedAudioContentTypeError,
 } from "./audio.errors.ts";
@@ -33,6 +34,7 @@ import {
 	CONTENT_TYPE_TO_EXTENSION,
 	EXTENSION_TO_RESPONSE_CONTENT_TYPE,
 	MAX_AUDIO_BYTES,
+	RecordingStartedAtSchema,
 	UploadAudioResponseSchema,
 } from "./audio.types.ts";
 
@@ -61,6 +63,14 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 					required: true,
 					schema: openApiSchemaFromValibot(ReplayIdSchema),
 				},
+				{
+					in: "header",
+					name: "X-Recording-Started-At",
+					required: false,
+					description:
+						"Wall-clock (UTC ISO-8601) of audio sample 0 — the driver's earliest turn `started_at`. The sole origin for mapping span timestamps onto the audio timeline. Omit only from older SDKs; span→turn attribution is skipped when absent.",
+					schema: openApiSchemaFromValibot(RecordingStartedAtSchema),
+				},
 			],
 			requestBody: { required: true, content: UPLOAD_CONTENT_MAP },
 			responses: {
@@ -71,7 +81,8 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 					},
 				},
 				"400": {
-					description: "Path failed validation.",
+					description:
+						"Replay id failed validation (`invalid_audio_path`), or the X-Recording-Started-At header was present but not a parseable ISO-8601 timestamp (`invalid_recording_started_at`).",
 					content: {
 						"application/json": { schema: openApiSchemaFromValibot(ValidationErrorResponseSchema) },
 					},
@@ -114,12 +125,14 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 		async (c) => {
 			const replayId = parseReplayIdParam(c.req.param("id"));
 			const contentType = parseAudioContentType(c.req.header("content-type"));
+			const recordingStartedAt = parseRecordingStartedAt(c.req.header("x-recording-started-at"));
 			const buffer = await c.req.arrayBuffer();
 			const bytes = new Uint8Array(buffer);
 			const audioPath = await uploadReplayAudio(store, audioRoot, {
 				replayId,
 				contentType,
 				bytes,
+				recordingStartedAt,
 			});
 			return c.json({ ok: true, audio_path: audioPath });
 		},
@@ -177,6 +190,9 @@ export function createAudioRouter(store: Store, audioRoot: string): Hono {
 			.with(P.instanceOf(InvalidAudioPathError), (e) =>
 				c.json({ error: "invalid_audio_path", issues: sanitizeIssues(e.issues) }, 400),
 			)
+			.with(P.instanceOf(InvalidRecordingStartedAtError), (e) =>
+				c.json({ error: "invalid_recording_started_at", issues: sanitizeIssues(e.issues) }, 400),
+			)
 			.with(P.instanceOf(UnsupportedAudioContentTypeError), (e) =>
 				c.json({ error: "unsupported_content_type", content_type: e.contentType }, 415),
 			)
@@ -229,5 +245,15 @@ function parseAudioContentType(header: string | undefined): AudioContentType {
 	const stripped = header?.split(";")[0]?.trim().toLowerCase() ?? null;
 	const result = v.safeParse(AudioContentTypeSchema, stripped);
 	if (!result.success) throw new UnsupportedAudioContentTypeError(stripped);
+	return result.output;
+}
+
+// Optional: absent header ⇒ null (older SDK; offsets undefined, attribution
+// skipped). Present-but-malformed ⇒ 400 — a provided anchor we can't parse is
+// a client bug we surface loudly, never silently drop.
+function parseRecordingStartedAt(header: string | undefined): string | null {
+	if (header === undefined) return null;
+	const result = v.safeParse(RecordingStartedAtSchema, header.trim());
+	if (!result.success) throw new InvalidRecordingStartedAtError(result.issues);
 	return result.output;
 }
