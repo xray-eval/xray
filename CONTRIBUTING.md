@@ -7,7 +7,7 @@ Thanks for considering a contribution. This repo is intentionally small and easy
 - **pnpm only.** `npm install`, `yarn add`, and `bun install` are blocked by a `preinstall` hook. Use `corepack enable` to pick up the pinned pnpm version.
 - **Supply chain is non-negotiable.** Read [`.claude/rules/supply-chain.md`](./.claude/rules/supply-chain.md) before adding any dependency. The 7-day cooldown, deny-by-default lifecycle scripts, and SHA-pinned GitHub Actions are not optional.
 - **This repo is public.** Read [`.claude/rules/public-repo.md`](./.claude/rules/public-repo.md) before touching `.env`, the Dockerfile, or commit messages. A leaked secret must be **rotated**, never rewritten.
-- **Conventional commits.** Enforced by commitlint in the `commit-msg` hook. Examples: `feat(adapter): add retell adapter`, `fix(server): handle missing api key`.
+- **Conventional commits.** Enforced by commitlint in the `commit-msg` hook. Examples: `feat(server): add Mistral judge provider`, `fix(server): handle missing api key`.
 - **No `as` casts.** Banned by a custom Biome plugin ([`biome-plugins/no-as-cast.grit`](./biome-plugins/no-as-cast.grit)). The **only** allowed form is `as const` (literal-type widening control — not a cast). For everything else: use `satisfies`, a type guard, or `ts-pattern.match`.
 
 ## First-time setup
@@ -43,7 +43,7 @@ uv venv
 uv pip install -e '.[dev]'
 ```
 
-`uv` itself is pinned via `.tool-versions` (install: `curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`).
+Install `uv` if you don't have it (`curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`). CI installs it via a SHA-pinned `setup-uv` action; `.tool-versions` pins Node/Bun/pnpm/Python — not uv.
 
 ## Daily loop
 
@@ -52,17 +52,17 @@ pnpm dev              # Single Bun container serving SPA + API on :8080 with HMR
 pnpm typecheck        # tsc --noEmit
 pnpm check            # biome check (lint + format)
 pnpm check:fix        # biome check --write
-pnpm test             # bun test
-pnpm test:watch       # bun test --watch (the TDD loop)
-pnpm test:coverage    # bun test --coverage — same gate CI runs
-pnpm docker:smoke     # build the production image, run it, curl /healthz, kill it
+pnpm test             # bun test --isolate
+pnpm test:watch       # bun test --isolate --watch (the TDD loop)
+pnpm test:coverage    # bun test --isolate --coverage — same gate CI runs
+pnpm docker:smoke     # build the image, run it, wait for the container HEALTHCHECK (probes /healthz) to go healthy
 ```
 
 ### TDD
 
 Every behavior lands red → green → refactor. The failing test goes in *first*, runs (and fails for the right reason), then the production code makes it green. See [`.claude/rules/tdd.md`](./.claude/rules/tdd.md). The CI `test` workflow runs `pnpm test:coverage` and fails the build if coverage drops below the thresholds in `bunfig.toml`.
 
-`pnpm docker:smoke` is the **single most important** local check — it is exactly what CI runs before publishing. If it passes locally, it passes in CI.
+`pnpm docker:smoke` is the **single most important** local check — it builds the production image, runs it, and waits for the container's `HEALTHCHECK` (which probes `/healthz`) to report healthy. CI runs the same script in the `smoke` job of `build.yml` on every PR and push. If it passes locally, it passes in CI.
 
 ## Parallel worktrees
 
@@ -108,19 +108,18 @@ git branch -D feat/foo                          # name shown in .worktree-info
 
 ## Code layout
 
-- **Vertical slices, not technical layers.** `src/adapters/elevenlabs/`, `src/graph/`, `src/inspector/` — each folder owns its own components, hooks, types, helpers. No top-level `components/`, `hooks/`, `services/`, `utils/` god-folders.
+- **Vertical slices, not technical layers.** `src/server/conversations/`, `src/server/otlp/vocabularies/`, `src/client/inspector/` — each folder owns its own router/service/types/tests (client slices own their components/hooks). No top-level `components/`, `hooks/`, `services/`, `utils/` god-folders.
 - **Tests next to the source.** `foo.ts` and `foo.test.ts` live in the same folder. No `tests/` mirror tree, no `__tests__/`. See [`.claude/rules/code-layout.md`](./.claude/rules/code-layout.md) for the full rationale.
 
-## Adding a provider adapter
+## Extending xray
 
-The core app is provider-agnostic. Adding a new provider is one file plus tests; no UI changes.
+There is no server-side "adapter" system — the alpha rewrite removed it. The current extension points are:
 
-1. Read [`src/adapters/types.ts`](./src/adapters/types.ts) — the `VoiceAgentAdapter` interface and the provider-agnostic types (`Agent`, `Workflow`, `Conversation`, `Turn`).
-2. Create the slice: `src/adapters/<provider>/adapter.ts` implementing `VoiceAgentAdapter`, plus any `<provider>`-specific helpers / types in the same folder. Tests live next to the file they test (`adapter.test.ts`).
-3. Register it in `src/adapters/registry.ts`.
-4. Add a row to the supported-providers table in the README.
+- **A new transport / runtime (SDK side).** Subclass `Runtime` from [`sdk/python/src/xray/runtime/base.py`](./sdk/python/src/xray/runtime/base.py) and implement its abstract methods; `LiveKitRuntime` is the reference. Pipecat / OpenAI Realtime / raw WebSocket would each be a new module under `sdk/python/src/xray/runtime/`.
+- **A new OTLP vocabulary.** Drop one file in [`src/server/otlp/vocabularies/`](./src/server/otlp/vocabularies/) and add one line to `registry.ts`. Each vocabulary is a pure `match(span, resource)` function — test it against synthetic spans with the slice's test-utils.
+- **A new transcription / TTS / judge provider.** Add one file in `src/server/transcription/`, `src/server/tts/`, or `src/server/judges/`, then wire it into the selector in [`src/server/providers/providers.ts`](./src/server/providers/providers.ts). Providers are chosen at runtime via `XRAY_TRANSCRIPTION_PROVIDER` / `XRAY_TTS_PROVIDER` / `XRAY_JUDGE_PROVIDER`.
 
-The interface is deliberately small — if your provider needs something the interface can't express, open an issue first. Interface churn affects every adapter.
+Tests live next to the file they test. See [`.claude/rules/code-layout.md`](./.claude/rules/code-layout.md).
 
 ## Adding a dependency
 

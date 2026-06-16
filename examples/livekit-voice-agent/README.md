@@ -14,7 +14,9 @@ end-to-end. Demonstrates the one-line `xray.attach(ctx)` integration.
 ├── agent/main.py            ← the one xray.attach() call
 ├── driver/test_e2e.py       ← pytest; drives one scripted Replay
 ├── driver/live_session.py   ← interactive; talk to the agent over the mic
-└── fixtures/user_turn_1.wav
+└── fixtures/
+    ├── user_turn_1.wav      ← scripted user utterance (48 kHz mono)
+    └── agent_greeting.wav   ← greeting the agent plays via session.say
 ```
 
 ## Quickstart

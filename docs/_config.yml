@@ -1,0 +1,32 @@
+# GitHub Pages config for the docs/ folder.
+#
+# Hosting: repo Settings → Pages → "Deploy from a branch" → branch `main`,
+# folder `/docs`. GitHub's managed Jekyll build renders this folder server-side
+# — there is no workflow file to maintain and nothing is added to the repo's
+# pnpm lockfile or CI.
+#
+# Theme: just-the-docs (sidebar nav + search) is pulled in via remote_theme and
+# resolved by GitHub's Pages build, not by this repo's dependencies. To drop the
+# external gem entirely, replace the `remote_theme:` line with a built-in theme,
+# e.g. `theme: jekyll-theme-cayman` (no nav sidebar, but zero external gems).
+
+title: xray
+description: Open-source, self-hosted replay/eval framework for LiveKit voice agents
+remote_theme: just-the-docs/just-the-docs
+
+# Project-page paths assume the repo is published at github.com/xray-eval/xray.
+# If you fork/rename, update both to <owner>.github.io and /<repo>.
+url: https://xray-eval.github.io
+baseurl: /xray
+
+color_scheme: dark
+search_enabled: true
+
+# Render the mermaid diagrams in architecture.md / integrate.md (loaded from a
+# CDN at view time by just-the-docs; not a build dependency).
+mermaid:
+  version: "10.9.0"
+
+aux_links:
+  "GitHub":
+    - "https://github.com/xray-eval/xray"
