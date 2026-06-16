@@ -1,6 +1,12 @@
 # Python SDK test gate — ruff + pyright (strict) + pytest.
 #
-# Path-filtered to sdk/python/** so PRs that don't touch the SDK skip it.
+# Runs on every PR (no `paths:` filter) so it can be a *required* status
+# check. A path-filtered workflow reports no status at all on PRs that
+# don't match its paths, and a required check that never reports leaves
+# the PR stuck on "Expected — Waiting for status to be reported" forever.
+# The whole suite runs every time; with uv caching the interpreter + wheel
+# set it lands in about a minute, same order as test/typecheck/build.
+#
 # Local equivalent (from sdk/python/), using uv:
 #
 #     uv venv --python 3.12.7
@@ -14,29 +20,13 @@
 # The strict-mode gate lives in sdk/python/pyproject.toml `[tool.pyright]`;
 # CI just runs the binary. Type policy is documented at
 # sdk/python/.claude/rules/no-any.md / assert-never.md / typed-boundaries.md.
-#
-# DO NOT add this check to GitHub branch protection's "required status
-# checks" without also adding a path-ignored skip job: workflows with
-# `paths:` filters never report status on PRs that don't match, so a
-# required check would hang non-SDK PRs forever waiting on a job that
-# never queues.
 
 name: Python SDK
 
 on:
   pull_request:
-    paths:
-      - 'sdk/python/**'
-      - '.python-version'
-      - '.tool-versions'
-      - '.github/workflows/test-python-sdk.yml'
   push:
     branches: [main]
-    paths:
-      - 'sdk/python/**'
-      - '.python-version'
-      - '.tool-versions'
-      - '.github/workflows/test-python-sdk.yml'
 
 permissions: {}
 
