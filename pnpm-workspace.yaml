@@ -75,17 +75,22 @@ overrides:
   # rejects it. Pinning ^0.25.0 lines up with the already-resolved esbuild
   # 0.25.12 elsewhere in the tree, so this adds zero new versions. Remove this
   # entry once drizzle-kit drops `@esbuild-kit/*` for `tsx`. Added 2026-05-16.
+  # (The newer GHSA-gv7w-rqvm-qjhr, esbuild <0.28.1, is handled via auditConfig
+  # below rather than bumping this pin — see that note for why.)
   "@esbuild-kit/core-utils>esbuild": "^0.25.0"
-  # GHSA-58qx-3vcg-4xpx — ws <8.20.1 has an uninitialized-memory disclosure
-  # via a malformed Sec-WebSocket-Extensions header. happy-dom@20.9.0 (latest
-  # at 2026-05-19) still depends on ws@8.20.0. ws is dev-only here (happy-dom
-  # provides the DOM for client-side tests; we don't ship it in the Docker
-  # image), but `pnpm audit --audit-level=moderate` blocks the merge until
-  # the transitive is bumped. Pinning `happy-dom>ws` so the override stays
+  # GHSA-96hv-2xvq-fx4p — ws >=8.0.0 <8.21.0 has a memory-exhaustion DoS: a
+  # peer sending many tiny fragments / data chunks forces unbounded buffering.
+  # (Supersedes GHSA-58qx-3vcg-4xpx, the uninitialized-memory disclosure that
+  # first prompted this pin — that one needed <8.20.1, this one needs <8.21.0.)
+  # happy-dom@20.9.0 still depends on a vulnerable ws. ws is dev-only here
+  # (happy-dom provides the DOM for client-side tests; we don't ship it in the
+  # Docker image), but `pnpm audit --audit-level=moderate` blocks the merge
+  # until the transitive is bumped. Pinning `happy-dom>ws` keeps the override
   # surgical — if any other transitive ever depends on ws, it keeps its own
-  # resolution and we re-evaluate then. Remove once happy-dom ships a release
-  # that bumps ws. Added 2026-05-19.
-  "happy-dom>ws": "^8.20.1"
+  # resolution and we re-evaluate then. ws@8.21.0 was published 2026-05-22,
+  # well past the 7-day cooldown (no minimumReleaseAgeExclude needed). Remove
+  # once happy-dom ships a release that bumps ws. Updated 2026-06-16.
+  "happy-dom>ws": "^8.21.0"
   # GHSA-q8mj-m7cp-5q26 — qs >=6.11.1 <=6.15.1 has a remotely triggerable DoS
   # via `qs.stringify` crashing with TypeError on null/undefined entries in
   # comma-format arrays when encodeValuesOnly is set. qs is pulled in
@@ -100,13 +105,38 @@ overrides:
   # that bumps qs. Added 2026-05-24.
   "express>qs": "^6.15.2"
   "body-parser>qs": "^6.15.2"
+  # GHSA-h67p-54hq-rp68 — js-yaml <=4.1.1 has a quadratic-complexity DoS in
+  # YAML merge-key (`<<`) handling via repeated aliases. Pulled in transitively
+  # via @commitlint/cli > @commitlint/load > cosmiconfig > js-yaml — a dev-only
+  # commit-message linter that only ever parses our own config, never untrusted
+  # YAML, so practical risk is nil — but `pnpm audit --audit-level=moderate`
+  # blocks merge. Upstream never published the advisory's nominal 4.1.2; the
+  # fix shipped in 4.2.0 (published 2026-05-31, past the 7-day cooldown), which
+  # satisfies the advisory's >=4.1.2. Surgical pin on the cosmiconfig parent.
+  # Remove once cosmiconfig bumps js-yaml. Added 2026-06-16.
+  "cosmiconfig>js-yaml": "^4.2.0"
 
-# CVE-driven exception to the 7-day cooldown. ws@8.20.1 was published
-# 2026-05-12T15:54Z — ~10 hours short of the 168-hour cooldown at the time
-# of the audit failure (2026-05-19). The rule in .claude/rules/supply-chain.md
-# §3 explicitly allows bypassing for "a CVE-driven urgent patch documented
-# in the commit message" — see the corresponding override above and the
-# accompanying commit. Remove this once happy-dom bumps and the override
-# above is removed.
-minimumReleaseAgeExclude:
-  - ws
+# VEX-style "not affected" disposition: GHSA-gv7w-rqvm-qjhr is unreachable in
+# this repo, so the audit gate is told to skip that one advisory — we do NOT
+# relax the 7-day cooldown to pull the fix. The advisory is in esbuild's *Deno*
+# installer (`lib/deno/mod.ts`), which fetches the native binary with no SHA-256
+# check. We never invoke esbuild via Deno: it's a dev-only drizzle-kit
+# transitive, installed through the *Node* path (`lib/npm/node-install.ts`),
+# which hardcodes registry.npmjs.org (it does NOT read NPM_CONFIG_REGISTRY) and
+# SHA-256-checks the binary before exec. The vulnerable code path does not run
+# here.
+#
+# Why ignore instead of bumping to the patched esbuild 0.28.1: that release was
+# published 2026-06-11 (<7 days old), so pinning it would force a cooldown
+# bypass. Bypassing would pull a fresh release of a build tool that runs a
+# native-binary postinstall and executes at build time with full filesystem /
+# CI access — the exact high-blast-radius supply-chain risk the cooldown exists
+# to contain (cf. the active June 2026 "Miasma" npm worm). Provenance/signatures
+# do NOT rule that out ("attestations can't block a pipeline hijack"). Taking
+# that risk to remediate a finding that cannot reach us is the wrong trade when
+# the cooldown clears on its own in ~2 days. So: once 0.28.1 ages past the
+# cooldown (after ~2026-06-18), bump esbuild to ^0.28.1 in `overrides` above and
+# delete this ignore — fix landed, zero cooldown bypass. Added 2026-06-16.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-gv7w-rqvm-qjhr
