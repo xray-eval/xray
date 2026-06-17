@@ -44,7 +44,7 @@ docker build -t xray:local .
 The Python SDK:
 
 ```bash
-pip install xray-py[livekit]
+pip install "xray-py[livekit]"
 ```
 
 ---

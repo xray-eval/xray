@@ -32,7 +32,7 @@ End-user integration instructions live in [`integrate.md`](./integrate.md).
 - Storage is one **SQLite file** at `/data/xray.db` plus the bunqueue
   job DB at `/data/bunqueue.db`, plus audio bytes on disk under
   `XRAY_AUDIO_ROOT`. No external services. No second container. See
-  [`single-image-distribution.md`](../.claude/rules/single-image-distribution.md)
+  [`single-image-distribution.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/single-image-distribution.md)
   for why this is non-negotiable.
 - The **inspector SPA** is served by the same Bun process that owns
   the API — one image, one port, one volume.
@@ -414,7 +414,7 @@ flowchart LR
 Every read endpoint is in `src/server/<slice>/<slice>.router.ts`. The
 service layer (`<slice>.service.ts`) does the actual SQL via Drizzle
 on `bun:sqlite`. The slice convention is documented in
-[`code-layout.md`](../.claude/rules/code-layout.md).
+[`code-layout.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/code-layout.md).
 
 ---
 
@@ -438,7 +438,7 @@ This single-image promise is load-bearing for several other choices
 in the codebase (SQLite over Postgres, `bun:sqlite` over a network
 driver, embedded reads over a separate query service, embedded
 bunqueue worker over a separate queue process). See
-[`single-image-distribution.md`](../.claude/rules/single-image-distribution.md)
+[`single-image-distribution.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/single-image-distribution.md)
 before proposing any change that would break it.
 
 **Two SQLite files in `/data/`.** xray owns `xray.db` (conversations,

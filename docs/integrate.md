@@ -75,7 +75,7 @@ span.
 ## 1. Install the SDK on the agent side
 
 ```bash
-pip install xray-py[livekit]
+pip install "xray-py[livekit]"
 ```
 
 The `[livekit]` extra pulls in `livekit` + `livekit-api`. Drop it if
