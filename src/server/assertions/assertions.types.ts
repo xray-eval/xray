@@ -98,13 +98,24 @@ export const AssertionsArraySchema = v.pipe(
  * — every text-based assertion variant maps that to `status: "errored"`
  * with a stable message, rather than asserting against an empty string.
  *
- * `toolCalls` / `modelUsage` arrive pre-filtered to this turn by the
- * caller — the evaluator does not re-filter by `turn_idx`.
+ * `toolCalls` / `modelUsage` arrive pre-filtered to this turn by the caller
+ * — membership is the audio-timeline window `[turnStartMs, turnEndMs)`
+ * computed in the evaluate-replay stage (see `src/server/replays/timeline.ts`),
+ * not a stored `turn_idx`.
+ *
+ * `hasRecordingAnchor` is false when the replay has no `recording_started_at`
+ * (older SDK). Without it, span `started_at` can't be mapped onto the audio
+ * timeline, so tool-presence and ttft assertions can't be attributed to a
+ * turn — they map to `errored`, never a misleading pass/fail.
+ *
+ * `metrics.ttftMs` is the earliest in-window model call's
+ * `model_usage.ttft_ms` (or null), NOT a per-turn aggregate.
  */
 export interface AssertionContext {
 	readonly turnIdx: number;
 	readonly turnRole: TurnRole;
 	readonly transcript: string | null;
+	readonly hasRecordingAnchor: boolean;
 	readonly toolCalls: readonly ToolCallRow[];
 	readonly modelUsage: readonly ModelUsageRow[];
 	readonly metrics: {

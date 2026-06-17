@@ -6,6 +6,7 @@ export interface MakeAssertionContextOverrides {
 	turnIdx?: number;
 	turnRole?: "user" | "agent";
 	transcript?: string | null;
+	hasRecordingAnchor?: boolean;
 	toolCalls?: readonly ToolCallRow[];
 	modelUsage?: readonly ModelUsageRow[];
 	agentResponseMs?: number | null;
@@ -19,6 +20,10 @@ export function makeAssertionContext(
 		turnIdx: overrides.turnIdx ?? 0,
 		turnRole: overrides.turnRole ?? "agent",
 		transcript: overrides.transcript === undefined ? "" : overrides.transcript,
+		// Default true: most assertion tests aren't exercising the no-anchor
+		// path, and a false default would silently flip every tool test to
+		// `errored`.
+		hasRecordingAnchor: overrides.hasRecordingAnchor ?? true,
 		toolCalls: overrides.toolCalls ?? [],
 		modelUsage: overrides.modelUsage ?? [],
 		metrics: {
@@ -37,7 +42,6 @@ export function makeToolCallRow(overrides: Partial<ToolCallRow> = {}): ToolCallR
 	return {
 		id: overrides.id ?? toolCallId,
 		replayId: overrides.replayId ?? "00000000-0000-0000-0000-000000000001",
-		turnIdx: overrides.turnIdx ?? 0,
 		spanId: overrides.spanId ?? `span-${toolCallId}`,
 		name: overrides.name ?? "lookup",
 		argsJson: overrides.argsJson ?? null,

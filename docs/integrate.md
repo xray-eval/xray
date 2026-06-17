@@ -230,7 +230,16 @@ What `xray.run` does:
 3. Bind the driver, attach replay baggage, run the driver — playing
    user audio + capturing agent audio + transcripts.
 4. Assemble a 48 kHz int16 **stereo WAV** (L = user, R = agent,
-   wall-clock-aligned) and POST it to `/v1/replays/:id/audio`.
+   wall-clock-aligned) and POST it to `/v1/replays/:id/audio`, with the
+   `X-Recording-Started-At` header set to the wall-clock (ISO-8601 UTC) of
+   audio sample 0. This anchor is the sole origin for mapping span
+   timestamps onto the audio timeline — the server derives each tool /
+   model / span row's per-turn membership from it. **A custom `Runtime`
+   that produces audio MUST report it**: return
+   `RuntimeResult.recording_started_at_epoch` (Unix epoch seconds of sample
+   0) and `xray.run` sends the header for you. Omit it and span→turn
+   attribution is skipped — every `tool_called` / `tool_not_called` /
+   `tool_args_match` / `max_ttft_ms` assertion comes back `errored`.
 5. POST `/v1/replays/:id/analyze` — server enqueues the three-stage
    analyze chain (`analyze-replay` → `calculate-metrics` →
    `evaluate-replay`).
@@ -274,7 +283,10 @@ one file each in `src/server/tts/`.
   Each carries `judge_idx`, `kind`, `status`, the LLM's 0..100
   `score`, and the LLM's natural-language `reason`.
 - `metrics: tuple[TurnMetrics, ...]` — per-turn timing computed
-  server-side: `agent_response_ms`, `ttft_ms`, `interrupted`.
+  server-side: `agent_response_ms`, `interrupted`. (Model TTFT is a
+  per-call attribute on the replay's `model_usage` rows, populated when
+  the agent's instrumentation emits
+  `gen_ai.response.time_to_first_chunk` — not a per-turn metric.)
 - `replay_id` + `conversation_hash` — pointers back to the server-side
   rows for follow-up inspection.
 
@@ -337,9 +349,9 @@ This release moves assertion + judge evaluation onto the server.
   down, judge crashing) raise `ReplayEvaluationError`.
 - **Three-stage server chain.** `/analyze` now enqueues
   `analyze-replay` (VAD + per-turn Whisper transcription), which
-  enqueues `calculate-metrics` (agent_response_ms, ttft_ms,
-  interrupted), which enqueues `evaluate-replay` (runs all assertions
-  + judges, emits `evaluation_complete` SSE).
+  enqueues `calculate-metrics` (agent_response_ms, interrupted), which
+  enqueues `evaluate-replay` (runs all assertions + judges, emits
+  `evaluation_complete` SSE).
 - **SSE event renamed.** The `completed` event is gone; the chain
   emits `evaluation_complete` with the full `ReplayResult` payload.
 - **`GET /v1/replays/:id/result`** — fetches the same payload outside

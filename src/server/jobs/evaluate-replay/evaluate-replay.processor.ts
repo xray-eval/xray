@@ -16,6 +16,8 @@ import type {
 	JudgeOutcomeResponse,
 	ReplayResult,
 } from "@/server/replays/replays.types.ts";
+import type { TurnWindow } from "@/server/replays/timeline.ts";
+import { audioOffsetMs, clampedTurnWindows, rowsInTurnWindow } from "@/server/replays/timeline.ts";
 import { projectTurnMetrics } from "@/server/replays/turn-metrics.ts";
 import {
 	assertionResults,
@@ -130,6 +132,20 @@ export function makeEvaluateReplayProcessor(
 				.where(eq(modelUsage.replayId, replayId))
 				.all();
 
+			// Tiling attribution windows for every VAD turn, in idx order, built
+			// from each turn's voiceEndMs — the voice-active boundary the spec
+			// attributes against (0001 §3.4), not turnEndMs (equal today, but
+			// stored separately for future overlap handling). Built once (the
+			// cursor accumulates across all turns, including extra VAD turns the
+			// spec doesn't assert) and looked up per matched turn.
+			const windows = clampedTurnWindows(turnRows.map((t) => t.voiceEndMs));
+			const windowByIdx = new Map<number, TurnWindow>();
+			for (let t = 0; t < turnRows.length; t++) {
+				const row = turnRows[t];
+				const window = windows[t];
+				if (row !== undefined && window !== undefined) windowByIdx.set(row.idx, window);
+			}
+
 			const evaluatedAt = new Date().toISOString();
 			const assertionRows: AssertionResultInsert[] = [];
 			const assertionOutcomes: AssertionOutcomeResponse[] = [];
@@ -161,7 +177,15 @@ export function makeEvaluateReplayProcessor(
 
 				const assertions = turn.assertions ?? [];
 				if (assertions.length === 0) continue;
-				const ctx = buildAssertionContext(matched, transcripts, metricRows, toolRows, usageRows);
+				const ctx = buildAssertionContext(
+					matched,
+					windowByIdx.get(matched.idx),
+					transcripts,
+					metricRows,
+					toolRows,
+					usageRows,
+					replay.recordingStartedAt,
+				);
 				for (let j = 0; j < assertions.length; j++) {
 					const assertion = assertions[j];
 					if (assertion === undefined) continue;
@@ -305,35 +329,75 @@ export function makeEvaluateReplayProcessor(
 /**
  * Build the per-assertion context against a specific VAD-derived turn.
  *
- * All downstream lookups (`transcripts`, `metrics`, `tool_calls`,
- * `model_usage`) are keyed on the VAD-row's `idx`, NOT the spec's turn
- * position. The analyze-replay stage wrote those tables using VAD-derived
- * indexes, and the calculate-metrics + OTLP backfill stages followed the
- * same convention. Pairing here must use the matched VAD idx so the
- * spec's `assertions[i]` sees the matched VAD turn's transcript, not the
- * spec position's transcript (which doesn't exist when spec/VAD diverge).
+ * `transcripts` + `metrics` are keyed on the VAD row's `idx`. `tool_calls` /
+ * `model_usage` carry no stored turn idx — membership is the tiling attribution
+ * `window` (`clampedTurnWindows`, see `src/server/replays/timeline.ts`) applied
+ * to each row's wall-clock `started_at` against the replay's
+ * `recording_started_at`. A row whose call fired before the user stopped
+ * (speculative) or after the agent finished lands in a neighbouring turn's tile
+ * and is excluded — `tool_called` then flags the mistiming.
+ *
+ * `ttftMs` is the earliest in-window model call's `model_usage.ttft_ms` — a
+ * span-level, same-clock delta, not a per-turn aggregate.
+ *
+ * When `recordingStartedAt` is null (or no window exists for this turn) the rows
+ * can't be placed on the timeline; `hasRecordingAnchor` is false and the
+ * evaluator maps tool/ttft assertions to `errored` rather than a misleading
+ * pass/fail.
  */
 function buildAssertionContext(
 	matched: ReplayTurnRow,
+	window: TurnWindow | undefined,
 	transcripts: readonly TurnTranscriptRow[],
 	metrics: readonly ReplayMetricRow[],
 	toolRows: readonly ToolCallRow[],
 	usageRows: readonly ModelUsageRow[],
+	recordingStartedAt: string | null,
 ): AssertionContext {
 	const vadIdx = matched.idx;
 	const transcript = transcripts.find((t) => t.turnIdx === vadIdx)?.text ?? null;
 	const metric = metrics.find((m) => m.turnIdx === vadIdx);
+	const usageInWindow =
+		window === undefined ? [] : rowsInTurnWindow(usageRows, window, recordingStartedAt);
 	return {
 		turnIdx: vadIdx,
 		turnRole: matched.role,
 		transcript,
-		toolCalls: toolRows.filter((tc) => tc.turnIdx === vadIdx),
-		modelUsage: usageRows.filter((mu) => mu.turnIdx === vadIdx),
+		hasRecordingAnchor: recordingStartedAt !== null && window !== undefined,
+		toolCalls: window === undefined ? [] : rowsInTurnWindow(toolRows, window, recordingStartedAt),
+		modelUsage: usageInWindow,
 		metrics: {
 			agentResponseMs: metric?.agentResponseMs ?? null,
-			ttftMs: metric?.ttftMs ?? null,
+			ttftMs: earliestTtftMs(usageInWindow, recordingStartedAt),
 		},
 	};
+}
+
+/**
+ * TTFT of the earliest (by audio offset) in-window model call that actually
+ * carries one, or null when none does. We pick the earliest call's measurement
+ * (spec §3.4: "the first LLM call's perceived first-chunk latency"), but skip
+ * rows whose `ttftMs` is null — a leading call that didn't emit
+ * `gen_ai.response.time_to_first_chunk` (e.g. a Langfuse-vocabulary span, which
+ * never carries it) must not mask a later call that did, which would make
+ * `max_ttft_ms` falsely report "no call carried TTFT".
+ */
+function earliestTtftMs(
+	usageInWindow: readonly ModelUsageRow[],
+	recordingStartedAt: string | null,
+): number | null {
+	let earliestTtft: number | null = null;
+	let earliestOffset = Number.POSITIVE_INFINITY;
+	for (const row of usageInWindow) {
+		if (row.ttftMs === null) continue;
+		const offset = audioOffsetMs(row.startedAt, recordingStartedAt);
+		if (offset === null) continue;
+		if (offset < earliestOffset) {
+			earliestOffset = offset;
+			earliestTtft = row.ttftMs;
+		}
+	}
+	return earliestTtft;
 }
 
 function buildJudgeTurns(

@@ -68,6 +68,7 @@ function buildReplay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetai
 		failure_reason: null,
 		started_at: "2026-05-15T10:00:00.000Z",
 		finished_at: null,
+		recording_started_at: null,
 		audio_path: null,
 		job_id: null,
 		run_config: null,

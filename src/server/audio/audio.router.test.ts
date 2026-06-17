@@ -1,8 +1,10 @@
+import { eq } from "drizzle-orm";
 import * as v from "valibot";
 
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { makeReplayEvents } from "@/server/replays/replays.events.ts";
 import { createApp } from "@/server/server.ts";
+import { replays } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 import { makeFakeTtsProvider } from "@/server/tts/tts.test-utils.ts";
@@ -71,6 +73,56 @@ describe("POST /v1/replays/:id/audio — happy path", () => {
 	});
 });
 
+describe("POST /v1/replays/:id/audio — X-Recording-Started-At header", () => {
+	async function replayRowAfterUpload(headers: Record<string, string>) {
+		const { replayId } = await seedReplayForAudio(store);
+		const res = await app.request(replayAudioUrl(replayId), {
+			method: "POST",
+			headers: { "Content-Type": "audio/wav", ...headers },
+			body: fakeAudioBytes(),
+		});
+		const row = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+		return { res, row };
+	}
+
+	it("persists the anchor on the replay row", async () => {
+		const anchor = "2026-05-26T14:31:31.023Z";
+		const { res, row } = await replayRowAfterUpload({ "X-Recording-Started-At": anchor });
+		expect(res.status).toBe(200);
+		expect(row?.recordingStartedAt).toBe(anchor);
+	});
+
+	it("stores null when the header is absent (older SDK)", async () => {
+		const { res, row } = await replayRowAfterUpload({});
+		expect(res.status).toBe(200);
+		expect(row?.recordingStartedAt).toBeNull();
+	});
+
+	it("rejects a malformed anchor with 400 — never silently drops a provided value", async () => {
+		const { res, row } = await replayRowAfterUpload({ "X-Recording-Started-At": "yesterday-ish" });
+		expect(res.status).toBe(400);
+		const body = v.parse(
+			v.object({ error: v.literal("invalid_recording_started_at") }),
+			await res.json(),
+		);
+		expect(body.error).toBe("invalid_recording_started_at");
+		expect(row?.recordingStartedAt).toBeNull();
+	});
+
+	// These pass valibot's ISO regex but Date.parse() returns NaN for them, so
+	// storing them would make every downstream offset null while the row looks
+	// anchored — tool/ttft assertions would then report misleading fail/pass
+	// instead of `errored`. Reject at the boundary instead.
+	it.each([
+		"2026-05-26T14:31:31+02",
+		"2026-05-26T14:31:31 +02:00",
+	])("rejects an ISO-shaped but unparseable anchor (%s) with 400", async (anchor) => {
+		const { res, row } = await replayRowAfterUpload({ "X-Recording-Started-At": anchor });
+		expect(res.status).toBe(400);
+		expect(row?.recordingStartedAt).toBeNull();
+	});
+});
+
 describe("POST /v1/replays/:id/audio — rejections", () => {
 	it("rejects an unsupported content type with 415", async () => {
 		const { replayId } = await seedReplayForAudio(store);
@@ -130,8 +182,6 @@ describe("POST /v1/replays/:id/audio — rejections", () => {
 describe("POST /v1/replays/:id/audio — lifecycle 409", () => {
 	it("returns 409 when the replay is `analyzing`", async () => {
 		const { replayId } = await seedReplayForAudio(store);
-		const { replays } = await import("@/server/store/schema.ts");
-		const { eq } = await import("drizzle-orm");
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "analyzing", analysisStep: "vad", jobId: "j-1" })
@@ -147,8 +197,6 @@ describe("POST /v1/replays/:id/audio — lifecycle 409", () => {
 
 	it("returns 409 when the replay is `completed`", async () => {
 		const { replayId } = await seedReplayForAudio(store);
-		const { replays } = await import("@/server/store/schema.ts");
-		const { eq } = await import("drizzle-orm");
 		store.db
 			.update(replays)
 			.set({ lifecycleState: "completed" })

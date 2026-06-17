@@ -10,7 +10,6 @@ interface TurnLike {
 interface TurnMetricLike {
 	readonly turnIdx: number;
 	readonly agentResponseMs: number | null;
-	readonly ttftMs: number | null;
 	readonly interrupted: boolean;
 	readonly interruptionStartMs: number | null;
 }
@@ -45,7 +44,6 @@ export function projectTurnMetrics(
 				turn_idx: turn.idx,
 				role: turn.role,
 				agent_response_ms: m?.agentResponseMs ?? null,
-				ttft_ms: m?.ttftMs ?? null,
 				interrupted: m?.interrupted ?? false,
 				interruption_start_ms: m?.interruptionStartMs ?? null,
 			};

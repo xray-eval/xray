@@ -121,10 +121,10 @@ flowchart TB
       subgraph CP["Control plane — Valibot-validated, idempotent"]
         CP1["POST /v1/conversations<br/><i>multipart spec + audio bytes<br/>server hashes canonical turns → conversation_hash<br/>upsert by hash (last-write-wins on name)</i>"]
         CP2["POST /v1/replays<br/><i>eager row create — lifecycle_state='pending'<br/>returns replay_id</i>"]
-        CP3["POST /v1/replays/:id/audio<br/><i>stereo WAV → XRAY_AUDIO_ROOT<br/>lifecycle_state='recording_uploaded'</i>"]
+        CP3["POST /v1/replays/:id/audio<br/><i>stereo WAV → XRAY_AUDIO_ROOT<br/>X-Recording-Started-At → replays.recording_started_at<br/>lifecycle_state='recording_uploaded'</i>"]
         CP4["POST /v1/replays/:id/analyze<br/><i>enqueue bunqueue job<br/>lifecycle_state='analyzing'<br/>analysis_step='vad'</i>"]
         CP5["PATCH /v1/replays/:id<br/><i>lifecycle_state / failure_reason / finished_at</i>"]
-        CP6["analyze-chain workers<br/><i>analyze-replay: VAD + Whisper → speech_segments + replay_turns + turn_transcripts<br/>calculate-metrics: agent_response_ms + ttft + interrupted → replay_metrics<br/>evaluate-replay: assertions + judges → assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed' on chain success</i>"]
+        CP6["analyze-chain workers<br/><i>analyze-replay: VAD + Whisper → speech_segments + replay_turns + turn_transcripts<br/>calculate-metrics: agent_response_ms + interrupted → replay_metrics<br/>evaluate-replay: assertions + judges → assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed' on chain success</i>"]
       end
       subgraph RX["OTLP receiver — filters, not gates"]
         RX1["POST /v1/otlp/v1/traces<br/>JSON or protobuf<br/><br/>Routes by xray.replay.id resource attr.<br/>Unknown replay_id → silent drop.<br/>Unknown vocabulary → silent drop.<br/><br/>Vocabularies in src/server/otlp/vocabularies/:<br/>• xray.ts (xray.* recognized, raw spans only)<br/>• gen-ai-semconv.ts (gen_ai.* per OTel)<br/>• langfuse.ts (Langfuse-flavoured GenAI)"]
@@ -226,10 +226,16 @@ longer recognized: the spec-0001 server reads its checks from the
 driver-emitted spans.
 
 **Tool / model → turn attribution** is timestamp-based, not span-tag
-based. The OTLP receiver writes `tool_calls.turn_idx` /
-`model_usage.turn_idx` as `NULL`; the `analyze-replay` job backfills
-those values from the VAD-derived `replay_turns.voice_start_ms..voice_end_ms`
-window in the same transaction that writes the turn rows.
+based — and derived, not stored. `tool_calls` / `model_usage` rows carry
+only their wall-clock `started_at`; turn membership is computed at
+eval/read time by mapping `started_at` onto the audio timeline
+(`audio_offset_ms = started_at − replays.recording_started_at`, the
+anchor the driver sends via the `X-Recording-Started-At` upload header)
+and testing the VAD-derived turn window `[turn_start_ms, turn_end_ms)`.
+There is no `turn_idx` column on those tables and no backfill stage —
+see `docs/specs/0001-timeline-clock-alignment.md` for why
+`replays.started_at` (row-creation time) must never be used as the
+origin.
 
 **gen_ai semconv** (`gen-ai-semconv.ts`) — `gen_ai.tool` → `tool_calls`,
 `gen_ai.client.operation` → `model_usage`. **Langfuse** vocabulary
@@ -268,15 +274,15 @@ sequenceDiagram
     end
 
     D->>D: assemble stereo WAV<br/>(L = user PCM, R = agent PCM,<br/>wall-clock-aligned)
-    D->>X: POST /v1/replays/:id/audio<br/>→ lifecycle_state='recording_uploaded'
+    D->>X: POST /v1/replays/:id/audio<br/>+ X-Recording-Started-At (audio t=0)<br/>→ lifecycle_state='recording_uploaded'
     D->>X: POST /v1/replays/:id/analyze<br/>→ lifecycle_state='analyzing'
     X->>W: bunqueue enqueue analyze-replay
-    W->>W: read WAV, downsample to 16k,<br/>VAD per channel,<br/>derive turn boundaries,<br/>backfill tool_calls/model_usage turn_idx
+    W->>W: read WAV, downsample to 16k,<br/>VAD per channel,<br/>derive turn boundaries
     W->>X: insert speech_segments + replay_turns<br/>analysis_step='transcribe'
     W->>W: slice per-turn audio, call Whisper<br/>(Promise.all over turns)
     W->>X: insert turn_transcripts<br/>enqueue calculate-metrics
     X->>W: bunqueue enqueue calculate-metrics
-    W->>W: compute agent_response_ms + ttft_ms<br/>+ interrupted per turn
+    W->>W: compute agent_response_ms<br/>+ interrupted per turn
     W->>X: insert replay_metrics<br/>analysis_step='evaluate'<br/>enqueue evaluate-replay
     X->>W: bunqueue enqueue evaluate-replay
     W->>W: run each declared Assertion<br/>(pure ts-pattern dispatch)<br/>+ each declared Judge<br/>(OpenAI Chat Completions)

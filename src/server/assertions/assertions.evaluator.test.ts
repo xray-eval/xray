@@ -238,6 +238,40 @@ describe("evaluateAssertion — max_ttft_ms", () => {
 	});
 });
 
+describe("evaluateAssertion — no recording anchor", () => {
+	// Without recording_started_at the server can't map span timestamps onto
+	// the audio timeline, so span-attributed assertions can't be evaluated —
+	// they must `error`, never silently pass/fail. Text/latency assertions are
+	// unaffected (they don't depend on the timeline).
+	it("errors tool_called / tool_not_called / tool_args_match / max_ttft_ms", () => {
+		const ctx = makeAssertionContext({
+			hasRecordingAnchor: false,
+			toolCalls: [makeToolCallRow({ name: "lookup" })],
+			ttftMs: 100,
+		});
+		for (const assertion of [
+			{ kind: "tool_called", name: "lookup" },
+			{ kind: "tool_not_called", name: "lookup" },
+			{ kind: "tool_args_match", name: "lookup", args: {} },
+			{ kind: "max_ttft_ms", max_ms: 500 },
+		] as const) {
+			expect(evaluateAssertion(assertion, ctx).status).toBe("errored");
+		}
+	});
+
+	it("does NOT error text or latency assertions (timeline-independent)", () => {
+		const ctx = makeAssertionContext({
+			hasRecordingAnchor: false,
+			transcript: "hello world",
+			agentResponseMs: 1200,
+		});
+		expect(
+			evaluateAssertion({ kind: "contains", text: "hello", case_insensitive: true }, ctx).status,
+		).toBe("passed");
+		expect(evaluateAssertion({ kind: "max_latency_ms", max_ms: 2000 }, ctx).status).toBe("passed");
+	});
+});
+
 describe("deepPartialMatch", () => {
 	it("matches nested objects partially", () => {
 		expect(deepPartialMatch({ a: 1, b: { c: 2 } }, { a: 1, b: { c: 2, d: 3 }, e: 99 })).toBe(true);

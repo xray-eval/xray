@@ -4,16 +4,9 @@ import { seedConversation } from "@/server/conversations/conversations.test-util
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { makeReplayEvents } from "@/server/replays/replays.events.ts";
 import { createReplay } from "@/server/replays/replays.service.ts";
-import {
-	replayEvaluations,
-	replayMetrics,
-	replays,
-	replayTurns,
-	spans,
-	speechSegments,
-} from "@/server/store/schema.ts";
+import { replayEvaluations, replayMetrics, replays, replayTurns } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
-import type { ReplayTurnRow, SpanRow, SpeechSegmentRow } from "@/server/store/types.ts";
+import type { ReplayTurnRow, SpeechSegmentRow } from "@/server/store/types.ts";
 
 import { computeMetrics, makeCalculateMetricsProcessor } from "./calculate-metrics.processor.ts";
 import { describe, expect, it } from "bun:test";
@@ -59,83 +52,9 @@ describe("computeMetrics (pure)", () => {
 				voiceEndMs: 2500,
 			},
 		];
-		const rows = computeMetrics("r", turns, [], [], 0);
+		const rows = computeMetrics("r", turns, []);
 		expect(rows[1]?.agentResponseMs).toBe(300);
 		expect(rows[0]?.agentResponseMs).toBeNull();
-	});
-
-	it("computes positive ttftMs from the earliest gen_ai span in [turnStartMs, voiceStartMs)", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 800,
-				turnEndMs: 2000,
-				voiceStartMs: 1500,
-				voiceEndMs: 2000,
-			},
-		];
-		const replayStartMs = Date.parse("2026-05-18T12:00:00.000Z");
-		const ttftSpans: SpanRow[] = [
-			{
-				id: 1,
-				replayId: "r",
-				traceId: "t",
-				spanId: "s",
-				parentSpanId: null,
-				name: "chat",
-				vocabulary: "gen_ai",
-				startedAt: new Date(replayStartMs + 1000).toISOString(),
-				endedAt: new Date(replayStartMs + 1400).toISOString(),
-				attributesJson: "{}",
-			},
-			{
-				id: 2,
-				replayId: "r",
-				traceId: "t",
-				spanId: "s2",
-				parentSpanId: null,
-				name: "chat2",
-				vocabulary: "gen_ai",
-				startedAt: new Date(replayStartMs + 1200).toISOString(),
-				endedAt: new Date(replayStartMs + 1450).toISOString(),
-				attributesJson: "{}",
-			},
-		];
-		const rows = computeMetrics("r", turns, [], ttftSpans, replayStartMs);
-		expect(rows[0]?.ttftMs).toBe(500);
-	});
-
-	it("returns null when no gen_ai span lands in the LLM-call attribution window", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 1000,
-				turnEndMs: 2000,
-				voiceStartMs: 1500,
-				voiceEndMs: 2000,
-			},
-		];
-		const replayStartMs = Date.parse("2026-05-18T12:00:00.000Z");
-		const ttftSpans: SpanRow[] = [
-			{
-				id: 1,
-				replayId: "r",
-				traceId: "t",
-				spanId: "s",
-				parentSpanId: null,
-				name: "chat",
-				vocabulary: "gen_ai",
-				startedAt: new Date(replayStartMs + 1600).toISOString(),
-				endedAt: new Date(replayStartMs + 1700).toISOString(),
-				attributesJson: "{}",
-			},
-		];
-		const rows = computeMetrics("r", turns, [], ttftSpans, replayStartMs);
-		expect(rows[0]?.ttftMs).toBeNull();
 	});
 
 	it("flags interrupted=true when opposite channel starts a segment inside the turn", () => {
@@ -153,7 +72,7 @@ describe("computeMetrics (pure)", () => {
 		const segments: SpeechSegmentRow[] = [
 			{ id: 1, replayId: "r", channel: "user", startMs: 1200, endMs: 1500 },
 		];
-		const rows = computeMetrics("r", turns, segments, [], 0);
+		const rows = computeMetrics("r", turns, segments);
 		expect(rows[0]?.interrupted).toBe(true);
 		expect(rows[0]?.interruptionStartMs).toBe(1200);
 	});
@@ -173,7 +92,7 @@ describe("computeMetrics (pure)", () => {
 		const segments: SpeechSegmentRow[] = [
 			{ id: 1, replayId: "r", channel: "agent", startMs: 600, endMs: 1500 },
 		];
-		const rows = computeMetrics("r", turns, segments, [], 0);
+		const rows = computeMetrics("r", turns, segments);
 		expect(rows[0]?.interrupted).toBe(false);
 	});
 });
@@ -224,9 +143,6 @@ describe("makeCalculateMetricsProcessor", () => {
 
 	it("stamps failed + failure_reason='metrics_failed' on internal error", async () => {
 		const { store, replayId } = await setupReplay();
-		// Force a unique-key collision on insert by pre-populating a row with
-		// the same composite PK — the second insert inside the processor
-		// will throw.
 		store.db
 			.insert(replayTurns)
 			.values({
@@ -239,15 +155,8 @@ describe("makeCalculateMetricsProcessor", () => {
 				voiceEndMs: 1,
 			})
 			.run();
-		// Pre-populate replay_metrics so the delete-then-insert path works
-		// but break it by inserting an invalid row beforehand via raw SQL? No
-		// — easier: stub the runner to throw on enqueue (after the write
-		// commits) → markReplayFailed runs in the catch. Hmm, that's not quite
-		// "metrics stage failed" though. Instead, drive the failure by giving
-		// the replay a malformed startedAt. Date.parse returns NaN, ttft stays
-		// null, but the processor doesn't throw on that. So instead: pre-write
-		// a metrics row outside the transaction to fight the delete? Not
-		// reliable. Easier: spy on the runner to throw.
+		// A throwing enqueue is the cheapest in-stage failure that reaches the
+		// processor's catch — the pure compute path has no injectable fault.
 		const runner = makeFakeJobRunner();
 		const throwingRunner = {
 			...runner,
@@ -337,7 +246,3 @@ describe("makeCalculateMetricsProcessor", () => {
 		store.close();
 	});
 });
-
-// Silence the unused-import lint — `spans` is referenced through SpanRow.
-void spans;
-void speechSegments;

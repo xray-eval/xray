@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { sliceTurnAudio } from "@/server/audio/audio.slice.ts";
 import { deriveTurns } from "@/server/audio/audio.turns.ts";
@@ -10,14 +10,7 @@ import { runVadOnChannel } from "@/server/audio/audio.vad.ts";
 import { readStereoWav, resamplePcm } from "@/server/audio/audio.wav.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
 import { findReplay, markReplayFailed } from "@/server/replays/replays.service.ts";
-import {
-	modelUsage,
-	replays,
-	replayTurns,
-	speechSegments,
-	toolCalls,
-	turnTranscripts,
-} from "@/server/store/schema.ts";
+import { replays, replayTurns, speechSegments, turnTranscripts } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 import type { TranscriptionProvider } from "@/server/transcription/transcription.types.ts";
@@ -43,11 +36,10 @@ const VAD_SAMPLE_RATE = 16_000;
  * all in two commits inside the same processor invocation so a partial
  * transcription failure leaves the VAD output intact for debugging.
  *
- * Backfills `tool_calls.turn_idx` and `model_usage.turn_idx` from the
- * derived turn boundaries inside the VAD transaction. The OTLP receiver
- * writes those rows with `turn_idx=null`; turn attribution is server-
- * authoritative based on `replay_turns.voice_start_ms..voice_end_ms`,
- * not on driver-emitted span baggage.
+ * Tool/model spans carry no stored turn idx — they're attributed to turns
+ * at read/eval time by mapping their wall-clock `started_at` onto the audio
+ * timeline (see `src/server/replays/timeline.ts`), so this stage no longer
+ * touches `tool_calls` / `model_usage`.
  *
  * On success: enqueues `calculate-metrics` for the same replay id and
  * leaves the row in `analyzing` (analysis_step transitions vad →
@@ -135,8 +127,6 @@ export function makeAnalyzeProcessor(
 					)
 					.run();
 			}
-
-			backfillTurnIdx(tx, replayId, replay.startedAt, turns);
 
 			tx.update(replays).set({ analysisStep: "transcribe" }).where(eq(replays.id, replayId)).run();
 
@@ -275,77 +265,4 @@ async function runTranscriptionStage(
 	});
 
 	return rows.length;
-}
-
-type TxHandle = Parameters<Parameters<Store["db"]["transaction"]>[0]>[0];
-
-interface TurnWindow {
-	readonly idx: number;
-	readonly voiceStartMs: number;
-	readonly voiceEndMs: number;
-}
-
-/**
- * Set `turn_idx` on `tool_calls` / `model_usage` rows whose `started_at`
- * falls inside one of the derived turns' voice window. The OTLP receiver
- * writes these rows before VAD has a chance to compute turn boundaries —
- * this UPDATE is the single point of attribution.
- *
- * `started_at` is the wall-clock ISO timestamp the span carried;
- * `replays.started_at` is the wall-clock at the start of the run.
- * Convert both to ms-since-epoch and subtract to get an offset in the
- * same coordinate space as `voice_start_ms / voice_end_ms` (ms since the
- * recording's t=0). Rows with no `started_at` stay null — there's
- * nothing to attribute them to.
- *
- * Done in JS rather than SQL because SQLite's ISO-8601 parsing is
- * sub-millisecond-lossy and the join logic is small enough to stay
- * legible inline.
- */
-function backfillTurnIdx(
-	tx: TxHandle,
-	replayId: string,
-	replayStartedAtIso: string,
-	turns: readonly TurnWindow[],
-): void {
-	if (turns.length === 0) return;
-	const replayStartMs = Date.parse(replayStartedAtIso);
-	if (!Number.isFinite(replayStartMs)) return;
-
-	const toolRows = tx
-		.select({ id: toolCalls.id, startedAt: toolCalls.startedAt })
-		.from(toolCalls)
-		.where(and(eq(toolCalls.replayId, replayId), isNull(toolCalls.turnIdx)))
-		.all();
-	for (const row of toolRows) {
-		const idx = turnIdxForStartedAt(row.startedAt, replayStartMs, turns);
-		if (idx === null) continue;
-		tx.update(toolCalls).set({ turnIdx: idx }).where(eq(toolCalls.id, row.id)).run();
-	}
-
-	const usageRows = tx
-		.select({ id: modelUsage.id, startedAt: modelUsage.startedAt })
-		.from(modelUsage)
-		.where(and(eq(modelUsage.replayId, replayId), isNull(modelUsage.turnIdx)))
-		.all();
-	for (const row of usageRows) {
-		const idx = turnIdxForStartedAt(row.startedAt, replayStartMs, turns);
-		if (idx === null) continue;
-		tx.update(modelUsage).set({ turnIdx: idx }).where(eq(modelUsage.id, row.id)).run();
-	}
-}
-
-function turnIdxForStartedAt(
-	startedAtIso: string | null,
-	replayStartMs: number,
-	turns: readonly TurnWindow[],
-): number | null {
-	if (startedAtIso === null) return null;
-	const spanStartMs = Date.parse(startedAtIso);
-	if (!Number.isFinite(spanStartMs)) return null;
-	const offsetMs = spanStartMs - replayStartMs;
-	for (const t of turns) {
-		if (offsetMs >= t.voiceStartMs && offsetMs < t.voiceEndMs) return t.idx;
-	}
-	return null;
 }

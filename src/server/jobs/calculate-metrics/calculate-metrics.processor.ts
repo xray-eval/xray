@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 
 import { getConversationSpec } from "@/server/conversations/conversations.service.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
@@ -10,11 +10,10 @@ import {
 	replayMetrics,
 	replays,
 	replayTurns,
-	spans,
 	speechSegments,
 } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
-import type { ReplayTurnRow, SpanRow, SpeechSegmentRow } from "@/server/store/types.ts";
+import type { ReplayTurnRow, SpeechSegmentRow } from "@/server/store/types.ts";
 
 import type { JobRunner } from "../jobs.bunqueue.ts";
 import { JobProcessingError } from "../jobs.errors.ts";
@@ -36,17 +35,17 @@ export type CalculateMetricsProcessor = (payload: JobPayload) => Promise<Calcula
  * transaction (writes an empty `replay_evaluations` row + flips lifecycle
  * to `completed`) and emits `evaluation_complete` directly.
  *
- * Metrics computed:
+ * Metrics computed (both are audio-frame — every operand comes from VAD on
+ * the same recording, so no cross-clock correlation is involved):
  * - `agentResponseMs` (agent turns only): gap from the prior user turn's
  *   `voice_end_ms` to this turn's `voice_start_ms`. Null for user turns
  *   and for the first agent turn when no prior user turn exists.
- * - `ttftMs` (agent turns only): offset from `voice_start_ms` back to the
- *   start of the FIRST gen_ai-vocabulary span attributed to this turn.
- *   Null when no span landed in the turn window — common for non-LLM
- *   agents.
  * - `interrupted`: true iff an opposite-channel speech segment started
  *   while this turn was still active.
  * - `interruptionStartMs`: the start of that overlap, when present.
+ *
+ * Model TTFT is NOT computed here — it's an optional span attribute on
+ * `model_usage.ttft_ms` (see spec 0001), surfaced on the timeline.
  */
 export function makeCalculateMetricsProcessor(
 	store: Store,
@@ -71,14 +70,8 @@ export function makeCalculateMetricsProcessor(
 				.from(speechSegments)
 				.where(eq(speechSegments.replayId, replayId))
 				.all();
-			const ttftSpans = store.db
-				.select()
-				.from(spans)
-				.where(and(eq(spans.replayId, replayId), eq(spans.vocabulary, "gen_ai")))
-				.all();
-			const replayStartMs = Date.parse(replay.startedAt);
 
-			const rows = computeMetrics(replayId, turns, segments, ttftSpans, replayStartMs);
+			const rows = computeMetrics(replayId, turns, segments);
 
 			// Decide live vs scripted BEFORE the transaction. The conversation
 			// row is immutable post-creation (no live-flag flip), so reading it
@@ -187,26 +180,21 @@ export function computeMetrics(
 	replayId: string,
 	turns: readonly ReplayTurnRow[],
 	segments: readonly SpeechSegmentRow[],
-	ttftSpans: readonly SpanRow[],
-	replayStartMs: number,
 ): Array<{
 	replayId: string;
 	turnIdx: number;
 	agentResponseMs: number | null;
-	ttftMs: number | null;
 	interrupted: boolean;
 	interruptionStartMs: number | null;
 }> {
 	const sorted = [...turns].sort((a, b) => a.idx - b.idx);
 	return sorted.map((turn, i) => {
 		const agentResponseMs = turn.role === "agent" ? agentResponseFor(turn, sorted, i) : null;
-		const ttftMs = turn.role === "agent" ? ttftFor(turn, ttftSpans, replayStartMs) : null;
 		const { interrupted, interruptionStartMs } = interruptionFor(turn, segments);
 		return {
 			replayId,
 			turnIdx: turn.idx,
 			agentResponseMs,
-			ttftMs,
 			interrupted,
 			interruptionStartMs,
 		};
@@ -226,25 +214,6 @@ function agentResponseFor(
 		}
 	}
 	return null;
-}
-
-function ttftFor(
-	turn: ReplayTurnRow,
-	ttftSpans: readonly SpanRow[],
-	replayStartMs: number,
-): number | null {
-	if (!Number.isFinite(replayStartMs)) return null;
-	let earliestOffsetMs: number | null = null;
-	for (const span of ttftSpans) {
-		const startMs = Date.parse(span.startedAt) - replayStartMs;
-		if (!Number.isFinite(startMs)) continue;
-		if (startMs < turn.turnStartMs || startMs >= turn.voiceStartMs) continue;
-		if (earliestOffsetMs === null || startMs < earliestOffsetMs) {
-			earliestOffsetMs = startMs;
-		}
-	}
-	if (earliestOffsetMs === null) return null;
-	return turn.voiceStartMs - earliestOffsetMs;
 }
 
 function interruptionFor(

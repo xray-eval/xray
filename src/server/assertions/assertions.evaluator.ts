@@ -3,6 +3,23 @@ import { match } from "ts-pattern";
 import type { Assertion, AssertionContext, AssertionOutcome } from "./assertions.types.ts";
 
 const NO_TRANSCRIPT_MESSAGE = "no transcript available for this turn";
+const NO_ANCHOR_MESSAGE =
+	"no recording anchor — cannot attribute spans to turns (upload omitted X-Recording-Started-At)";
+
+/**
+ * Assertion kinds whose verdict depends on span→turn attribution, which needs
+ * the recording anchor. Classified once here rather than guarded ad hoc in each
+ * arm: without the anchor these all map to `errored` (not a misleading
+ * pass/fail), and a new timeline-dependent kind inherits that behaviour by
+ * being added to this set — the omission is visible in one place instead of
+ * hiding behind a forgotten per-arm guard.
+ */
+const TIMELINE_DEPENDENT_KINDS: ReadonlySet<Assertion["kind"]> = new Set([
+	"tool_called",
+	"tool_not_called",
+	"tool_args_match",
+	"max_ttft_ms",
+]);
 
 const passed: AssertionOutcome = { status: "passed", message: null };
 function failed(message: string): AssertionOutcome {
@@ -25,6 +42,9 @@ function errored(message: string): AssertionOutcome {
  * misleading "no match" verdict that's actually a transcription failure.
  */
 export function evaluateAssertion(assertion: Assertion, ctx: AssertionContext): AssertionOutcome {
+	if (!ctx.hasRecordingAnchor && TIMELINE_DEPENDENT_KINDS.has(assertion.kind)) {
+		return errored(NO_ANCHOR_MESSAGE);
+	}
 	return match(assertion)
 		.with({ kind: "contains" }, (a) => {
 			if (ctx.transcript === null) return errored(NO_TRANSCRIPT_MESSAGE);
@@ -102,7 +122,15 @@ export function evaluateAssertion(assertion: Assertion, ctx: AssertionContext): 
 		})
 		.with({ kind: "max_ttft_ms" }, (a) => {
 			if (ctx.metrics.ttftMs === null) {
-				return errored("no ttft_ms metric — no gen_ai.client.* span attributed to this turn");
+				// Distinguish the two failure modes so the dev knows whether the
+				// problem is "no LLM call landed in this turn" (mistiming /
+				// attribution) vs "the calls that did land don't emit TTFT"
+				// (instrumentation gap) — they need different fixes.
+				return errored(
+					ctx.modelUsage.length === 0
+						? "no ttft_ms — no model call landed in this turn's window"
+						: "no ttft_ms — no in-window model call carried gen_ai.response.time_to_first_chunk",
+				);
 			}
 			return ctx.metrics.ttftMs <= a.max_ms
 				? passed

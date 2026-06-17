@@ -29,7 +29,6 @@ export function SpanDetailAside({ replay }: { replay: ReplayDetailResponse }) {
 	const { selectedSpanId, clear } = useSpanSelection();
 	if (replay.spans.length === 0) return null;
 	const detail = resolveSpanDetail(selectedSpanId, {
-		replayStartIso: replay.started_at,
 		spans: replay.spans,
 		modelUsage: replay.model_usage,
 		toolCalls: replay.tool_calls,
@@ -144,7 +143,11 @@ function SpanTimingGrid({ detail }: { detail: SpanDetailModel }) {
 			<dl className="space-y-1.5">
 				<FactRow
 					label="Window"
-					value={`${formatClockSeconds(detail.startOffsetSec)} → ${formatClockSeconds(detail.endOffsetSec)}`}
+					value={
+						detail.startOffsetSec === null || detail.endOffsetSec === null
+							? "—"
+							: `${formatClockSeconds(detail.startOffsetSec)} → ${formatClockSeconds(detail.endOffsetSec)}`
+					}
 				/>
 				<FactRow label="Span" value={span.span_id} />
 				<FactRow label="Trace" value={span.trace_id} />
@@ -194,9 +197,14 @@ function UsageRow({ usage: u }: { usage: ModelUsageResponse }) {
 					{u.model ?? "—"}
 					{u.provider !== null && <span className="text-muted-foreground"> /{u.provider}</span>}
 				</span>
-				{u.latency_ms !== null && (
-					<span className="shrink-0 tabular-nums text-muted-foreground">{u.latency_ms}ms</span>
-				)}
+				<span className="flex shrink-0 items-baseline gap-2 tabular-nums text-muted-foreground">
+					{u.ttft_ms !== null && (
+						<span title="Time to first token">
+							<span className="text-muted-foreground/60">ttft</span> {u.ttft_ms}ms
+						</span>
+					)}
+					{u.latency_ms !== null && <span>{u.latency_ms}ms</span>}
+				</span>
 			</div>
 			<TokenBar input={u.input_tokens} output={u.output_tokens} />
 			<div className="flex gap-3 text-[10px] tabular-nums text-muted-foreground/80">

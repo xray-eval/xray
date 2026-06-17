@@ -143,6 +143,11 @@ class Assertion:
 
     @classmethod
     def max_ttft_ms(cls, max_ms: int) -> Assertion:
+        """Model time-to-first-token of the turn's earliest LLM call must be
+        ≤ ``max_ms``. Sourced from the GenAI semconv span attribute
+        ``gen_ai.response.time_to_first_chunk`` — the assertion ``errors``
+        (≠ fails) when the agent's instrumentation doesn't emit it or the
+        upload carried no recording anchor."""
         if max_ms < 1:
             raise ValueError(
                 f"Assertion.max_ttft_ms: max_ms must be >= 1 (got {max_ms})",
@@ -442,12 +447,16 @@ class JudgeOutcome:
 
 @dataclass(frozen=True)
 class TurnMetrics:
-    """Per-turn timing metrics computed server-side."""
+    """Per-turn timing metrics computed server-side.
+
+    Model TTFT is no longer a per-turn metric — it's an optional per-call
+    attribute (``model_usage.ttft_ms``) surfaced on the inspector timeline
+    (see spec 0001), not part of this struct.
+    """
 
     turn_idx: int
     role: Role
     agent_response_ms: int | None
-    ttft_ms: int | None
     interrupted: bool
 
 

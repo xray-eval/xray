@@ -19,6 +19,9 @@ export interface ExtractedModelUsage {
 	inputTokens: number | null;
 	outputTokens: number | null;
 	totalTokens: number | null;
+	/** Model time-to-first-token (ms), from `gen_ai.response.time_to_first_chunk`
+	 *  (seconds). Optional, like the token counts — null when unemitted. */
+	ttftMs: number | null;
 	startedAt: string | null;
 	endedAt: string | null;
 	latencyMs: number | null;

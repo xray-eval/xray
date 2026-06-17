@@ -13,10 +13,12 @@ import { createReplay } from "@/server/replays/replays.service.ts";
 import {
 	assertionResults,
 	judgeResults,
+	modelUsage,
 	replayEvaluations,
 	replayMetrics,
 	replays,
 	replayTurns,
+	toolCalls,
 	turnTranscripts,
 } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
@@ -41,7 +43,6 @@ interface VadFixture {
 	voiceStartMs?: number;
 	voiceEndMs?: number;
 	agentResponseMs?: number | null;
-	ttftMs?: number | null;
 }
 
 async function setupReplay(opts: {
@@ -93,7 +94,6 @@ async function setupReplay(opts: {
 			voiceStartMs: 1300,
 			voiceEndMs: 2500,
 			agentResponseMs: 300,
-			ttftMs: 100,
 		},
 	];
 
@@ -133,7 +133,6 @@ async function setupReplay(opts: {
 				replayId: detail.id,
 				turnIdx: t.idx,
 				agentResponseMs: t.role === "agent" ? (t.agentResponseMs ?? 300) : null,
-				ttftMs: t.role === "agent" ? (t.ttftMs ?? 100) : null,
 				interrupted: false,
 				interruptionStartMs: null,
 			})),
@@ -456,6 +455,198 @@ describe("evaluate-replay processor", () => {
 			const processor = makeEvaluateReplayProcessor(store, makeReplayEvents(), fakeJudge());
 			const result = await processor({ replayId });
 			expect(result.passed).toBe(true);
+		});
+	});
+
+	describe("tool attribution by audio timeline", () => {
+		// The agent turn's window is [turnStartMs=1000, turnEndMs=2500). A tool
+		// call is attributed to it iff (started_at − recording_started_at) lands
+		// in that window. recording_started_at is the SOLE origin — never
+		// replays.started_at (row-creation time). See spec 0001.
+		const RECORDING_T0 = "2026-05-26T14:31:31.023Z";
+		const atOffset = (ms: number) => new Date(Date.parse(RECORDING_T0) + ms).toISOString();
+
+		type ToolCtx = Awaited<ReturnType<typeof setupReplay>>;
+
+		async function setupToolReplay(recordingStartedAt: string | null): Promise<ToolCtx> {
+			const ctx = await setupReplay({
+				turns: [
+					{ role: "user", assertions: [] },
+					{ role: "agent", assertions: [{ kind: "tool_called", name: "lookup" }] },
+				],
+				judges: [],
+			});
+			ctx.store.db
+				.update(replays)
+				.set({ recordingStartedAt })
+				.where(eq(replays.id, ctx.replayId))
+				.run();
+			return ctx;
+		}
+
+		function insertTool(ctx: ToolCtx, startedAt: string): void {
+			ctx.store.db
+				.insert(toolCalls)
+				.values({
+					replayId: ctx.replayId,
+					spanId: "s1",
+					name: "lookup",
+					argsJson: null,
+					resultJson: null,
+					startedAt,
+					endedAt: startedAt,
+					latencyMs: 0,
+				})
+				.run();
+		}
+
+		async function runAndGetToolStatus(ctx: ToolCtx): Promise<string | undefined> {
+			await makeEvaluateReplayProcessor(
+				ctx.store,
+				makeReplayEvents(),
+				fakeJudge(),
+			)({
+				replayId: ctx.replayId,
+			});
+			return ctx.store.db
+				.select()
+				.from(assertionResults)
+				.where(eq(assertionResults.replayId, ctx.replayId))
+				.all()
+				.find((r) => r.kind === "tool_called")?.status;
+		}
+
+		it("passes tool_called when the call lands inside the agent turn window", async () => {
+			const ctx = await setupToolReplay(RECORDING_T0);
+			insertTool(ctx, atOffset(1500)); // offset 1500 ∈ [1000, 2500)
+			expect(await runAndGetToolStatus(ctx)).toBe("passed");
+		});
+
+		it("flags a mistimed call: speculative-during-user-turn is NOT in the agent turn", async () => {
+			const ctx = await setupToolReplay(RECORDING_T0);
+			insertTool(ctx, atOffset(500)); // offset 500 ∈ user turn [0,1000), not agent's
+			expect(await runAndGetToolStatus(ctx)).toBe("failed");
+		});
+
+		it("errors tool_called when the replay has no recording anchor", async () => {
+			const ctx = await setupToolReplay(null);
+			insertTool(ctx, atOffset(1500));
+			expect(await runAndGetToolStatus(ctx)).toBe("errored");
+		});
+	});
+
+	describe("ttft attribution by audio timeline", () => {
+		// Same agent turn window [1000, 2500) as the tool block. max_ttft_ms
+		// sources ttftMs from the earliest in-window model_usage row that
+		// carries one. recording_started_at is the sole origin. See spec 0001.
+		const RECORDING_T0 = "2026-05-26T14:31:31.023Z";
+		const atOffset = (ms: number) => new Date(Date.parse(RECORDING_T0) + ms).toISOString();
+		type Ctx = Awaited<ReturnType<typeof setupReplay>>;
+
+		async function setupTtftReplay(): Promise<Ctx> {
+			const ctx = await setupReplay({
+				turns: [
+					{ role: "user", assertions: [] },
+					{ role: "agent", assertions: [{ kind: "max_ttft_ms", max_ms: 500 }] },
+				],
+				judges: [],
+			});
+			ctx.store.db
+				.update(replays)
+				.set({ recordingStartedAt: RECORDING_T0 })
+				.where(eq(replays.id, ctx.replayId))
+				.run();
+			return ctx;
+		}
+
+		function insertUsage(ctx: Ctx, startedAt: string, ttftMs: number | null): void {
+			ctx.store.db
+				.insert(modelUsage)
+				.values({
+					replayId: ctx.replayId,
+					spanId: `u-${startedAt}`,
+					provider: "openai",
+					model: "gpt-4o",
+					inputTokens: null,
+					outputTokens: null,
+					totalTokens: null,
+					ttftMs,
+					startedAt,
+					endedAt: startedAt,
+					latencyMs: 0,
+				})
+				.run();
+		}
+
+		async function runAndGetTtft(
+			ctx: Ctx,
+		): Promise<{ status: string | undefined; message: string | null | undefined }> {
+			await makeEvaluateReplayProcessor(
+				ctx.store,
+				makeReplayEvents(),
+				fakeJudge(),
+			)({
+				replayId: ctx.replayId,
+			});
+			const row = ctx.store.db
+				.select()
+				.from(assertionResults)
+				.where(eq(assertionResults.replayId, ctx.replayId))
+				.all()
+				.find((r) => r.kind === "max_ttft_ms");
+			return { status: row?.status, message: row?.message };
+		}
+
+		it("passes when the earliest in-window model call's ttft is under the limit", async () => {
+			const ctx = await setupTtftReplay();
+			insertUsage(ctx, atOffset(1400), 300); // offset 1400 ∈ [1000, 2500)
+			expect((await runAndGetTtft(ctx)).status).toBe("passed");
+		});
+
+		it("does NOT let a leading null-ttft call mask a later call that carries one", async () => {
+			// Regression: a first in-window call without the TTFT attribute
+			// (ttft=null) must not shadow a later call with a real measurement.
+			const ctx = await setupTtftReplay();
+			insertUsage(ctx, atOffset(1100), null); // earliest, no measurement
+			insertUsage(ctx, atOffset(1400), 300); // later, carries TTFT under limit
+			expect((await runAndGetTtft(ctx)).status).toBe("passed");
+		});
+
+		it("fails when the earliest measured ttft exceeds the limit", async () => {
+			const ctx = await setupTtftReplay();
+			insertUsage(ctx, atOffset(1200), 4000);
+			const { status, message } = await runAndGetTtft(ctx);
+			expect(status).toBe("failed");
+			expect(message).toContain("4000ms");
+		});
+
+		it("errors with a 'no model call in window' message when no usage row lands in the turn", async () => {
+			const ctx = await setupTtftReplay();
+			insertUsage(ctx, atOffset(500), 300); // offset 500 ∈ user turn, not agent's
+			const { status, message } = await runAndGetTtft(ctx);
+			expect(status).toBe("errored");
+			expect(message).toContain("no model call landed");
+		});
+
+		it("errors with an 'attribute missing' message when in-window calls carry no ttft", async () => {
+			const ctx = await setupTtftReplay();
+			insertUsage(ctx, atOffset(1400), null);
+			const { status, message } = await runAndGetTtft(ctx);
+			expect(status).toBe("errored");
+			expect(message).toContain("time_to_first_chunk");
+		});
+
+		it("errors when the replay has no recording anchor", async () => {
+			const ctx = await setupTtftReplay();
+			ctx.store.db
+				.update(replays)
+				.set({ recordingStartedAt: null })
+				.where(eq(replays.id, ctx.replayId))
+				.run();
+			insertUsage(ctx, atOffset(1400), 300);
+			const { status, message } = await runAndGetTtft(ctx);
+			expect(status).toBe("errored");
+			expect(message).toContain("no recording anchor");
 		});
 	});
 });

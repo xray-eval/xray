@@ -8,14 +8,7 @@ import type { StereoWav } from "@/server/audio/audio.types.ts";
 import { writeStereoWav } from "@/server/audio/audio.wav.ts";
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { makeReplayEvents } from "@/server/replays/replays.events.ts";
-import {
-	modelUsage,
-	replays,
-	replayTurns,
-	speechSegments,
-	toolCalls,
-	turnTranscripts,
-} from "@/server/store/schema.ts";
+import { replays, replayTurns, speechSegments, turnTranscripts } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 import { makeFakeTranscriptionProvider } from "@/server/transcription/transcription.test-utils.ts";
@@ -152,58 +145,6 @@ describe("analyze-replay processor", () => {
 		expect(runner.enqueued).toEqual([{ name: "calculate-metrics", payload: { replayId } }]);
 	});
 
-	it("backfills tool_calls.turn_idx by timestamp window inside the VAD transaction", async () => {
-		const { replayId } = await seedReplayForAudio(store);
-		const wav = makeStereo({
-			userBlocks: [
-				{ durationMs: 100, voiced: false },
-				{ durationMs: 300, voiced: true },
-				{ durationMs: 100, voiced: false },
-			],
-			agentBlocks: [
-				{ durationMs: 500, voiced: false },
-				{ durationMs: 300, voiced: true },
-			],
-		});
-		const wavBytes = writeStereoWav(wav);
-		const relPath = `${replayId}/replay.wav`;
-		const absPath = join(audio.path, relPath);
-		await mkdir(dirname(absPath), { recursive: true });
-		await writeFile(absPath, wavBytes);
-		store.db
-			.update(replays)
-			.set({ audioPath: relPath, lifecycleState: "analyzing", analysisStep: "vad" })
-			.where(eq(replays.id, replayId))
-			.run();
-
-		const replayRow = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
-		if (replayRow === undefined) throw new Error("replay row vanished");
-		// Tool call recorded mid-agent-turn (agent voice starts at ~500ms).
-		// 600ms after the replay's start should land in the agent turn.
-		const replayStartMs = Date.parse(replayRow.startedAt);
-		store.db
-			.insert(toolCalls)
-			.values({
-				replayId,
-				turnIdx: null,
-				spanId: "s1",
-				name: "lookup",
-				argsJson: null,
-				resultJson: null,
-				startedAt: new Date(replayStartMs + 600).toISOString(),
-				endedAt: new Date(replayStartMs + 700).toISOString(),
-				latencyMs: 100,
-			})
-			.run();
-
-		const { processor } = makeProcessor();
-		await processor({ replayId });
-
-		const tcRows = store.db.select().from(toolCalls).where(eq(toolCalls.replayId, replayId)).all();
-		expect(tcRows.length).toBe(1);
-		expect(tcRows[0]?.turnIdx).not.toBeNull();
-	});
-
 	it("stamps failed + failure_reason='transcription_failed' when the provider errors", async () => {
 		const { replayId } = await seedReplayForAudio(store);
 		const wav = makeStereo({
@@ -284,7 +225,3 @@ describe("analyze-replay processor", () => {
 		);
 	});
 });
-
-// Silence the unused-import lint on modelUsage — kept for parity with the
-// implementation under test (turn_idx is backfilled on both tables).
-void modelUsage;

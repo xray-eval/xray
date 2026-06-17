@@ -363,7 +363,6 @@ describe("GET /v1/replays/:id/result", () => {
 					replayId,
 					turnIdx: 1,
 					agentResponseMs: 100,
-					ttftMs: 50,
 					interrupted: false,
 					interruptionStartMs: null,
 				},

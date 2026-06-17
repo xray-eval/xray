@@ -54,6 +54,7 @@ function span(
 		started_at: new Date(REPLAY_START_MS + offsetStartMs).toISOString(),
 		ended_at: new Date(REPLAY_START_MS + offsetEndMs).toISOString(),
 		attributes_json: "{}",
+		audio_offset_ms: offsetStartMs,
 	};
 }
 
@@ -61,7 +62,7 @@ describe("TraceTree", () => {
 	it("renders the empty state when there are no spans", () => {
 		render(
 			<PlayerProvider>
-				<TraceTree turns={[]} spans={[]} replayStartIso={REPLAY_START} zoom={1} />
+				<TraceTree turns={[]} spans={[]} zoom={1} />
 			</PlayerProvider>,
 		);
 		expect(screen.getByText(/No spans recorded/i)).toBeTruthy();
@@ -73,7 +74,6 @@ describe("TraceTree", () => {
 				<TraceTree
 					turns={[turn(0, "user", 0, 2_500), turn(1, "agent", 3_000, 6_500)]}
 					spans={[]}
-					replayStartIso={REPLAY_START}
 					zoom={1}
 				/>
 			</PlayerProvider>,
@@ -89,7 +89,6 @@ describe("TraceTree", () => {
 				<TraceTree
 					turns={[turn(0, "user", 0, 2_500), turn(1, "agent", 3_000, 6_500)]}
 					spans={[span(1, "stt.transcribe", 200, 1_400)]}
-					replayStartIso={REPLAY_START}
 					zoom={1}
 				/>
 			</PlayerProvider>,
@@ -118,7 +117,6 @@ describe("TraceTree", () => {
 				<TraceTree
 					turns={[turn(0, "user", 0, 2_500)]}
 					spans={[span(1, "stt.transcribe", 750, 1_400)]}
-					replayStartIso={REPLAY_START}
 					zoom={1}
 				/>
 			</PlayerProvider>,
@@ -136,7 +134,6 @@ describe("TraceTree", () => {
 				<TraceTree
 					turns={[turn(0, "user", 0, 2_500)]}
 					spans={[span(1, "tool_call", 200, 1_400), span(2, "rag_retrieve", 300, 800, "s-1")]}
-					replayStartIso={REPLAY_START}
 					zoom={1}
 				/>
 			</PlayerProvider>,
@@ -157,7 +154,6 @@ describe("TraceTree", () => {
 				<TraceTree
 					turns={[turn(0, "user", 0, 2_500)]}
 					spans={[span(1, "setup", -1_000, -500)]}
-					replayStartIso={REPLAY_START}
 					zoom={1}
 				/>
 			</PlayerProvider>,
@@ -171,7 +167,6 @@ describe("TraceTree", () => {
 				<TraceTree
 					turns={[turn(0, "user", 0, 6_000)]}
 					spans={[span(1, "stt", 100, 1_000)]}
-					replayStartIso={REPLAY_START}
 					zoom={1}
 				/>
 			</PlayerProvider>,
@@ -194,7 +189,6 @@ describe("TraceTree selection", () => {
 					<TraceTree
 						turns={[turn(0, "user", 0, 2_500)]}
 						spans={[span(1, "stt.transcribe", 750, 1_400)]}
-						replayStartIso={REPLAY_START}
 						zoom={1}
 					/>
 				</SpanSelectionProvider>
@@ -263,7 +257,7 @@ describe("TracePlayhead", () => {
 		render(
 			<PlayerProvider>
 				<Driver />
-				<TraceTree turns={SINGLE_TURN} spans={[]} replayStartIso={REPLAY_START} zoom={zoom} />
+				<TraceTree turns={SINGLE_TURN} spans={[]} zoom={zoom} />
 			</PlayerProvider>,
 		);
 		return (state: PlayheadState) => act(() => publish(state));
@@ -272,7 +266,7 @@ describe("TracePlayhead", () => {
 	it("renders no cursor when the player is not ready (no audio)", () => {
 		render(
 			<PlayerProvider>
-				<TraceTree turns={SINGLE_TURN} spans={[]} replayStartIso={REPLAY_START} zoom={1} />
+				<TraceTree turns={SINGLE_TURN} spans={[]} zoom={1} />
 			</PlayerProvider>,
 		);
 		expect(screen.queryByTestId("trace-playhead")).toBeNull();

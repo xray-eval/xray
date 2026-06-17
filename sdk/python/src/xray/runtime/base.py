@@ -33,6 +33,11 @@ class RuntimeResult:
     # (if produced). The orchestrator uploads it to xray.
     full_audio_path: str | None = None
     full_transcript: str | None = None
+    # Wall-clock (Unix epoch seconds) of audio sample 0 in the mixdown — the
+    # earliest turn ``started_at``. The orchestrator sends it as the
+    # ``X-Recording-Started-At`` header so the server can map span timestamps
+    # onto the audio timeline (see spec 0001). None when no audio was produced.
+    recording_started_at_epoch: float | None = None
 
 
 class Runtime(ABC):

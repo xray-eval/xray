@@ -13,7 +13,6 @@ function turn(overrides: Partial<TurnMetricsResponse>): TurnMetricsResponse {
 		turn_idx: 0,
 		role: "agent",
 		agent_response_ms: 250,
-		ttft_ms: 80,
 		interrupted: false,
 		interruption_start_ms: null,
 		...overrides,
@@ -21,12 +20,12 @@ function turn(overrides: Partial<TurnMetricsResponse>): TurnMetricsResponse {
 }
 
 describe("TurnMetricsSection", () => {
-	it("renders a row per turn with the response/ttft timings", () => {
+	it("renders a row per turn with the response timing", () => {
 		render(
 			<TurnMetricsSection
 				turns={[
-					turn({ turn_idx: 0, role: "user", agent_response_ms: null, ttft_ms: null }),
-					turn({ turn_idx: 1, role: "agent", agent_response_ms: 2430, ttft_ms: 520 }),
+					turn({ turn_idx: 0, role: "user", agent_response_ms: null }),
+					turn({ turn_idx: 1, role: "agent", agent_response_ms: 2430 }),
 				]}
 			/>,
 		);
@@ -34,7 +33,6 @@ describe("TurnMetricsSection", () => {
 		expect(screen.getByText("T01")).toBeTruthy();
 		// formatDurationMs renders ≥1000ms as seconds, sub-second as ms.
 		expect(screen.getByText("2.43s")).toBeTruthy();
-		expect(screen.getByText("520ms")).toBeTruthy();
 	});
 
 	it("shows the barge-in time as a clock for an interrupted turn", () => {

@@ -105,6 +105,15 @@ export const replays = sqliteTable(
 		failureReason: text("failure_reason").$type<ReplayFailureReason | null>(),
 		startedAt: text("started_at").notNull(),
 		finishedAt: text("finished_at"),
+		// Wall-clock (UTC ISO-8601) of audio sample 0 — the driver's
+		// `min(segment.started_at)`, sent via the `X-Recording-Started-At`
+		// header on POST /audio. This is the SOLE origin for mapping a span's
+		// wall-clock `started_at` onto the audio timeline
+		// (`audio_offset_ms = started_at − recording_started_at`). Null when an
+		// older SDK omits the header: offsets are then undefined and span→turn
+		// attribution is skipped rather than mis-anchored to `started_at`
+		// (which is row-creation time, not recording start — see spec 0001).
+		recordingStartedAt: text("recording_started_at"),
 		// Path under XRAY_AUDIO_ROOT to the uploaded stereo WAV.
 		audioPath: text("audio_path"),
 		// Opaque dev-side snapshot of the SUT config at run start.
@@ -208,7 +217,6 @@ export const toolCalls = sqliteTable(
 		replayId: text("replay_id")
 			.notNull()
 			.references(() => replays.id, { onDelete: "cascade" }),
-		turnIdx: integer("turn_idx"),
 		spanId: text("span_id"),
 		name: text("name").notNull(),
 		argsJson: text("args_json"),
@@ -227,13 +235,17 @@ export const modelUsage = sqliteTable(
 		replayId: text("replay_id")
 			.notNull()
 			.references(() => replays.id, { onDelete: "cascade" }),
-		turnIdx: integer("turn_idx"),
 		spanId: text("span_id"),
 		provider: text("provider"),
 		model: text("model"),
 		inputTokens: integer("input_tokens"),
 		outputTokens: integer("output_tokens"),
 		totalTokens: integer("total_tokens"),
+		// Model time-to-first-token (ms), from the GenAI semconv span attribute
+		// `gen_ai.response.time_to_first_chunk` (seconds → ms). Optional, exactly
+		// like the token counts: null when the agent's instrumentation doesn't
+		// emit it. A same-clock delta, so it needs no audio-timeline correlation.
+		ttftMs: integer("ttft_ms"),
 		startedAt: text("started_at"),
 		endedAt: text("ended_at"),
 		latencyMs: integer("latency_ms"),
@@ -265,11 +277,13 @@ export const turnTranscripts = sqliteTable(
 // Per-turn timing metrics. Produced by `calculate-metrics`.
 //
 // `agent_response_ms` is `voice_start_ms - prior_user_turn.voice_end_ms` for
-// agent turns; null for user turns. `ttft_ms` is the gap from the agent
-// turn's `voice_start_ms` back to the start of the FIRST `gen_ai.client.*`
-// span attributed to this turn — null if no such span exists.
-// `interrupted` is true when an opposite-channel speech segment started
-// while this turn was still active.
+// agent turns; null for user turns. `interrupted` is true when an
+// opposite-channel speech segment started while this turn was still active.
+//
+// These are the audio-frame metrics — both operands of every value come from
+// VAD on the same recording, so they need no cross-clock correlation. Model
+// TTFT is NOT here: it's a span-level attribute on `model_usage.ttft_ms`
+// (see spec 0001), surfaced on the timeline rather than aggregated per turn.
 export const replayMetrics = sqliteTable(
 	"replay_metrics",
 	{
@@ -278,7 +292,6 @@ export const replayMetrics = sqliteTable(
 			.references(() => replays.id, { onDelete: "cascade" }),
 		turnIdx: integer("turn_idx").notNull(),
 		agentResponseMs: integer("agent_response_ms"),
-		ttftMs: integer("ttft_ms"),
 		interrupted: integer("interrupted", { mode: "boolean" }).notNull(),
 		interruptionStartMs: integer("interruption_start_ms"),
 	},

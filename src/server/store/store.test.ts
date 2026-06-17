@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -198,5 +198,59 @@ describe("openStoreFromEnv", () => {
 			.get();
 		expect(row?.hash).toBe(persistHash);
 		second.close();
+	});
+});
+
+describe("migration 0002 — slim_master_chief (populated-DB upgrade)", () => {
+	const migrationSql = (file: string) =>
+		readFileSync(new URL(`./migrations/${file}`, import.meta.url).pathname, "utf8");
+
+	function columnNames(db: Database, table: string): string[] {
+		return db
+			.query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+			.all()
+			.map((r) => r.name);
+	}
+
+	it("drops turn_idx / replay_metrics.ttft_ms and adds model_usage.ttft_ms + recording_started_at while preserving existing rows", () => {
+		const db = new Database(":memory:");
+		// FK off: we seed leaf rows without a parent `replays` row — the test is
+		// about the ALTER TABLE structural change, not referential integrity.
+		db.exec("PRAGMA foreign_keys = OFF");
+		db.exec(migrationSql("0000_init.sql"));
+		db.exec(migrationSql("0001_fast_lightspeed.sql"));
+
+		// Seed old-shape rows: tool/model rows carrying the soon-to-be-dropped
+		// turn_idx, and a replay_metrics row carrying the soon-to-be-dropped
+		// ttft_ms.
+		db.exec("INSERT INTO tool_calls (replay_id, turn_idx, name) VALUES ('r1', 3, 'lookup')");
+		db.exec("INSERT INTO model_usage (replay_id, turn_idx, provider) VALUES ('r1', 2, 'openai')");
+		db.exec(
+			"INSERT INTO replay_metrics (replay_id, turn_idx, ttft_ms, interrupted) VALUES ('r1', 0, 500, 0)",
+		);
+
+		// The destructive upgrade.
+		db.exec(migrationSql("0002_slim_master_chief.sql"));
+
+		expect(columnNames(db, "tool_calls")).not.toContain("turn_idx");
+		expect(columnNames(db, "model_usage")).not.toContain("turn_idx");
+		expect(columnNames(db, "model_usage")).toContain("ttft_ms");
+		expect(columnNames(db, "replay_metrics")).not.toContain("ttft_ms");
+		expect(columnNames(db, "replays")).toContain("recording_started_at");
+
+		// Surviving columns keep their data; the new nullable columns default to null.
+		const tool = db
+			.query<{ name: string }, []>("SELECT name FROM tool_calls WHERE replay_id = 'r1'")
+			.get();
+		expect(tool?.name).toBe("lookup");
+		const usage = db
+			.query<{ provider: string; ttft_ms: number | null }, []>(
+				"SELECT provider, ttft_ms FROM model_usage WHERE replay_id = 'r1'",
+			)
+			.get();
+		expect(usage?.provider).toBe("openai");
+		expect(usage?.ttft_ms).toBeNull();
+
+		db.close();
 	});
 });

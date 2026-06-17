@@ -285,15 +285,17 @@ def test_write_stereo_mixdown_round_trips(tmp_path: Path):
 
 def test_write_stereo_mixdown_wall_clock_aligned(tmp_path: Path):
     """Segments placed at their wall-clock offsets, with silence padding
-    between. Agent starts 0.5s after t0; total span = 1s (agent 0.5–1.0s)."""
+    between. Agent starts 0.5s after t0; total span = 1s (agent 0.5–1.0s).
+    Returns t0 — the recording anchor the orchestrator sends on upload."""
     user = _TurnSegment(role="user", idx=0, key="u0", started_at=10.0)
     user.pcm.extend(_make_silence_pcm(200))  # 200ms
     agent = _TurnSegment(role="agent", idx=1, key="a0", started_at=10.5)
     agent.pcm.extend(_make_silence_pcm(500))  # 500ms
 
     out = tmp_path / "wall_clock.wav"
-    write_stereo_mixdown(segments=[user, agent], out_path=out)
+    recording_t0 = write_stereo_mixdown(segments=[user, agent], out_path=out)
 
+    assert recording_t0 == 10.0
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2
         # t0 = 10.0, span = max(10.0+0.2, 10.5+0.5) - 10.0 = 1.0s = 48000 frames
@@ -301,9 +303,11 @@ def test_write_stereo_mixdown_wall_clock_aligned(tmp_path: Path):
 
 
 def test_write_stereo_mixdown_handles_empty_segments(tmp_path: Path):
-    """All-silent input: produces a valid empty stereo WAV (header only)."""
+    """All-silent input: produces a valid empty stereo WAV (header only),
+    and no anchor — there is no sample 0 to timestamp."""
     out = tmp_path / "empty.wav"
-    write_stereo_mixdown(segments=[], out_path=out)
+    recording_t0 = write_stereo_mixdown(segments=[], out_path=out)
+    assert recording_t0 is None
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2
         assert w.getnframes() == 0
@@ -324,6 +328,9 @@ def test_runtime_publishes_injected_user_turn_and_produces_mixdown(tmp_path: Pat
     room = rtc.Room.rooms[0]
     assert room.local_participant.publish_track.await_count == 1
     assert result.full_audio_path is not None
+    # The recording anchor (wall-clock of mixdown sample 0) rides along so
+    # the orchestrator can send X-Recording-Started-At on upload.
+    assert result.recording_started_at_epoch is not None
     out_path = Path(result.full_audio_path)
     assert out_path.exists() and out_path.stat().st_size > 44  # WAV header is 44 B
     with wave.open(str(out_path), "rb") as w:

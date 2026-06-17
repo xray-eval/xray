@@ -1,5 +1,12 @@
 import type { FlatAttributes, ProjectedSpan } from "../otlp.types.ts";
-import { asInteger, asString, msBetween, pickPrefixed, safeJsonString } from "./attrs.ts";
+import {
+	asFiniteNumber,
+	asInteger,
+	asString,
+	msBetween,
+	pickPrefixed,
+	safeJsonString,
+} from "./attrs.ts";
 import type {
 	ExtractedModelUsage,
 	ExtractedToolCall,
@@ -67,6 +74,7 @@ export const genAiSemconvVocabulary: SpanVocabularyMatcher = (
 				asInteger(a["gen_ai.usage.input_tokens"]),
 				asInteger(a["gen_ai.usage.output_tokens"]),
 			),
+			ttftMs: ttftMsFromSeconds(a["gen_ai.response.time_to_first_chunk"]),
 			startedAt,
 			endedAt,
 			latencyMs,
@@ -86,4 +94,15 @@ function hasGenAiAttribute(a: FlatAttributes): boolean {
 function addOrNull(a: number | null, b: number | null): number | null {
 	if (a === null && b === null) return null;
 	return (a ?? 0) + (b ?? 0);
+}
+
+/**
+ * `gen_ai.response.time_to_first_chunk` is seconds (semconv, Development
+ * stability). Convert to whole ms for `model_usage.ttft_ms`. A negative value
+ * is nonsensical for a latency and dropped to null.
+ */
+function ttftMsFromSeconds(raw: FlatAttributes[string] | undefined): number | null {
+	const seconds = asFiniteNumber(raw);
+	if (seconds === null || seconds < 0) return null;
+	return Math.round(seconds * 1000);
 }

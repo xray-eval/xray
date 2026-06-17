@@ -7,6 +7,7 @@ import {
 	AudioTurnsInvariantError,
 	InvalidAudioExtensionError,
 	InvalidAudioPathError,
+	InvalidRecordingStartedAtError,
 	UnsupportedAudioContentTypeError,
 } from "./audio.errors.ts";
 import { describe, expect, it } from "bun:test";
@@ -26,6 +27,23 @@ describe("audio errors", () => {
 		const e = new InvalidAudioPathError(issues);
 		expect(e).toBeInstanceOf(AudioError);
 		expect(e.name).toBe("InvalidAudioPathError");
+		expect(e.issues).toBe(issues);
+	});
+
+	it("InvalidRecordingStartedAtError is an AudioError with issues", () => {
+		const issues = [
+			{
+				kind: "schema",
+				type: "iso_timestamp",
+				input: "nope",
+				expected: "ISO timestamp",
+				received: "nope",
+				message: "m",
+			},
+		] as const;
+		const e = new InvalidRecordingStartedAtError(issues);
+		expect(e).toBeInstanceOf(AudioError);
+		expect(e.name).toBe("InvalidRecordingStartedAtError");
 		expect(e.issues).toBe(issues);
 	});
 

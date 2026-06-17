@@ -1,14 +1,7 @@
 import type { ModelUsageResponse, SpanResponse, ToolCallResponse } from "@/client/api/api.types.ts";
 
-import {
-	offsetSec,
-	parseSpanAttributes,
-	resolveSpanDetail,
-	spanDurationMs,
-} from "./span-detail-model.ts";
+import { parseSpanAttributes, resolveSpanDetail, spanDurationMs } from "./span-detail-model.ts";
 import { describe, expect, it } from "bun:test";
-
-const REPLAY_START = "2026-05-25T10:00:00.000Z";
 
 function span(overrides: Partial<SpanResponse> = {}): SpanResponse {
 	return {
@@ -21,6 +14,7 @@ function span(overrides: Partial<SpanResponse> = {}): SpanResponse {
 		started_at: "2026-05-25T10:00:00.000Z",
 		ended_at: "2026-05-25T10:00:04.300Z",
 		attributes_json: "{}",
+		audio_offset_ms: null,
 		...overrides,
 	};
 }
@@ -28,13 +22,14 @@ function span(overrides: Partial<SpanResponse> = {}): SpanResponse {
 function usage(spanId: string | null): ModelUsageResponse {
 	return {
 		id: 1,
-		turn_idx: 0,
+		audio_offset_ms: null,
 		span_id: spanId,
 		provider: "Gemini",
 		model: "gemini-3.1-flash-live-preview",
 		input_tokens: 1222,
 		output_tokens: 111,
 		total_tokens: 1333,
+		ttft_ms: null,
 		started_at: null,
 		ended_at: null,
 		latency_ms: 4302,
@@ -44,7 +39,7 @@ function usage(spanId: string | null): ModelUsageResponse {
 function toolCall(spanId: string | null): ToolCallResponse {
 	return {
 		id: 1,
-		turn_idx: 0,
+		audio_offset_ms: null,
 		span_id: spanId,
 		name: "get_current_year",
 		args_json: "{}",
@@ -66,20 +61,6 @@ describe("spanDurationMs", () => {
 
 	it("returns 0 for unparseable timestamps", () => {
 		expect(spanDurationMs("not-a-date", "also-not")).toBe(0);
-	});
-});
-
-describe("offsetSec", () => {
-	it("returns seconds elapsed since replay start", () => {
-		expect(offsetSec("2026-05-25T10:00:04.300Z", REPLAY_START)).toBe(4.3);
-	});
-
-	it("returns 0 for unparseable input", () => {
-		expect(offsetSec("nope", REPLAY_START)).toBe(0);
-	});
-
-	it("clamps a span that starts before replay start to 0", () => {
-		expect(offsetSec("2026-05-25T09:59:59.000Z", REPLAY_START)).toBe(0);
 	});
 });
 
@@ -131,9 +112,8 @@ describe("parseSpanAttributes", () => {
 
 describe("resolveSpanDetail", () => {
 	const source = {
-		replayStartIso: REPLAY_START,
 		spans: [
-			span({ span_id: "parent", name: "agent_turn" }),
+			span({ span_id: "parent", name: "agent_turn", audio_offset_ms: 0 }),
 			span({
 				id: 2,
 				span_id: "child",
@@ -141,6 +121,7 @@ describe("resolveSpanDetail", () => {
 				name: "execute_tool",
 				vocabulary: "gen_ai",
 				attributes_json: '{"gen_ai.tool.name":"get_current_year"}',
+				audio_offset_ms: 0,
 			}),
 		],
 		modelUsage: [usage("parent"), usage("other")],
@@ -162,6 +143,18 @@ describe("resolveSpanDetail", () => {
 		expect(detail?.durationMs).toBe(4300);
 		expect(detail?.startOffsetSec).toBe(0);
 		expect(detail?.endOffsetSec).toBe(4.3);
+	});
+
+	it("leaves both offsets null when the span has no audio_offset_ms (no anchor)", () => {
+		const detail = resolveSpanDetail("unplaceable", {
+			spans: [span({ span_id: "unplaceable", audio_offset_ms: null })],
+			modelUsage: [],
+			toolCalls: [],
+		});
+		expect(detail?.startOffsetSec).toBeNull();
+		expect(detail?.endOffsetSec).toBeNull();
+		// Duration is still computed from the span's own timestamps.
+		expect(detail?.durationMs).toBe(4300);
 	});
 
 	it("links only the tool_calls that share the span_id and resolves the parent name", () => {

@@ -478,7 +478,6 @@ describe("getReplayResult — interruption timing", () => {
 				replayId,
 				turnIdx: 0,
 				agentResponseMs: 250,
-				ttftMs: 80,
 				interrupted: true,
 				interruptionStartMs: 1450,
 			})

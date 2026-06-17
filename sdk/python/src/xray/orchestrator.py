@@ -332,9 +332,28 @@ async def _drive_replay(
         and runtime_result is not None
         and runtime_result.full_audio_path is not None
     ):
+        if runtime_result.recording_started_at_epoch is None:
+            # A runtime that produced audio but didn't report its sample-0
+            # wall-clock leaves the server unable to place spans on the audio
+            # timeline: every tool_called / tool_not_called / tool_args_match /
+            # max_ttft_ms assertion comes back 'errored'. Warn loudly so a
+            # custom Runtime author sees the one missing field instead of
+            # debugging the server. (The built-in LiveKit runtimes always set
+            # it; this guards the documented pluggable ABC.)
+            logger.warning(
+                "replay %s: runtime produced audio but left "
+                "RuntimeResult.recording_started_at_epoch unset — span→turn "
+                "attribution is skipped and tool/ttft assertions will report "
+                "'errored'. Set it to the Unix-epoch-seconds wall-clock of audio "
+                "sample 0.",
+                replay_id,
+            )
         try:
             await _upload_replay_audio(
-                client=client, replay_id=replay_id, audio_path=runtime_result.full_audio_path
+                client=client,
+                replay_id=replay_id,
+                audio_path=runtime_result.full_audio_path,
+                recording_started_at_epoch=runtime_result.recording_started_at_epoch,
             )
         except XrayError as e:
             logger.exception("audio upload failed on replay %s", replay_id)
@@ -445,7 +464,6 @@ class _TurnMetricsPayload(BaseModel):
     turn_idx: int
     role: Role
     agent_response_ms: int | None = None
-    ttft_ms: int | None = None
     interrupted: bool
 
 
@@ -500,7 +518,6 @@ def _result_from_payload(payload: _ReplayResultPayload, *, replay_id: str) -> Re
                 turn_idx=m.turn_idx,
                 role=m.role,
                 agent_response_ms=m.agent_response_ms,
-                ttft_ms=m.ttft_ms,
                 interrupted=m.interrupted,
             )
             for m in payload.metrics.turns
@@ -648,18 +665,34 @@ def _raise_for_status_typed(response: httpx.Response, endpoint: str) -> None:
 
 
 async def _upload_replay_audio(
-    *, client: httpx.AsyncClient, replay_id: str, audio_path: str
+    *,
+    client: httpx.AsyncClient,
+    replay_id: str,
+    audio_path: str,
+    recording_started_at_epoch: float | None,
 ) -> None:
     path = Path(audio_path)
     bytes_ = path.read_bytes()
     if len(bytes_) > MAX_AUDIO_BYTES:
         raise AudioTooLargeError(byte_size=len(bytes_), max_bytes=MAX_AUDIO_BYTES)
+    headers = {"content-type": "audio/wav"}
+    # The recording anchor: wall-clock of audio sample 0. The server maps span
+    # timestamps onto the audio timeline against it (spec 0001). Omitted when
+    # the runtime produced no timed audio — the server then skips attribution.
+    if recording_started_at_epoch is not None:
+        headers["x-recording-started-at"] = _epoch_to_iso_z(recording_started_at_epoch)
     response = await client.post(
         f"/v1/replays/{replay_id}/audio",
         content=bytes_,
-        headers={"content-type": "audio/wav"},
+        headers=headers,
     )
     _raise_for_status_typed(response, f"POST /v1/replays/{replay_id}/audio")
+
+
+def _epoch_to_iso_z(epoch_seconds: float) -> str:
+    """Unix epoch seconds → UTC ISO-8601 with a trailing ``Z`` — the
+    ``X-Recording-Started-At`` anchor format the server validates."""
+    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _check_recorded_audio_exists(conversation: Conversation) -> None:

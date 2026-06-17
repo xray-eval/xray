@@ -127,14 +127,13 @@ export function ingestOtlpTraces(
 }
 
 /**
- * Persist extracted tool_calls / model_usage rows with `turn_idx = null`.
- * The analyze-replay job backfills `turn_idx` from `replay_turns` once VAD
- * has produced authoritative turn boundaries — see spec 0001 §8.
- *
- * The receiver no longer trusts driver-emitted `xray.turn.idx`: spans can
- * arrive before VAD has run (or with stale baggage from a prior turn).
- * Timestamp-based attribution against `replay_turns.voice_start_ms..voice_end_ms`
- * is the single source of truth.
+ * Persist extracted tool_calls / model_usage rows. No turn association is
+ * stored — rows carry only their wall-clock `started_at`. Turn membership is
+ * derived at read/eval time by mapping `started_at` onto the audio timeline
+ * (`audio_offset_ms = started_at − replays.recording_started_at`) and testing
+ * the turn window — see `docs/specs/0001-timeline-clock-alignment.md` and
+ * `src/server/replays/timeline.ts`. Every recognized row is recorded
+ * unconditionally; the timeline placement decides display + assertion scope.
  */
 function persistExtracted(
 	tx: StoreDb,
@@ -147,7 +146,6 @@ function persistExtracted(
 			.values(
 				extraction.toolCalls.map((tc) => ({
 					replayId,
-					turnIdx: null,
 					spanId: span.spanId,
 					name: tc.name,
 					argsJson: tc.argsJson,
@@ -164,13 +162,13 @@ function persistExtracted(
 			.values(
 				extraction.modelUsage.map((mu) => ({
 					replayId,
-					turnIdx: null,
 					spanId: span.spanId,
 					provider: mu.provider,
 					model: mu.model,
 					inputTokens: mu.inputTokens,
 					outputTokens: mu.outputTokens,
 					totalTokens: mu.totalTokens,
+					ttftMs: mu.ttftMs,
 					startedAt: mu.startedAt,
 					endedAt: mu.endedAt,
 					latencyMs: mu.latencyMs,

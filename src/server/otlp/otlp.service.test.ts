@@ -117,6 +117,8 @@ describe("ingestOtlpTraces — gen_ai vocabulary", () => {
 						"gen_ai.request.model": "gpt-4o",
 						"gen_ai.usage.input_tokens": 42,
 						"gen_ai.usage.output_tokens": 17,
+						// Seconds (semconv) → ms. 0.25 encodes as a doubleValue.
+						"gen_ai.response.time_to_first_chunk": 0.25,
 					},
 				},
 			],
@@ -129,6 +131,7 @@ describe("ingestOtlpTraces — gen_ai vocabulary", () => {
 		expect(usage?.outputTokens).toBe(17);
 		expect(usage?.totalTokens).toBe(59);
 		expect(usage?.latencyMs).toBe(500);
+		expect(usage?.ttftMs).toBe(250);
 		store.close();
 	});
 
@@ -179,6 +182,8 @@ describe("ingestOtlpTraces — langfuse vocabulary", () => {
 		expect(usage?.model).toBe("claude-3-5-sonnet");
 		expect(usage?.inputTokens).toBe(5);
 		expect(usage?.outputTokens).toBe(9);
+		// No time_to_first_chunk on this span → null, like the token counts.
+		expect(usage?.ttftMs).toBeNull();
 		store.close();
 	});
 });

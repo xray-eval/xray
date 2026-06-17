@@ -33,21 +33,19 @@ export type SpanAttributes =
 export type SpanDetailModel = Readonly<{
 	span: SpanResponse;
 	durationMs: number;
-	startOffsetSec: number;
-	endOffsetSec: number;
+	// Offsets on the audio timeline (seconds from recording t=0), from the span's
+	// server-derived `audio_offset_ms`. Null when the replay has no anchor and the
+	// span can't be placed — the panel renders "—" rather than a misleading 0:00.
+	startOffsetSec: number | null;
+	endOffsetSec: number | null;
 	parentName: string | null;
 	attributes: SpanAttributes;
 	usage: readonly ModelUsageResponse[];
 	toolCalls: readonly ToolCallResponse[];
 }>;
 
-/**
- * The slices of a `ReplayDetailResponse` needed to resolve a span detail.
- * `replayStartIso` lets the panel show start/end as a clock offset from
- * replay start — the same reading the waveform and the trace playhead use.
- */
+/** The slices of a `ReplayDetailResponse` needed to resolve a span detail. */
 export type SpanDetailSource = Readonly<{
-	replayStartIso: string;
 	spans: readonly SpanResponse[];
 	modelUsage: readonly ModelUsageResponse[];
 	toolCalls: readonly ToolCallResponse[];

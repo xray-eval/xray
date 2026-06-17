@@ -126,7 +126,6 @@ async def test_run_live_full_chain_returns_passed_result(tmp_path: Path):
                                             "turn_idx": 0,
                                             "role": "user",
                                             "agent_response_ms": None,
-                                            "ttft_ms": None,
                                             "interrupted": False,
                                         }
                                     ],

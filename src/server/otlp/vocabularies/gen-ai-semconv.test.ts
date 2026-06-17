@@ -26,11 +26,36 @@ describe("genAiSemconvVocabulary — chat / text_completion", () => {
 				inputTokens: 42,
 				outputTokens: 7,
 				totalTokens: 49,
+				ttftMs: null,
 				startedAt: "2026-05-18T12:00:00.000Z",
 				endedAt: "2026-05-18T12:00:00.250Z",
 				latencyMs: 250,
 			},
 		]);
+	});
+
+	it("converts gen_ai.response.time_to_first_chunk (seconds) to ttftMs", () => {
+		const span = makeProjectedSpan({
+			name: "chat gpt-4o",
+			attributes: {
+				"gen_ai.operation.name": "chat",
+				"gen_ai.response.time_to_first_chunk": 0.25,
+			},
+		});
+		const out = genAiSemconvVocabulary(span, EMPTY_RESOURCE);
+		expect(out?.modelUsage?.[0]?.ttftMs).toBe(250);
+	});
+
+	it("drops a negative time_to_first_chunk to null", () => {
+		const span = makeProjectedSpan({
+			name: "chat gpt-4o",
+			attributes: {
+				"gen_ai.operation.name": "chat",
+				"gen_ai.response.time_to_first_chunk": -1,
+			},
+		});
+		const out = genAiSemconvVocabulary(span, EMPTY_RESOURCE);
+		expect(out?.modelUsage?.[0]?.ttftMs).toBeNull();
 	});
 
 	it("falls back to gen_ai.request.model when response.model is absent", () => {
