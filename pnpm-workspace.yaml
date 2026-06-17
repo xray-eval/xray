@@ -115,6 +115,22 @@ overrides:
   # satisfies the advisory's >=4.1.2. Surgical pin on the cosmiconfig parent.
   # Remove once cosmiconfig bumps js-yaml. Added 2026-06-16.
   "cosmiconfig>js-yaml": "^4.2.0"
+  # GHSA-j6c9-x7qj-28xf / GHSA-rv63-4mwf-qqc2 / GHSA-wgpf-jwqj-8h8p — hono
+  # <4.12.25 has body-limit-middleware bypasses (Content-Length understated on
+  # AWS Lambda) and a Lambda@Edge adapter that keeps only the last value of a
+  # repeated request header. We pin hono@4.12.25 directly (package.json), but
+  # bunqueue's embedded MCP server pulls a second, older copy: both
+  # @modelcontextprotocol/sdk>hono and @modelcontextprotocol/sdk>
+  # @hono/node-server>hono resolve 4.12.21. xray deploys on Bun.serve as a
+  # single image, never AWS Lambda / Lambda@Edge, so neither advisory is
+  # reachable here — but `pnpm audit --audit-level=moderate` (supply-chain CI)
+  # blocks merge until the transitive copies are bumped. Surgical pins on the
+  # MCP-SDK subtree so the override disappears once the SDK bumps its hono.
+  # 4.12.25 was published 2026-06-09, past the 7-day cooldown (no
+  # minimumReleaseAgeExclude needed). Remove once @modelcontextprotocol/sdk
+  # ships a release on hono >=4.12.25. Added 2026-06-17.
+  "@modelcontextprotocol/sdk>hono": "^4.12.25"
+  "@hono/node-server>hono": "^4.12.25"
 
 # VEX-style "not affected" disposition: GHSA-gv7w-rqvm-qjhr is unreachable in
 # this repo, so the audit gate is told to skip that one advisory — we do NOT
