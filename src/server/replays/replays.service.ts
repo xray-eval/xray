@@ -199,9 +199,9 @@ function buildReplayDetail(store: Store, r: ReplayRow): ReplayDetailResponse {
 
 	// Parse the timeline origin once for the whole detail payload — every
 	// span / tool_call / model_usage offset measures from the same string.
-	const originMs = r.recordingStartedAt === null ? null : Date.parse(r.recordingStartedAt);
-	const offsetOf = (startedAt: string | null) =>
-		offsetFromOriginMs(startedAt, originMs !== null && Number.isFinite(originMs) ? originMs : null);
+	const parsedOrigin = r.recordingStartedAt === null ? null : Date.parse(r.recordingStartedAt);
+	const originMs = parsedOrigin !== null && Number.isFinite(parsedOrigin) ? parsedOrigin : null;
+	const offsetOf = (startedAt: string | null) => offsetFromOriginMs(startedAt, originMs);
 	return {
 		id: r.id,
 		conversation_hash: r.conversationHash,

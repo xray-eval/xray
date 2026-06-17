@@ -132,10 +132,13 @@ export function makeEvaluateReplayProcessor(
 				.where(eq(modelUsage.replayId, replayId))
 				.all();
 
-			// Tiling attribution windows for every VAD turn, in idx order. Built
-			// once (the cursor accumulates across all turns, including extra VAD
-			// turns the spec doesn't assert) and looked up per matched turn.
-			const windows = clampedTurnWindows(turnRows.map((t) => t.turnEndMs));
+			// Tiling attribution windows for every VAD turn, in idx order, built
+			// from each turn's voiceEndMs — the voice-active boundary the spec
+			// attributes against (0001 §3.4), not turnEndMs (equal today, but
+			// stored separately for future overlap handling). Built once (the
+			// cursor accumulates across all turns, including extra VAD turns the
+			// spec doesn't assert) and looked up per matched turn.
+			const windows = clampedTurnWindows(turnRows.map((t) => t.voiceEndMs));
 			const windowByIdx = new Map<number, TurnWindow>();
 			for (let t = 0; t < turnRows.length; t++) {
 				const row = turnRows[t];

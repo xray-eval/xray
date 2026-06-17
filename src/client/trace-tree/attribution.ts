@@ -27,7 +27,10 @@ export function attributeSpansToTurns(
 	turns: readonly ReplayTurnResponse[],
 	spans: readonly SpanResponse[],
 ): AttributionResult {
-	const windows = clampedTurnWindows(turns.map((t) => t.turn_end_ms));
+	// Windows tile by each turn's voice_end_ms — the SAME boundary the server
+	// evaluator attributes against (spec 0001 §3.4), so display can't drift from
+	// the scored result.
+	const windows = clampedTurnWindows(turns.map((t) => t.voice_end_ms));
 	const perTurn = new Map<number, SpanResponse[]>();
 	for (const turn of turns) perTurn.set(turn.idx, []);
 	const untimed: SpanResponse[] = [];
