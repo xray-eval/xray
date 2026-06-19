@@ -69,6 +69,7 @@ Every CI step must be runnable on a developer machine with one command — image
 @.claude/rules/supply-chain.md
 @.claude/rules/public-repo.md
 @.claude/rules/single-image-distribution.md
+@.claude/rules/docs-freshness.md
 
 ### Python SDK rules (load when touching `sdk/python/`)
 
