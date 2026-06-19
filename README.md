@@ -44,7 +44,7 @@ docker build -t xray:local .
 The Python SDK:
 
 ```bash
-pip install xray-py[livekit]
+pip install "xray-py[livekit]"
 ```
 
 ---
@@ -66,8 +66,8 @@ services:
   my-voice-agent:
     build: .
     environment:
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://xray:8080/v1/otlp/v1/traces
-      OTEL_EXPORTER_OTLP_PROTOCOL: http/json
+      # xray.attach reads this and POSTs OTLP/JSON to ${endpoint}/v1/otlp/v1/traces
+      XRAY_OTLP_ENDPOINT: http://xray:8080
     depends_on:
       - xray
 
@@ -125,7 +125,7 @@ asyncio.run(main())
 
 ### Wire your agent (one-time)
 
-The dev's agent reads `xray.replay.id` (plus `conversation.id` / `version` / `modality`) from LiveKit room metadata and propagates them as OTEL baggage so every span — `xray.*`, `gen_ai.*`, Langfuse — gets routed to the right Replay. See [`docs/SDK.md`](docs/SDK.md).
+The dev's agent reads the replay context (`replay_id`, `conversation_hash`, `modality`) from the joining participant's JWT `xray` attribute (via `participant.attributes`) and propagates it as OTEL baggage so every span — `xray.*`, `gen_ai.*`, Langfuse — gets routed to the right Replay. No room/participant metadata is set. See [`docs/sdk-python.md`](docs/sdk-python.md).
 
 ---
 
@@ -150,7 +150,7 @@ One Bun process serves both the SPA and the API. One SQLite file at `/data/xray.
                                   │
                                   ▼
    ┌─ dev's agent ─────────────────────────────────────────────────────────┐
-   │  reads replay.id from room metadata → OTEL baggage                  │
+   │  reads replay context from JWT 'xray' attribute → OTEL baggage      │
    │  emits xray.* / gen_ai.* / langfuse spans                            │
    └─────────────────────────────────────────────────────────────────────┘
                                   │ OTLP/JSON
@@ -178,8 +178,10 @@ One Bun process serves both the SPA and the API. One SQLite file at `/data/xray.
 
 ## Documentation
 
-- [`docs/SDK.md`](docs/SDK.md) — Python authoring + runtime + how to propagate baggage from LiveKit room metadata.
-- [`docs/WIRE.md`](docs/WIRE.md) — OTLP attribute contract + recognized vocabularies and what fields are extracted from each.
+- [`docs/sdk-python.md`](docs/sdk-python.md) — Python SDK reference: authoring Conversations, runtimes, `attach`, `run` / `run_live`, and how the replay context propagates from the JWT `xray` attribute.
+- [`docs/wire-contract.md`](docs/wire-contract.md) — OTLP attribute contract + recognized vocabularies and what fields are extracted from each.
+- [`docs/architecture.md`](docs/architecture.md) — the three processes, two write paths, and the analyze chain.
+- [`docs/integrate.md`](docs/integrate.md) — end-to-end walkthrough: wire your agent and write a test.
 - `/docs` on your running instance — generated OpenAPI 3.1 reference rendered by Scalar.
 
 ---

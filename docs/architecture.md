@@ -1,3 +1,9 @@
+---
+layout: default
+title: Architecture
+nav_order: 2
+---
+
 # xray architecture
 
 This doc is the map for anyone contributing to xray. It explains the
@@ -26,7 +32,7 @@ End-user integration instructions live in [`integrate.md`](./integrate.md).
 - Storage is one **SQLite file** at `/data/xray.db` plus the bunqueue
   job DB at `/data/bunqueue.db`, plus audio bytes on disk under
   `XRAY_AUDIO_ROOT`. No external services. No second container. See
-  [`single-image-distribution.md`](../.claude/rules/single-image-distribution.md)
+  [`single-image-distribution.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/single-image-distribution.md)
   for why this is non-negotiable.
 - The **inspector SPA** is served by the same Bun process that owns
   the API — one image, one port, one volume.
@@ -40,7 +46,7 @@ flowchart LR
     subgraph DRV["Driver — test side (Python)"]
       direction TB
       D1["<b>xray.run(...)</b><br/>orchestrator<br/>(POSTs control plane,<br/>installs OTLP pipeline,<br/>attaches replay baggage,<br/>waits via SSE)"]
-      D2["<b>LiveKitDriver</b><br/>plays user audio,<br/>captures agent audio + transcripts,<br/>writes wall-clock stereo WAV<br/>(L = user, R = agent)"]
+      D2["<b>LiveKitRuntime</b><br/>plays user audio,<br/>captures agent audio + transcripts,<br/>writes wall-clock stereo WAV<br/>(L = user, R = agent)"]
       D1 --> D2
     end
 
@@ -59,8 +65,8 @@ flowchart LR
       direction TB
       CTL["<b>Control plane</b><br/>POST /v1/conversations<br/>POST /v1/replays<br/>POST /v1/replays/:id/audio<br/>POST /v1/replays/:id/analyze<br/>GET /v1/replays/:id/events (SSE)<br/>PATCH /v1/replays/:id<br/>GET /v1/conversations<br/>GET /v1/replays/:id"]
       OTLP["<b>OTLP receiver</b><br/>POST /v1/otlp/v1/traces<br/>JSON + protobuf<br/><br/>Vocabulary registry:<br/>xray.* + gen_ai.* + Langfuse<br/>routes by xray.replay.id"]
-      JOB["<b>bunqueue worker</b><br/>analyze-replay job:<br/>VAD on each channel,<br/>derive turn boundaries,<br/>write replay_turns +<br/>speech_segments"]
-      DB[("<b>SQLite</b><br/>/data/xray.db<br/><br/>conversations, replays,<br/>replay_turns, speech_segments,<br/>tool_calls, model_usage, spans")]
+      JOB["<b>bunqueue worker</b><br/>3-stage analyze chain:<br/>analyze-replay (VAD + transcribe)<br/>→ calculate-metrics<br/>→ evaluate-replay"]
+      DB[("<b>SQLite</b><br/>/data/xray.db<br/><br/>conversations, replays,<br/>replay_turns, speech_segments, spans,<br/>tool_calls, model_usage, turn_transcripts,<br/>replay_metrics, assertion_results,<br/>judge_results, replay_evaluations, tts_synth_cache")]
       BQDB[("<b>bunqueue DB</b><br/>/data/bunqueue.db<br/>(jobs, DLQ)")]
       AUDIO[("<b>Audio</b><br/>$XRAY_AUDIO_ROOT/<br/>&lt;replay&gt;/replay.wav")]
       SPA["<b>Inspector SPA</b><br/>(React, served via<br/>Bun.serve HTML routes)"]
@@ -166,11 +172,13 @@ flowchart TB
 in order:
 
 1. `POST /v1/conversations` — Valibot-validated upsert keyed by
-   `hash`. Multipart body: a `spec` JSON part with `name` + `turns`,
-   plus one named file part per `RecordedAudio` turn keyed by the
-   turn's declared `upload_key`. The server reads each audio part,
-   sha256s the bytes, substitutes the hash into the canonical turn,
-   then hashes the canonical turn JSON to derive `conversation_hash`.
+   `hash`. Multipart body: a `spec` JSON part with `name` + `turns`
+   (+ optional `judges` / `live`), plus one named file part per
+   `RecordedAudio` turn keyed by the turn's declared `upload_key`. The
+   server reads each audio part, sha256s the bytes, substitutes the hash
+   into the canonical turn, then hashes the canonical spec JSON
+   (`{turns, judges}`) to derive `conversation_hash` — so changing a judge
+   forks a new Conversation.
    Re-POSTing the same hash with a different `name` updates the
    row's display label (last-write-wins). The SDK never hashes
    anything.
@@ -232,14 +240,18 @@ eval/read time by mapping `started_at` onto the audio timeline
 (`audio_offset_ms = started_at − replays.recording_started_at`, the
 anchor the driver sends via the `X-Recording-Started-At` upload header)
 and testing the VAD-derived turn window `[turn_start_ms, turn_end_ms)`.
-There is no `turn_idx` column on those tables and no backfill stage —
-see `docs/specs/0001-timeline-clock-alignment.md` for why
-`replays.started_at` (row-creation time) must never be used as the
-origin.
+There is no `turn_idx` column on those tables and no backfill stage. The
+origin is always `replays.recording_started_at` (the audio sample-0
+wall-clock); `replays.started_at` (row-creation time, which precedes the
+recording by the room-connect + agent-join latency) must never be used.
 
-**gen_ai semconv** (`gen-ai-semconv.ts`) — `gen_ai.tool` → `tool_calls`,
-`gen_ai.client.operation` → `model_usage`. **Langfuse** vocabulary
-(`langfuse.ts`) extracts the same shapes from Langfuse-flavoured GenAI.
+**gen_ai semconv** (`gen-ai-semconv.ts`) — dispatches on
+`gen_ai.operation.name`: `execute_tool` → `tool_calls`; `chat` /
+`text_completion` → `model_usage` (model TTFT lifted from
+`gen_ai.response.time_to_first_chunk`, seconds → ms). **Langfuse**
+vocabulary (`langfuse.ts`) extracts the same shapes from Langfuse
+observations: `generation` → `model_usage`, `tool` → `tool_calls`. See
+[`wire-contract.md`](./wire-contract.md) for the full attribute contract.
 
 ---
 
@@ -285,7 +297,7 @@ sequenceDiagram
     W->>W: compute agent_response_ms<br/>+ interrupted per turn
     W->>X: insert replay_metrics<br/>analysis_step='evaluate'<br/>enqueue evaluate-replay
     X->>W: bunqueue enqueue evaluate-replay
-    W->>W: run each declared Assertion<br/>(pure ts-pattern dispatch)<br/>+ each declared Judge<br/>(OpenAI Chat Completions)
+    W->>W: run each declared Assertion<br/>(pure ts-pattern dispatch)<br/>+ each declared Judge<br/>(LLM via configured provider:<br/>OpenAI / Google Gemini / Mistral)
     W->>X: insert assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed'
     X-->>D: SSE 'evaluation_complete' event<br/>(full ReplayResult payload)
 ```
@@ -320,9 +332,9 @@ erDiagram
     replays ||--|| replay_evaluations : "replay_id (verdict)"
 
     conversations {
-        text hash PK "SHA-256 of canonical turn JSON (incl. sha256 of RecordedAudio bytes)"
+        text hash PK "SHA-256 of canonical spec JSON {turns (incl. assertions + sha256 of RecordedAudio bytes), judges}"
         text name "Free-form display label; last-write-wins on re-POST"
-        text turns_json "JSON-encoded canonical turn array — the hash input"
+        text turns_json "canonical JSON of the spec {turns, judges} — the hash input"
         text created_at
         text last_run_at "Bumped on every POST /v1/conversations"
     }
@@ -330,8 +342,9 @@ erDiagram
         text id PK
         text conversation_hash FK
         text lifecycle_state "pending | running | recording_uploaded | analyzing | completed | failed"
-        text analysis_step "vad | turns | null"
-        text failure_reason "stalled | timeout | explicit_fail | max_attempts_exceeded | worker_lost | upload_failed | driver_aborted | null"
+        text analysis_step "vad | transcribe | metrics | evaluate | null"
+        text failure_reason "14 values: driver_aborted | audio_missing | agent_not_joined | upload_failed | missing_credential | transcription_failed | metrics_failed | evaluation_failed | spec_vad_mismatch | stalled | timeout | explicit_fail | max_attempts_exceeded | worker_lost | null"
+        text recording_started_at "wall-clock (ISO) of audio sample 0 — sole origin for span→turn attribution; null before audio upload"
         text started_at
         text finished_at
         text audio_path "relative path under XRAY_AUDIO_ROOT to the stereo WAV"
@@ -401,7 +414,7 @@ flowchart LR
 Every read endpoint is in `src/server/<slice>/<slice>.router.ts`. The
 service layer (`<slice>.service.ts`) does the actual SQL via Drizzle
 on `bun:sqlite`. The slice convention is documented in
-[`code-layout.md`](../.claude/rules/code-layout.md).
+[`code-layout.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/code-layout.md).
 
 ---
 
@@ -411,8 +424,10 @@ Shipped artifact: a Docker image published to GHCR
 (`ghcr.io/xray-eval/xray`) by CI on tagged releases. Operators run
 
 ```
-docker run -v ./data:/data -e XRAY_AUDIO_ROOT=/data/audio ghcr.io/xray-eval/xray
+docker run -v ./data:/data ghcr.io/xray-eval/xray
 ```
+
+(`XRAY_AUDIO_ROOT` defaults to `<XRAY_DATA_DIR>/audio`, so it needn't be passed.)
 
 and that is the install. The image carries the Bun process, the
 pre-built SPA, the SQLite schema (migrated at startup), the bunqueue
@@ -423,7 +438,7 @@ This single-image promise is load-bearing for several other choices
 in the codebase (SQLite over Postgres, `bun:sqlite` over a network
 driver, embedded reads over a separate query service, embedded
 bunqueue worker over a separate queue process). See
-[`single-image-distribution.md`](../.claude/rules/single-image-distribution.md)
+[`single-image-distribution.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/single-image-distribution.md)
 before proposing any change that would break it.
 
 **Two SQLite files in `/data/`.** xray owns `xray.db` (conversations,

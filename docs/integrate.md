@@ -1,3 +1,9 @@
+---
+layout: default
+title: Integrate
+nav_order: 3
+---
+
 # Integrating xray into an existing LiveKit Agents worker
 
 This is the canonical walkthrough. If you've got a LiveKit Agents
@@ -69,7 +75,7 @@ span.
 ## 1. Install the SDK on the agent side
 
 ```bash
-pip install xray-py[livekit]
+pip install "xray-py[livekit]"
 ```
 
 The `[livekit]` extra pulls in `livekit` + `livekit-api`. Drop it if
@@ -132,13 +138,15 @@ Recognized vocabularies (`xray.*`, OTel GenAI `gen_ai.*`, Langfuse
 `langfuse.*`) get persisted as raw spans AND extracted into structured
 rows where the vocabulary supports it:
 
-- `gen_ai.tool` → `tool_calls` row.
-- `gen_ai.client.operation` (and Langfuse equivalents) → `model_usage`
-  row.
-- `xray.turn` / `xray.stage.*` spans land in the raw `spans` table for
-  the inspector's timeline. They carry no structured payload — server
-  evaluation runs from the declared `Assertion` / `Judge` variants, not
-  from driver-emitted spans.
+- `gen_ai.operation.name = execute_tool` → `tool_calls` row.
+- `gen_ai.operation.name = chat` / `text_completion` (and the Langfuse
+  `generation` observation) → `model_usage` row.
+- `xray.turn` / `xray.stage.stt` / `xray.stage.tts` spans land in the raw
+  `spans` table for the inspector's timeline. They carry no structured
+  payload — server evaluation runs from the declared `Assertion` /
+  `Judge` variants, not from driver-emitted spans.
+
+The full attribute contract is in [`wire-contract.md`](./wire-contract.md).
 
 Spans from unrecognized vocabularies are dropped silently — that's the
 "filter, not a gate" design so noisy framework spans don't fill the DB.
@@ -156,7 +164,7 @@ import asyncio
 import xray
 from xray import Assertion, Judge
 from xray.conversation import RecordedAudio
-from xray.runtime.livekit import LiveKitDriver
+from xray.runtime.livekit import LiveKitRuntime
 
 
 async def main():
@@ -187,7 +195,7 @@ async def main():
         ),
     )
 
-    driver = LiveKitDriver(
+    driver = LiveKitRuntime(
         url="ws://localhost:7880",
         api_key="devkey",
         api_secret="devsecret32charsminimumlengthxyz123",
@@ -215,7 +223,7 @@ In pytest the same call is one assertion:
 ```python
 async def test_booking_happy_path():
     result = await xray.run(conversation=conv, runtime=driver, xray_url=XRAY_URL)
-    assert result.passed, format_failures(result)
+    assert result.passed, xray.format_failures(result)
 ```
 
 `xray.run` is async — wrap in `asyncio.run` for sync test harnesses.
@@ -324,7 +332,9 @@ xray ships as a single Docker image. Two SQLite files share the
 mounted volume:
 
 - `/data/xray.db` — conversations, replays, replay_turns,
-  speech_segments, tool_calls, model_usage, spans.
+  speech_segments, spans, tool_calls, model_usage, turn_transcripts,
+  replay_metrics, assertion_results, judge_results, replay_evaluations,
+  tts_synth_cache (13 tables; see [`architecture.md`](./architecture.md)).
 - `/data/bunqueue.db` — bunqueue's job queue + DLQ (the
   `analyze-replay` worker runs embedded in the same Bun process).
 

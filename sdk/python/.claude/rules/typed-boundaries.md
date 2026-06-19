@@ -14,17 +14,16 @@ is a ``TypedDict`` matching the server's Valibot schema:
 from typing import Literal, NotRequired, TypedDict
 
 class ReplayCreateBody(TypedDict):
-    conversationId: str
-    conversationVersion: str
-    modality: Literal["voice"]
-    runConfig: NotRequired[JsonObject]
+    conversation_hash: str
+    run_config: NotRequired[JsonObject]
 ```
 
-- Field names match the server (`camelCase`). The SDK speaks the
-  server's wire shape; we do not translate at this layer.
+- Field names match the server's wire shape (`snake_case` — e.g.
+  ``conversation_hash``, ``run_config``). The SDK speaks the server's
+  shape; we do not translate at this layer.
 - Optional fields use ``NotRequired[...]``, not ``Required`` with a
   ``None`` value.
-- ``runConfig`` is the *one* place ``JsonObject`` (= ``dict[str,
+- ``run_config`` is the *one* place ``JsonObject`` (= ``dict[str,
   JsonValue]``) is allowed — it's an opaque pass-through the dev
   owns. Use ``xray._json.JsonObject``, never ``dict[str, Any]``.
 
@@ -37,7 +36,10 @@ that into ``object`` and walks it:
 ```python
 class ReplayCreateResponse(TypedDict):
     id: str
-    status: Literal["running", "completed", "failed"]
+    lifecycle_state: Literal[
+        "pending", "running", "recording_uploaded",
+        "analyzing", "completed", "failed",
+    ]
 
 raw: object = response.json()
 if not isinstance(raw, dict) or "id" not in raw:
