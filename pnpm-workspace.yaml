@@ -60,6 +60,25 @@ blockExoticSubdeps: true
 # Fail install if a newer release has weaker publish-time trust than the prior one.
 trustPolicy: no-downgrade
 
+# Trust-policy exceptions — same bar as `overrides` / `auditConfig.ignoreGhsas`
+# below: each entry needs a date + reason. trustPolicy STAYS no-downgrade; these
+# are surgical per-package exemptions, not a relaxation of the policy.
+#
+# vite — VitePress's build engine. Dev-only: it powers `pnpm docs:build` and the
+# `docs` dev server, and is never shipped in the Docker image (the prod stage
+# installs `--prod`, which drops devDependencies). Trips no-downgrade because
+# earlier vite releases carried npm "trusted publisher" evidence while current
+# 5.4.x carry Sigstore "provenance attestation" only; pnpm ranks trusted-publisher
+# above provenance and flags the transition as a downgrade. This is a benign
+# ecosystem-wide shift in npm's attestation story (provenance is itself a strong
+# signal, published by the vitejs org), not a takeover — verified 2026-06-19 that
+# vite 5.4.0..5.4.21 all carry provenance attestation. Excluded by bare name (not
+# version-pinned) because the shift is structural: every current vite trips it, so
+# a version pin would only churn on each patch bump. Re-evaluate if vite ever
+# regains trusted-publisher evidence. Added 2026-06-19.
+trustPolicyExclude:
+  - vite
+
 # Re-verify node_modules matches the lockfile before any script runs.
 verifyDepsBeforeRun: install
 
@@ -156,3 +175,44 @@ overrides:
 auditConfig:
   ignoreGhsas:
     - GHSA-gv7w-rqvm-qjhr
+    # ---- VitePress docs toolchain — dev-only, static-output VEX --------------
+    # The advisories below all live in the docs-site toolchain (added with the
+    # VitePress docs PR). They share one disposition: NOT AFFECTED.
+    #   • Dev-only — vitepress/vite/esbuild/mermaid are devDependencies. The prod
+    #     image installs `--prod` (Dockerfile stage 1), which drops them; none of
+    #     this code ships in the container.
+    #   • Static output — `pnpm docs:build` emits static HTML to GitHub Pages. The
+    #     deployed site runs no vite/esbuild dev server, so the dev-server classes
+    #     below have zero production surface.
+    # We do NOT bump to remediate the vite findings: they're patched only in vite
+    # 6.x, but vitepress@1.6.4 pins vite 5.x (no 5.x backport) — forcing vite 6
+    # would break the pinned vitepress. Revisit when vitepress ships a stable
+    # release on vite 6 (its 2.x line).
+    #
+    # GHSA-fx2h-pf6j-xcff (HIGH) — vite `server.fs.deny` bypass via Windows
+    # alternate paths. Dev-server-only AND Windows-only; we build on macOS/Linux
+    # and deploy static. Unreachable. Added 2026-06-21.
+    - GHSA-fx2h-pf6j-xcff
+    # GHSA-4w7w-66w2-5vf9 (moderate) — vite path traversal in optimized-deps
+    # `.map` handling. Dev-server-only; absent from the static build. 2026-06-21.
+    - GHSA-4w7w-66w2-5vf9
+    # GHSA-v6wh-96g9-6wx3 (moderate) — launch-editor (vite dev-server "open in
+    # editor") NTLMv2 hash disclosure via UNC paths on Windows. Dev-server-only,
+    # Windows-only. Unreachable here. Added 2026-06-21.
+    - GHSA-v6wh-96g9-6wx3
+    # GHSA-67mh-4wv8-2f99 (moderate) — esbuild dev server lets any site read
+    # responses (permissive CORS). Same advisory the `overrides` above patch for
+    # the drizzle-kit path; here it rides in via vitepress>vite>esbuild (0.21.5,
+    # which vite 5.4 pins). esbuild is vite's transform library, never run via its
+    # `serve` mode, and the docs deploy is static — the dev server never runs.
+    # Bumping vite's esbuild to 0.25 risks breaking vite 5.4's build, so ignore
+    # rather than override. Added 2026-06-21.
+    - GHSA-67mh-4wv8-2f99
+    # GHSA-cmwh-pvxp-8882 (moderate) — DOMPurify ALLOWED_ATTR pollution via
+    # setConfig(). Rides in via mermaid>dompurify; mermaid sanitizes the diagrams
+    # WE author at build time, never untrusted input, and we never call setConfig
+    # with attacker-controlled config — unreachable. The fix (dompurify 3.4.11,
+    # published 2026-06-17) is still inside the 7-day cooldown and the finding is
+    # not urgent, so we don't bypass it. Convert to `overrides: mermaid>dompurify:
+    # ^3.4.11` once 3.4.11 clears cooldown (~2026-06-24). Added 2026-06-21.
+    - GHSA-cmwh-pvxp-8882

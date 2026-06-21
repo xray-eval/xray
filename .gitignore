@@ -9,6 +9,9 @@ dist/
 # Build caches
 *.tsbuildinfo
 
+# VitePress docs cache (build output under docs/.vitepress/dist/ is covered by dist/ above)
+docs/.vitepress/cache/
+
 # Test & coverage
 coverage/
 .nyc_output/

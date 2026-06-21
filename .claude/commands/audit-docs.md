@@ -44,9 +44,12 @@ pre-PR pass.
    (the highest-confidence drift). Judge each hit — a legitimate "renamed from
    X" migration note is fine; a live reference to a dead symbol is not.
 4. **Check cross-links.** Every relative markdown link and `github.com/.../blob`
-   link must resolve. Remember `docs/` is served as a GitHub Pages site under
-   `baseurl: /xray` — links that escape the `docs/` root must use the full blob
-   URL, not `../`.
+   link must resolve. `docs/` is built into a static site by VitePress
+   (`docs/.vitepress/config.mts`, `base: '/xray/'`) and deployed to GitHub Pages by
+   `.github/workflows/docs.yml`. In-docs `./*.md` links are fine — VitePress
+   rewrites them and they also resolve on GitHub. Links that escape `docs/` (to
+   source files or other repo paths) must use the full `github.com/.../blob` URL,
+   not `../`, since those resolve on GitHub but not on the built site.
 5. **Honesty pass** ([`honesty.md`](../rules/honesty.md)). Flag any claim that
    says *more* than the code guarantees, not just outright-wrong ones. Over-claims
    are the subtle drift.

@@ -1,16 +1,25 @@
 ---
-layout: default
 title: Architecture
-nav_order: 2
 ---
 
 # xray architecture
 
-This doc is the map for anyone contributing to xray. It explains the
-three processes, the two write paths into storage, the read path that
-backs the inspector, and the trust boundary between them.
+This doc is the map for anyone contributing to xray. Read it to learn four things:
+
+- The three processes that make up the system.
+- The two write paths that put data into storage.
+- The read path that feeds the inspector (the web UI).
+- The trust boundary that keeps those paths apart.
 
 End-user integration instructions live in [`integrate.md`](./integrate.md).
+
+A few terms show up a lot. Here they are in plain words:
+
+- **Replay**: one run of one test conversation against a real voice agent.
+- **Turn**: one back-and-forth step in a conversation. Either the user speaks or the agent speaks.
+- **Span**: one timed event from the agent's code, in OpenTelemetry format. For example, "the LLM call took 800ms."
+- **OTLP**: OpenTelemetry Protocol. The wire format agents use to send spans.
+- **VAD**: Voice Activity Detection. It scans audio and marks where someone is actually speaking.
 
 ---
 
@@ -35,7 +44,7 @@ End-user integration instructions live in [`integrate.md`](./integrate.md).
   [`single-image-distribution.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/single-image-distribution.md)
   for why this is non-negotiable.
 - The **inspector SPA** is served by the same Bun process that owns
-  the API — one image, one port, one volume.
+  the API: one image, one port, one volume.
 
 ---
 
@@ -43,7 +52,7 @@ End-user integration instructions live in [`integrate.md`](./integrate.md).
 
 ```mermaid
 flowchart LR
-    subgraph DRV["Driver — test side (Python)"]
+    subgraph DRV["Driver - test side (Python)"]
       direction TB
       D1["<b>xray.run(...)</b><br/>orchestrator<br/>(POSTs control plane,<br/>installs OTLP pipeline,<br/>attaches replay baggage,<br/>waits via SSE)"]
       D2["<b>LiveKitRuntime</b><br/>plays user audio,<br/>captures agent audio + transcripts,<br/>writes wall-clock stereo WAV<br/>(L = user, R = agent)"]
@@ -54,14 +63,14 @@ flowchart LR
       LKR["WebRTC audio<br/>+ live transcripts"]
     end
 
-    subgraph AGT["Agent worker — dev's code (Python)"]
+    subgraph AGT["Agent worker - dev's code (Python)"]
       direction TB
       A1["<b>async with xray.attach(ctx)</b><br/>reads JWT 'xray' attribute,<br/>sets OTEL baggage,<br/>installs OTLP pipeline"]
       A2["dev's agent code:<br/>strategy, STT, TTS, tool-calls<br/>emits gen_ai.* + xray.stage.*<br/>(and any other OTEL spans)"]
       A1 --> A2
     end
 
-    subgraph XR["xray — single Bun process"]
+    subgraph XR["xray - single Bun process"]
       direction TB
       CTL["<b>Control plane</b><br/>POST /v1/conversations<br/>POST /v1/replays<br/>POST /v1/replays/:id/audio<br/>POST /v1/replays/:id/analyze<br/>GET /v1/replays/:id/events (SSE)<br/>PATCH /v1/replays/:id<br/>GET /v1/conversations<br/>GET /v1/replays/:id"]
       OTLP["<b>OTLP receiver</b><br/>POST /v1/otlp/v1/traces<br/>JSON + protobuf<br/><br/>Vocabulary registry:<br/>xray.* + gen_ai.* + Langfuse<br/>routes by xray.replay.id"]
@@ -83,56 +92,67 @@ flowchart LR
 
     D1 -- "POST /v1/conversations<br/>POST /v1/replays<br/>POST /audio<br/>POST /analyze<br/>GET /events (SSE)<br/>PATCH /v1/replays/:id" --> CTL
     D2 -- "publish audio track" --> LKR
-    D2 -- "xray.turn spans<br/>(raw spans only —<br/>turn boundaries come<br/>from server-side VAD)" --> OTLP
+    D2 -- "xray.turn spans<br/>(raw spans only -<br/>turn boundaries come<br/>from server-side VAD)" --> OTLP
     LKR -- "deliver audio +<br/>live transcripts" --> A2
     A2 -- "gen_ai.* / xray.stage.* /<br/>any OTEL spans" --> OTLP
 ```
 
 ### Why three processes
 
-- The **driver** runs in CI or on the dev's laptop. It owns the test
-  spec, plays the user audio, captures the agent audio, writes the
-  stereo WAV, uploads it, then waits via SSE for the server to finish
-  VAD + turn derivation. It is also the only thing that mints LiveKit
-  JWTs carrying the `xray` attribute (replay_id, conversation_hash,
-  modality) — that JWT is how the agent side learns which replay
-  it's inside.
-- The **agent worker** is the dev's own LiveKit Agents code, with one
-  thin xray wrapper: `async with xray.attach(ctx, …)`. It runs the
-  same way it would in production (because in production, no `xray`
-  attribute is on the JWT, and `attach` no-ops). Its job from xray's
-  point of view is *to emit OTEL spans*.
-- **xray** is the single Bun image that takes both inputs and renders
-  the inspector. The analyze-replay job runs in-process via bunqueue
-  in `embedded` mode — no second container, no Redis, no separate
-  worker process.
+Each process has one job. Here is what each one does.
+
+The **driver** runs in CI or on the dev's laptop. It owns the test work:
+
+- It holds the test spec (the conversation you wrote in code).
+- It plays the user audio into the room.
+- It captures the agent audio coming back.
+- It writes the stereo WAV (one audio file, user on the left channel, agent on the right).
+- It uploads that WAV, then waits via SSE for the server to finish VAD and turn derivation.
+
+The driver is also the only thing that mints LiveKit JWTs.
+(A JWT is a signed login token. LiveKit is the real-time audio service the agent runs in.)
+Each JWT carries the `xray` attribute: `replay_id`, `conversation_hash`, and `modality`.
+That JWT is how the agent side learns which replay it is inside.
+
+The **agent worker** is the dev's own LiveKit Agents code. It has one thin xray wrapper: `async with xray.attach(ctx, …)`.
+
+- It runs the same way it would in production. In production, no `xray` attribute is on the JWT, so `attach` does nothing.
+- Its only job, from xray's point of view, is *to emit OTEL spans*.
+
+**xray** is the single Bun image. It takes both inputs and renders the inspector.
+The analyze-replay job runs in-process via bunqueue in `embedded` mode.
+No second container. No Redis. No separate worker process.
 
 The driver and the agent worker **never talk to each other directly**.
-They share state through (a) the LiveKit room (audio + JWT attribute),
-and (b) xray itself (every span lands under the same `xray.replay.id`).
+They share state through two channels:
+
+1. The LiveKit room (audio plus the JWT attribute).
+2. xray itself (every span lands under the same `xray.replay.id`).
 
 ---
 
 ## The two write paths
 
-xray has exactly two write surfaces. Every byte that mutates state in
-`/data/xray.db` arrives through one of them. They are coupled by trust:
-the OTLP receiver **never** creates Conversation or Replay rows; that
-is exclusively the SDK control plane's job.
+xray has exactly two write surfaces.
+Every byte that changes state in `/data/xray.db` arrives through one of them.
+
+They are coupled by trust.
+The OTLP receiver **never** creates Conversation or Replay rows.
+That is exclusively the SDK control plane's job.
 
 ```mermaid
 flowchart TB
-    subgraph WRITES["Write surfaces — trust boundary lives here"]
+    subgraph WRITES["Write surfaces - trust boundary lives here"]
       direction LR
-      subgraph CP["Control plane — Valibot-validated, idempotent"]
+      subgraph CP["Control plane - Valibot-validated, idempotent"]
         CP1["POST /v1/conversations<br/><i>multipart spec + audio bytes<br/>server hashes canonical turns → conversation_hash<br/>upsert by hash (last-write-wins on name)</i>"]
-        CP2["POST /v1/replays<br/><i>eager row create — lifecycle_state='pending'<br/>returns replay_id</i>"]
+        CP2["POST /v1/replays<br/><i>eager row create - lifecycle_state='pending'<br/>returns replay_id</i>"]
         CP3["POST /v1/replays/:id/audio<br/><i>stereo WAV → XRAY_AUDIO_ROOT<br/>X-Recording-Started-At → replays.recording_started_at<br/>lifecycle_state='recording_uploaded'</i>"]
         CP4["POST /v1/replays/:id/analyze<br/><i>enqueue bunqueue job<br/>lifecycle_state='analyzing'<br/>analysis_step='vad'</i>"]
         CP5["PATCH /v1/replays/:id<br/><i>lifecycle_state / failure_reason / finished_at</i>"]
         CP6["analyze-chain workers<br/><i>analyze-replay: VAD + Whisper → speech_segments + replay_turns + turn_transcripts<br/>calculate-metrics: agent_response_ms + interrupted → replay_metrics<br/>evaluate-replay: assertions + judges → assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed' on chain success</i>"]
       end
-      subgraph RX["OTLP receiver — filters, not gates"]
+      subgraph RX["OTLP receiver - filters, not gates"]
         RX1["POST /v1/otlp/v1/traces<br/>JSON or protobuf<br/><br/>Routes by xray.replay.id resource attr.<br/>Unknown replay_id → silent drop.<br/>Unknown vocabulary → silent drop.<br/><br/>Vocabularies in src/server/otlp/vocabularies/:<br/>• xray.ts (xray.* recognized, raw spans only)<br/>• gen-ai-semconv.ts (gen_ai.* per OTel)<br/>• langfuse.ts (Langfuse-flavoured GenAI)"]
       end
     end
@@ -171,39 +191,40 @@ flowchart TB
 `sdk/python/src/xray/orchestrator.py:run(...)` POSTs to these endpoints
 in order:
 
-1. `POST /v1/conversations` — Valibot-validated upsert keyed by
-   `hash`. Multipart body: a `spec` JSON part with `name` + `turns`
-   (+ optional `judges` / `live`), plus one named file part per
-   `RecordedAudio` turn keyed by the turn's declared `upload_key`. The
-   server reads each audio part, sha256s the bytes, substitutes the hash
-   into the canonical turn, then hashes the canonical spec JSON
-   (`{turns, judges}`) to derive `conversation_hash` — so changing a judge
-   forks a new Conversation.
-   Re-POSTing the same hash with a different `name` updates the
-   row's display label (last-write-wins). The SDK never hashes
-   anything.
-2. `POST /v1/replays` — creates the Replay row **eagerly** at
+1. `POST /v1/conversations`. This is a Valibot-validated upsert, keyed by `hash`.
+   The body is multipart. It has a `spec` JSON part with `name` plus `turns`
+   (and optional `judges` / `live`). It also has one named file part per
+   `RecordedAudio` turn, keyed by the turn's declared `upload_key`. Here is what the
+   server does with it:
+   - It reads each audio part and sha256s the bytes.
+   - It substitutes that hash into the canonical turn.
+   - It then hashes the canonical spec JSON (`{turns, judges}`) to derive `conversation_hash`.
+
+   So changing a judge forks a new Conversation.
+   Re-POSTing the same hash with a different `name` updates the row's display label (last-write-wins).
+   The SDK never hashes anything.
+2. `POST /v1/replays`. This creates the Replay row **eagerly** at
    `lifecycle_state='pending'` and returns `replay_id`. This must
-   happen before the runtime emits its first span; otherwise the OTLP
-   receiver would drop them as "unknown replay_id."
-3. `POST /v1/replays/:id/audio` — uploads the stereo WAV (left = user,
+   happen before the runtime emits its first span. Otherwise the OTLP
+   receiver would drop those spans as "unknown replay_id."
+3. `POST /v1/replays/:id/audio`. This uploads the stereo WAV (left = user,
    right = agent, wall-clock-aligned, written under
    `XRAY_AUDIO_ROOT/<replay_id>/replay.<ext>`). The server flips
    `lifecycle_state` to `recording_uploaded`.
-4. `POST /v1/replays/:id/analyze` — enqueues the bunqueue
+4. `POST /v1/replays/:id/analyze`. This enqueues the bunqueue
    `analyze-replay` job. The server transitions to
-   `lifecycle_state='analyzing'` with `analysis_step='vad'`. Returns
+   `lifecycle_state='analyzing'` with `analysis_step='vad'`. It returns
    `202 Accepted` with the bunqueue job id.
-5. `GET /v1/replays/:id/events` (SSE) — the SDK streams `state`,
+5. `GET /v1/replays/:id/events` (SSE). The SDK streams `state`,
    `progress`, `evaluation_complete`, and `failed` events. The
    `evaluation_complete` payload carries the full `ReplayResult`
    (passed/failed verdict + per-assertion + per-judge + per-turn
-   metrics) so the SDK can return immediately without a follow-up GET.
-   Heartbeat `:` line every 15s keeps proxies from idling out. SDK
+   metrics). So the SDK can return immediately without a follow-up GET.
+   A heartbeat `:` line every 15s keeps proxies from idling out. The SDK
    closes the stream when `lifecycle_state` hits a terminal value.
-6. `GET /v1/replays/:id/result` — same `ReplayResult` payload outside
-   the SSE stream for late subscribers / inspector hydration.
-7. `PATCH /v1/replays/:id` — only used by the SDK for driver-side
+6. `GET /v1/replays/:id/result`. This is the same `ReplayResult` payload outside
+   the SSE stream, for late subscribers and inspector hydration.
+7. `PATCH /v1/replays/:id`. The SDK uses this only for driver-side
    failures (`failure_reason='driver_aborted'` / `audio_missing` /
    `agent_not_joined`). Lifecycle transitions during the analyze chain
    are server-owned.
@@ -211,41 +232,44 @@ in order:
 ### OTLP receiver (both sides)
 
 `src/server/otlp/otlp.service.ts` accepts both `application/json` and
-`application/x-protobuf`, normalises to a JSON-shape that the
-Valibot schema validates, then dispatches each span through the
+`application/x-protobuf`. It normalises them to a JSON-shape that the
+Valibot schema validates. Then it dispatches each span through the
 vocabulary registry (`src/server/otlp/vocabularies/registry.ts`).
 
-Each registered vocabulary is one file. To add a new one (e.g. a
+Each registered vocabulary is one file. To add a new one (for example, a
 provider-specific semconv), drop a file in `vocabularies/` plus one
-line in `registry.ts`. The receiver is a **filter, not a gate**:
-- Unknown vocabulary → silently dropped (so an agent worker emitting
-  noisy framework spans doesn't pollute storage).
-- Unknown `xray.replay.id` → silently dropped (so an agent running in
-  production, where there is no replay context, doesn't write rows).
+line in `registry.ts`.
 
-**xray vocabulary** (`src/server/otlp/vocabularies/xray.ts`) — recognized
+The receiver is a **filter, not a gate**. Two kinds of input get dropped:
+
+- Unknown vocabulary is silently dropped. So an agent worker emitting
+  noisy framework spans doesn't pollute storage.
+- An unknown `xray.replay.id` is silently dropped. So an agent running in
+  production, where there is no replay context, doesn't write rows.
+
+**xray vocabulary** (`src/server/otlp/vocabularies/xray.ts`). These are the recognized
 span names: `xray.turn`, `xray.stage.stt`, `xray.stage.tts`. They land
 in the raw `spans` table for the inspector's timeline but produce no
-structured rows — turn boundaries come from server-side VAD, and
-assertion + judge outcomes come from the server's evaluate-replay job
+structured rows. Turn boundaries come from server-side VAD, and
+assertion plus judge outcomes come from the server's evaluate-replay job
 walking the declared catalog. `xray.assertion` and `xray.judge` are no
-longer recognized: the spec-0001 server reads its checks from the
+longer recognized. The spec-0001 server reads its checks from the
 `Assertion` / `Judge` variants declared on the conversation, not from
 driver-emitted spans.
 
 **Tool / model → turn attribution** is timestamp-based, not span-tag
-based — and derived, not stored. `tool_calls` / `model_usage` rows carry
-only their wall-clock `started_at`; turn membership is computed at
-eval/read time by mapping `started_at` onto the audio timeline
+based. It is also derived, not stored. `tool_calls` / `model_usage` rows carry
+only their wall-clock `started_at`. Turn membership is computed at
+eval/read time. The server maps `started_at` onto the audio timeline
 (`audio_offset_ms = started_at − replays.recording_started_at`, the
-anchor the driver sends via the `X-Recording-Started-At` upload header)
-and testing the VAD-derived turn window `[turn_start_ms, turn_end_ms)`.
+anchor the driver sends via the `X-Recording-Started-At` upload header).
+Then it tests that offset against the VAD-derived turn window `[turn_start_ms, turn_end_ms)`.
 There is no `turn_idx` column on those tables and no backfill stage. The
 origin is always `replays.recording_started_at` (the audio sample-0
-wall-clock); `replays.started_at` (row-creation time, which precedes the
+wall-clock). `replays.started_at` (row-creation time, which precedes the
 recording by the room-connect + agent-join latency) must never be used.
 
-**gen_ai semconv** (`gen-ai-semconv.ts`) — dispatches on
+**gen_ai semconv** (`gen-ai-semconv.ts`). This dispatches on
 `gen_ai.operation.name`: `execute_tool` → `tool_calls`; `chat` /
 `text_completion` → `model_usage` (model TTFT lifted from
 `gen_ai.response.time_to_first_chunk`, seconds → ms). **Langfuse**
@@ -302,16 +326,17 @@ sequenceDiagram
     X-->>D: SSE 'evaluation_complete' event<br/>(full ReplayResult payload)
 ```
 
-Two things to notice in this diagram:
+Two things to notice in this diagram.
 
-- **The audio plane (LiveKit) and the observability plane (OTLP) are
-  separate.** Audio never goes through xray during the run; xray just
-  receives the post-hoc stereo WAV. The agent worker's STT is the
-  dev's STT — xray sees only its emitted OTEL spans.
-- **The replay row is created _before_ any spans land.** This is what
-  makes the OTLP receiver's "unknown replay_id → drop" rule safe: by
-  the time the agent worker emits its first span, the Replay row
-  already exists, so the receiver routes the span correctly.
+First, **the audio plane (LiveKit) and the observability plane (OTLP) are
+separate.** Audio never goes through xray during the run. xray just
+receives the post-hoc stereo WAV at the end. The agent worker's STT is the
+dev's STT. xray sees only its emitted OTEL spans.
+
+Second, **the replay row is created _before_ any spans land.** This is what
+makes the OTLP receiver's "unknown replay_id → drop" rule safe. By
+the time the agent worker emits its first span, the Replay row
+already exists. So the receiver routes the span correctly.
 
 ---
 
@@ -334,7 +359,7 @@ erDiagram
     conversations {
         text hash PK "SHA-256 of canonical spec JSON {turns (incl. assertions + sha256 of RecordedAudio bytes), judges}"
         text name "Free-form display label; last-write-wins on re-POST"
-        text turns_json "canonical JSON of the spec {turns, judges} — the hash input"
+        text turns_json "canonical JSON of the spec {turns, judges} - the hash input"
         text created_at
         text last_run_at "Bumped on every POST /v1/conversations"
     }
@@ -344,7 +369,7 @@ erDiagram
         text lifecycle_state "pending | running | recording_uploaded | analyzing | completed | failed"
         text analysis_step "vad | transcribe | metrics | evaluate | null"
         text failure_reason "14 values: driver_aborted | audio_missing | agent_not_joined | upload_failed | missing_credential | transcription_failed | metrics_failed | evaluation_failed | spec_vad_mismatch | stalled | timeout | explicit_fail | max_attempts_exceeded | worker_lost | null"
-        text recording_started_at "wall-clock (ISO) of audio sample 0 — sole origin for span→turn attribution; null before audio upload"
+        text recording_started_at "wall-clock (ISO) of audio sample 0 - sole origin for span→turn attribution; null before audio upload"
         text started_at
         text finished_at
         text audio_path "relative path under XRAY_AUDIO_ROOT to the stereo WAV"
@@ -370,24 +395,25 @@ erDiagram
 ```
 
 `replay_turns` is the join point between the spec
-(`conversations.turns_json`) and the observed execution. Rows are
-written by the `analyze-replay` worker after running VAD on each
-channel of the uploaded stereo WAV. `speech_segments` carries the raw
-VAD output (one row per detected voiced chunk per channel); the
-inspector renders these alongside the turn boundaries for debugging
-overlap / silence / latency.
+(`conversations.turns_json`) and the observed execution. The rows are
+written by the `analyze-replay` worker after it runs VAD on each
+channel of the uploaded stereo WAV.
+
+`speech_segments` carries the raw
+VAD output: one row per detected voiced chunk per channel. The
+inspector renders these alongside the turn boundaries. That helps you debug overlap, silence, and latency.
 
 `tool_calls`, `model_usage`, and `spans` are written by the OTLP
 receiver as it ingests `gen_ai.*` / Langfuse / `xray.*` spans.
 
 ---
 
-## Read path — what the inspector sees
+## Read path: what the inspector sees
 
 The inspector (`src/client/inspector/` + slice folders under
-`src/client/`) is a React SPA bundled by Bun's HTML bundler and
-served by the same Bun process that owns the API. There is **no
-client-side build step in CI**; Bun builds it at request time and at
+`src/client/`) is a React SPA. Bun's HTML bundler builds it, and the
+same Bun process that owns the API serves it. There is **no
+client-side build step in CI**. Bun builds it at request time and at
 container start.
 
 ```mermaid
@@ -395,10 +421,10 @@ flowchart LR
     UI["Inspector SPA<br/>(React)"]
     EP1["GET /v1/conversations<br/>GET /v1/conversations/:hash"]
     EP2["GET /v1/conversations/:hash/replays<br/>(every replay for this hash)"]
-    EP3["GET /v1/replays/:id<br/>(buildReplayDetail — the<br/>big join)"]
+    EP3["GET /v1/replays/:id<br/>(buildReplayDetail - the<br/>big join)"]
     EP4["POST /v1/replays/compare<br/>(body: 2–8 replay ids)"]
     EP5["GET /v1/replays/:id/audio<br/>(stereo WAV bytes)"]
-    EP6["GET /v1/replays/:id/events<br/>(SSE — live progress)"]
+    EP6["GET /v1/replays/:id/events<br/>(SSE - live progress)"]
 
     UI --> EP1
     UI --> EP2
@@ -411,7 +437,7 @@ flowchart LR
     EP5 -. "streams<br/>WAV bytes" .-> AUDIO[("XRAY_AUDIO_ROOT")]
 ```
 
-Every read endpoint is in `src/server/<slice>/<slice>.router.ts`. The
+Every read endpoint lives in `src/server/<slice>/<slice>.router.ts`. The
 service layer (`<slice>.service.ts`) does the actual SQL via Drizzle
 on `bun:sqlite`. The slice convention is documented in
 [`code-layout.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/code-layout.md).
@@ -420,8 +446,8 @@ on `bun:sqlite`. The slice convention is documented in
 
 ## Distribution
 
-Shipped artifact: a Docker image published to GHCR
-(`ghcr.io/xray-eval/xray`) by CI on tagged releases. Operators run
+The shipped artifact is a Docker image. CI publishes it to GHCR
+(`ghcr.io/xray-eval/xray`) on tagged releases. Operators run
 
 ```
 docker run -v ./data:/data ghcr.io/xray-eval/xray
@@ -429,20 +455,20 @@ docker run -v ./data:/data ghcr.io/xray-eval/xray
 
 (`XRAY_AUDIO_ROOT` defaults to `<XRAY_DATA_DIR>/audio`, so it needn't be passed.)
 
-and that is the install. The image carries the Bun process, the
-pre-built SPA, the SQLite schema (migrated at startup), the bunqueue
-worker (embedded, same process), and nothing else. No SaaS. No hosted
+That is the whole install. The image carries the Bun process, the
+pre-built SPA, the SQLite schema (migrated at startup), and the bunqueue
+worker (embedded, same process). Nothing else. No SaaS. No hosted
 version. No second container.
 
 This single-image promise is load-bearing for several other choices
-in the codebase (SQLite over Postgres, `bun:sqlite` over a network
-driver, embedded reads over a separate query service, embedded
-bunqueue worker over a separate queue process). See
+in the codebase. SQLite over Postgres. `bun:sqlite` over a network
+driver. Embedded reads over a separate query service. Embedded
+bunqueue worker over a separate queue process. See
 [`single-image-distribution.md`](https://github.com/xray-eval/xray/blob/main/.claude/rules/single-image-distribution.md)
 before proposing any change that would break it.
 
 **Two SQLite files in `/data/`.** xray owns `xray.db` (conversations,
-replays, etc.). bunqueue owns `bunqueue.db` (jobs, DLQ). Acknowledged
-tradeoff vs the "one file" reading of the rule — single volume, two
-files, no second process. Operator backs up the whole `/data` volume.
-Path is configurable via `BUNQUEUE_DATA_PATH`.
+replays, and so on). bunqueue owns `bunqueue.db` (jobs, DLQ). This is an acknowledged
+tradeoff against the "one file" reading of the rule: single volume, two
+files, no second process. The operator backs up the whole `/data` volume.
+The path is configurable via `BUNQUEUE_DATA_PATH`.
