@@ -27,12 +27,11 @@ onMounted(() => {
       <button type="button" data-act="in" aria-label="Zoom in" title="Zoom in">+</button>
       <button type="button" data-act="close" aria-label="Close (Esc)" title="Close (Esc)">✕</button>
     </div>`;
-  document.body.appendChild(overlay);
-
   const stage = overlay.querySelector<HTMLElement>("[data-stage]");
   const canvas = overlay.querySelector<HTMLElement>("[data-canvas]");
   const bar = overlay.querySelector<HTMLElement>(".mz-bar");
   if (!stage || !canvas || !bar) return;
+  document.body.appendChild(overlay);
 
   let scale = 1;
   let tx = 0;
@@ -95,7 +94,7 @@ onMounted(() => {
     const svg = box?.querySelector("svg");
     if (svg) {
       e.preventDefault();
-      open(svg as unknown as SVGSVGElement);
+      open(svg);
     }
   };
   const onBarClick = (e: MouseEvent) => {

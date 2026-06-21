@@ -29,7 +29,7 @@ permissions: {}
 
 concurrency:
   group: docs-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false # never cancel an in-flight Pages deploy (mirrors publish.yml)
 
 jobs:
   build:

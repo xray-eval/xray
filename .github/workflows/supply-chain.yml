@@ -104,6 +104,18 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
         with:
           fail-on-severity: moderate
+          # Dev-only docs-toolchain advisories — the same "NOT AFFECTED"
+          # dispositions documented in pnpm-workspace.yaml's
+          # `auditConfig.ignoreGhsas`, mirrored here because
+          # dependency-review-action keeps its OWN allowlist and does not read
+          # pnpm's auditConfig. All five ride in via vitepress/vite/esbuild/
+          # mermaid (devDependencies, dropped by the prod image's `--prod`
+          # install) and the deployed docs are static HTML, so none has a
+          # production surface. See pnpm-workspace.yaml for the per-advisory
+          # rationale. Added 2026-06-21.
+          allow-ghsas: >-
+            GHSA-fx2h-pf6j-xcff, GHSA-4w7w-66w2-5vf9, GHSA-v6wh-96g9-6wx3,
+            GHSA-67mh-4wv8-2f99, GHSA-cmwh-pvxp-8882
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft
