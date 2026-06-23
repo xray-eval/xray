@@ -2,11 +2,12 @@
 # Replaces the old GitHub-managed Jekyll build (docs/_config.yml, removed).
 #
 # Deploy happens on a release tag (v*.*.*), mirroring publish.yml — docs are cut
-# alongside the Docker image. Pull requests that touch the docs get a build-only
-# check (no deploy) so a broken docs build can't merge. workflow_dispatch is a
-# deliberate escape hatch — re-publish (or first-publish, before the next tag)
-# without cutting a release; this is the documented reason for the trigger per
-# .claude/rules/supply-chain.md §2.
+# alongside the Docker image. workflow_dispatch is a deliberate escape hatch —
+# re-publish (or first-publish, before the next tag) without cutting a release;
+# this is the documented reason for the trigger per .claude/rules/supply-chain.md §2.
+#
+# The PR build-gate (compile-only, no deploy) lives in docs-check.yml — kept in a
+# separate file so this deploy job never shows up as a skipped check on PRs.
 #
 # One-time setup: repo Settings → Pages → Source = "GitHub Actions".
 # Local equivalent: `pnpm docs:build` (and `pnpm docs:dev` for a live preview).
@@ -17,12 +18,6 @@ on:
   push:
     tags:
       - "v*.*.*"
-  pull_request:
-    paths:
-      - "docs/**"
-      - ".github/workflows/docs.yml"
-      - "pnpm-lock.yaml"
-      - "package.json"
   workflow_dispatch:
 
 permissions: {}
@@ -77,14 +72,11 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      # Runs on every PR as a compile-only gate; on tag/dispatch it also feeds the
-      # artifact below. Base path (/xray/) is hardcoded in docs/.vitepress/config.mts.
+      # Base path (/xray/) is hardcoded in docs/.vitepress/config.mts.
       - name: Build docs
         run: pnpm docs:build
 
-      # Pages steps run only when we actually deploy (tag push or manual dispatch).
       - name: Upload Pages artifact
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: docs/.vitepress/dist
@@ -92,7 +84,6 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
