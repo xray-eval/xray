@@ -104,6 +104,18 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
         with:
           fail-on-severity: moderate
+          # Dev-only docs-toolchain advisories — the same "NOT AFFECTED"
+          # dispositions documented in pnpm-workspace.yaml's
+          # `auditConfig.ignoreGhsas`, mirrored here because
+          # dependency-review-action keeps its OWN allowlist and does not read
+          # pnpm's auditConfig. All five ride in via vitepress/vite/esbuild/
+          # mermaid (devDependencies, dropped by the prod image's `--prod`
+          # install) and the deployed docs are static HTML, so none has a
+          # production surface. See pnpm-workspace.yaml for the per-advisory
+          # rationale. Added 2026-06-21.
+          allow-ghsas: >-
+            GHSA-fx2h-pf6j-xcff, GHSA-4w7w-66w2-5vf9, GHSA-v6wh-96g9-6wx3,
+            GHSA-67mh-4wv8-2f99, GHSA-cmwh-pvxp-8882
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft
@@ -128,4 +140,13 @@ jobs:
             EUPL-1.0, EUPL-1.1, EUPL-1.2,
             CC-BY-SA-1.0, CC-BY-SA-2.0, CC-BY-SA-2.5,
             CC-BY-SA-3.0, CC-BY-SA-4.0
+          # dompurify is dual-licensed `MPL-2.0 OR Apache-2.0`; the deny-list
+          # above matches the MPL-2.0 term, but the OR lets us take it under
+          # permissive Apache-2.0, so no copyleft obligation attaches. It is also
+          # a dev-only docs dep (mermaid → dompurify), dropped by the prod image's
+          # `--prod` install and never inlined into the shipped SPA bundle — so
+          # the bundle source-availability concern the deny-list guards cannot
+          # arise here. Excluded from license checking by purl (version-agnostic,
+          # so the planned 3.4.11 bump doesn't reopen it). Added 2026-06-21.
+          allow-dependencies-licenses: pkg:npm/dompurify
           comment-summary-in-pr: on-failure

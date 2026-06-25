@@ -20,6 +20,9 @@
 		"dev:down": "docker compose -f compose.dev.yaml down -v",
 		"build": "bun run scripts/build.ts",
 		"start": "bun src/server/main.ts",
+		"docs:dev": "vitepress dev docs",
+		"docs:build": "vitepress build docs",
+		"docs:preview": "vitepress preview docs",
 		"docker:build": "docker build -t xray:local .",
 		"docker:run": "docker run --rm -p 8080:8080 --env-file .env xray:local",
 		"docker:smoke": "bash scripts/docker-smoke.sh",
@@ -41,8 +44,11 @@
 		"drizzle-kit": "0.31.10",
 		"happy-dom": "^20.9.0",
 		"lefthook": "^2.1.6",
+		"mermaid": "11.15.0",
 		"msw": "2.14.5",
-		"typescript": "^6.0.3"
+		"typescript": "^6.0.3",
+		"vitepress": "1.6.4",
+		"vitepress-plugin-mermaid": "2.0.17"
 	},
 	"dependencies": {
 		"@fontsource-variable/jetbrains-mono": "5.2.8",

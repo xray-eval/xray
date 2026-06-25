@@ -1,0 +1,274 @@
+/* xray docs — the palette mirrors the application itself (src/client/globals.css):
+   a monochrome, near-black "instrument console" with a white high-contrast primary
+   and semantic accents reserved for status. Same oklch tokens and variable fonts as
+   the app, so the docs and the product read as one surface. No invented hue. */
+
+/* ── Fonts (identical to the app's @theme) ───────────────────────────────── */
+:root {
+  --vp-font-family-base: "Onest Variable", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Helvetica, Arial, sans-serif;
+  --vp-font-family-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular,
+    "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* ── Light (app :root) ───────────────────────────────────────────────────── */
+:root {
+  --vp-c-bg: oklch(1 0 0);
+  --vp-c-bg-alt: oklch(0.985 0 0);
+  --vp-c-bg-soft: oklch(0.97 0 0);
+  --vp-c-bg-elv: oklch(1 0 0);
+
+  --vp-c-text-1: oklch(0.145 0 0);
+  --vp-c-text-2: oklch(0.45 0 0);
+  --vp-c-text-3: oklch(0.556 0 0);
+
+  --vp-c-divider: oklch(0 0 0 / 10%);
+  --vp-c-border: oklch(0.922 0 0);
+  --vp-c-gutter: oklch(0.97 0 0);
+
+  /* app --primary (near-black) is the one high-contrast interactive color */
+  --vp-c-brand-1: oklch(0.205 0 0);
+  --vp-c-brand-2: oklch(0.31 0 0);
+  --vp-c-brand-3: oklch(0.145 0 0);
+  --vp-c-brand-soft: oklch(0.145 0 0 / 10%);
+
+  --vp-button-brand-bg: oklch(0.205 0 0);
+  --vp-button-brand-hover-bg: oklch(0.31 0 0);
+  --vp-button-brand-active-bg: oklch(0.145 0 0);
+  --vp-button-brand-text: oklch(0.985 0 0);
+  --vp-button-brand-hover-text: oklch(0.985 0 0);
+  --vp-button-brand-active-text: oklch(0.985 0 0);
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-hover-border: transparent;
+
+  --vp-home-hero-name-color: oklch(0.205 0 0);
+}
+
+/* ── Dark (app .dark — the primary look) ─────────────────────────────────── */
+.dark {
+  --vp-c-bg: oklch(0.135 0 0);
+  --vp-c-bg-alt: oklch(0.185 0 0);
+  --vp-c-bg-soft: oklch(0.205 0 0);
+  --vp-c-bg-elv: oklch(0.205 0 0);
+
+  --vp-c-text-1: oklch(0.985 0 0);
+  --vp-c-text-2: oklch(0.68 0 0);
+  --vp-c-text-3: oklch(0.5 0 0);
+
+  --vp-c-divider: oklch(1 0 0 / 9%);
+  --vp-c-border: oklch(1 0 0 / 14%);
+  --vp-c-gutter: oklch(0.135 0 0);
+
+  /* app --primary dark is near-white; links are high-contrast + underlined */
+  --vp-c-brand-1: oklch(0.985 0 0);
+  --vp-c-brand-2: oklch(0.88 0 0);
+  --vp-c-brand-3: oklch(0.985 0 0);
+  --vp-c-brand-soft: oklch(1 0 0 / 12%);
+
+  --vp-button-brand-bg: oklch(0.985 0 0);
+  --vp-button-brand-hover-bg: oklch(0.9 0 0);
+  --vp-button-brand-active-bg: oklch(0.82 0 0);
+  --vp-button-brand-text: oklch(0.205 0 0);
+  --vp-button-brand-hover-text: oklch(0.205 0 0);
+  --vp-button-brand-active-text: oklch(0.205 0 0);
+
+  --vp-home-hero-name-color: oklch(0.985 0 0);
+}
+
+/* ── Hero wordmark — flat monochrome, monospace, tight (matches the app mark) */
+.VPHero .name {
+  font-family: var(--vp-font-family-mono);
+  letter-spacing: -0.04em;
+  font-weight: 700;
+}
+.VPHero .text {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.VPHero .tagline {
+  max-width: 58ch;
+}
+
+/* Atmosphere: a faint neutral instrument grid behind the hero — colorless, so it
+   never competes with the app's flat field. Home page only. */
+.VPHome {
+  position: relative;
+  overflow: hidden;
+}
+.VPHome::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 680px;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(56% 52% at 50% -10%, oklch(1 0 0 / 5%), transparent 72%),
+    linear-gradient(oklch(1 0 0 / 3.5%) 1px, transparent 1px) 0 0 / 100% 58px,
+    linear-gradient(90deg, oklch(1 0 0 / 3.5%) 1px, transparent 1px) 0 0 / 58px 100%;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+}
+:root:not(.dark) .VPHome::before {
+  background:
+    radial-gradient(56% 52% at 50% -10%, oklch(0 0 0 / 4%), transparent 72%),
+    linear-gradient(oklch(0 0 0 / 4%) 1px, transparent 1px) 0 0 / 100% 58px,
+    linear-gradient(90deg, oklch(0 0 0 / 4%) 1px, transparent 1px) 0 0 / 58px 100%;
+}
+.VPHome .VPHero,
+.VPHome .VPFeatures {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Feature cards — hairline that brightens to the primary on hover ─────── */
+.VPFeature {
+  border: 1px solid var(--vp-c-border);
+  border-radius: 10px; /* app --radius */
+  background: var(--vp-c-bg-soft);
+  transition:
+    border-color 0.22s ease,
+    transform 0.22s ease;
+}
+.VPFeature:hover {
+  border-color: var(--vp-c-text-2);
+  transform: translateY(-3px);
+}
+.VPFeature .title {
+  font-family: var(--vp-font-family-mono);
+  letter-spacing: -0.01em;
+}
+
+/* ── Nav wordmark ────────────────────────────────────────────────────────── */
+.VPNavBarTitle .title {
+  font-family: var(--vp-font-family-mono);
+  letter-spacing: -0.04em;
+  font-weight: 700;
+}
+
+/* ── Links — underline is the affordance in a monochrome system ──────────── */
+.vp-doc a {
+  text-decoration-line: underline;
+  text-decoration-color: var(--vp-c-brand-soft);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.2s ease;
+}
+.vp-doc a:hover {
+  text-decoration-color: var(--vp-c-brand-1);
+}
+
+/* ── Code — mono + a hairline panel in dark ──────────────────────────────── */
+.vp-doc code {
+  font-family: var(--vp-font-family-mono);
+}
+.dark .vp-doc div[class*="language-"] {
+  border: 1px solid var(--vp-c-border);
+}
+
+/* ── Mermaid — clickable overview inline, fullscreen zoom/pan viewer ─────── */
+/* Inline, the whole diagram fits the column (an overview). Click anywhere in the
+   panel to open the fullscreen viewer (Layout.vue), which zooms + pans. */
+.vp-doc .mermaid {
+  position: relative;
+  margin: 28px 0;
+  padding: 20px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  background: var(--vp-c-bg-alt);
+  cursor: zoom-in;
+}
+.vp-doc .mermaid svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}
+.vp-doc .mermaid::after {
+  content: "Click to zoom";
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 1;
+  padding: 5px 9px;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 999px;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-2);
+  font: 600 11px/1 var(--vp-font-family-mono);
+  letter-spacing: 0.02em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.vp-doc .mermaid:hover::after {
+  opacity: 1;
+}
+
+/* Fullscreen viewer (DOM built in Layout.vue). */
+html.mz-open {
+  overflow: hidden;
+}
+.mermaid-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: color-mix(in oklch, var(--vp-c-bg) 92%, transparent);
+  backdrop-filter: blur(3px);
+}
+.mermaid-zoom[hidden] {
+  display: none;
+}
+.mz-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+.mz-stage.mz-dragging {
+  cursor: grabbing;
+}
+.mz-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  background: var(--vp-c-bg-alt);
+  border-radius: 12px;
+  box-shadow: 0 24px 80px -24px rgba(0, 0, 0, 0.6);
+}
+.mz-canvas svg {
+  display: block;
+}
+.mz-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 12px;
+  background: var(--vp-c-bg-soft);
+  box-shadow: 0 12px 40px -12px rgba(0, 0, 0, 0.5);
+}
+.mz-bar button {
+  min-width: 42px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--vp-c-text-1);
+  font: 600 15px/1 var(--vp-font-family-mono);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.mz-bar button:hover {
+  background: var(--vp-c-bg-alt);
+  border-color: var(--vp-c-border);
+}

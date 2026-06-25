@@ -26,6 +26,8 @@ Coarse on purpose (directory / file → doc), so it survives refactors that a li
 | `src/server/env/env.ts` (`XRAY_*` env vars + defaults)      | `docs/sdk-python.md`, `docs/architecture.md`, `README.md`, `CONTRIBUTING.md` |
 | Control-plane routes (`src/server/**/<slice>.router.ts`)    | `docs/architecture.md` (control-plane list). The OpenAPI at `/docs` self-syncs from `describeRoute` — only the *narrative* needs a human. |
 
+> **The public docs site.** `docs/*.md` are the source for the site at https://xray-eval.github.io/xray/ — built by VitePress (`docs/.vitepress/config.mts`, `base: '/xray/'`) and deployed by `.github/workflows/docs.yml` on a release tag. They render on GitHub too, so keep them **plain markdown** (no MDX / Vue components) and keep in-docs links relative (`./other-page.md`).
+
 ## 3 · Honesty bar (cross-link)
 
 A doc must not claim more than the code guarantees — see [`honesty.md`](./honesty.md). "The SDK synthesizes TTS" when TTS moved server-side, or "X is supported" when the code does less, is an honesty failure, not a typo. The `/audit-docs` method is built on this: every doc claim is verified *against source*, and an unverifiable claim is removed or softened, never left to look authoritative.
