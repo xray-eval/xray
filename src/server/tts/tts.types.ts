@@ -29,7 +29,15 @@ export interface TtsProvider {
 	readonly name: string;
 	/** Stable model id folded into the synth-cache fingerprint. */
 	readonly model: string;
-	/** Voice used when neither the turn nor XRAY_TTS_VOICE picks one. */
-	readonly defaultVoice: string;
+	/**
+	 * Voice used when neither the turn's `voice_id` nor `XRAY_TTS_VOICE`
+	 * picks one. `language` is the turn's declared tag (`de`, `en_us`) —
+	 * providers with language-specific voices (Mistral) pick a matching one
+	 * (which may require a catalog request, hence async + Promise); providers
+	 * with multilingual voices ignore it. Throws
+	 * `NoTtsVoiceForLanguageError` when the language has no voice at all —
+	 * a silently mispronouncing fallback voice would be worse than the 4xx.
+	 */
+	resolveDefaultVoice(language?: string): Promise<string>;
 	synthesize(input: TtsRequest): Promise<TtsResult>;
 }

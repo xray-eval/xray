@@ -122,11 +122,11 @@ describe("buildTranscriptionProvider", () => {
 });
 
 describe("buildTtsProvider", () => {
-	it("builds the OpenAI TTS provider when only OPENAI_API_KEY is set", () => {
+	it("builds the OpenAI TTS provider when only OPENAI_API_KEY is set", async () => {
 		const p = buildTtsProvider(makeEnv({ OPENAI_API_KEY: "sk-x" }));
 		expect(p.name).toBe("openai");
 		expect(p.model).toBe("gpt-4o-mini-tts");
-		expect(p.defaultVoice).toBe("alloy");
+		expect(await p.resolveDefaultVoice()).toBe("alloy");
 	});
 
 	it("builds the Gemini TTS provider when only GOOGLE_API_KEY is set", () => {
@@ -135,11 +135,11 @@ describe("buildTtsProvider", () => {
 		expect(p.model).toBe("gemini-2.5-flash-preview-tts");
 	});
 
-	it("builds the Mistral TTS provider when only MISTRAL_API_KEY is set", () => {
+	it("builds the Mistral TTS provider when only MISTRAL_API_KEY is set", async () => {
 		const p = buildTtsProvider(makeEnv({ MISTRAL_API_KEY: "mk-x" }));
 		expect(p.name).toBe("mistral");
 		expect(p.model).toBe("voxtral-mini-tts-2603");
-		expect(p.defaultVoice).toBe("en_paul_neutral");
+		expect(await p.resolveDefaultVoice()).toBe("en_paul_neutral");
 	});
 
 	it("honors the explicit selector over key inference", () => {

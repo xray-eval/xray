@@ -69,7 +69,11 @@ export function createGoogleGeminiTtsProvider(opts: GoogleGeminiTtsOptions): Tts
 	return {
 		name: "google-gemini",
 		model,
-		defaultVoice: DEFAULT_VOICE,
+		// Gemini voices are multilingual — the turn language never changes
+		// the pick.
+		async resolveDefaultVoice(): Promise<string> {
+			return DEFAULT_VOICE;
+		},
 		async synthesize(input: TtsRequest): Promise<TtsResult> {
 			const key = opts.apiKey();
 			if (key === undefined || key.length === 0) {

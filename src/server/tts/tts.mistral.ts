@@ -46,7 +46,12 @@ export function createMistralTtsProvider(opts: MistralTtsOptions): TtsProvider {
 	return {
 		name: "mistral",
 		model,
-		defaultVoice: DEFAULT_VOICE,
+		// Static for now: Mistral's built-in presets are en/en_gb/fr only, and
+		// language-aware selection over the org's voice catalog lands with the
+		// provider-lineup change.
+		async resolveDefaultVoice(): Promise<string> {
+			return DEFAULT_VOICE;
+		},
 		async synthesize(input: TtsRequest): Promise<TtsResult> {
 			const key = opts.apiKey();
 			if (key === undefined || key.length === 0) {

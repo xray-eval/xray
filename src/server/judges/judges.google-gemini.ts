@@ -1,11 +1,10 @@
-import * as v from "valibot";
-
 import type { FetchLike } from "@/server/core/fetch.ts";
 import { extractGeminiText } from "@/server/core/gemini.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
-import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
+import { parseJudgeContent } from "./judges.content.ts";
+import { JudgeProviderError } from "./judges.errors.ts";
 import type { JudgeProvider, JudgeProviderResponse } from "./judges.types.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -15,11 +14,6 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // default, deliberately: stronger verdict reasoning.
 const DEFAULT_MODEL = "gemini-3.5-flash";
 const DEFAULT_TIMEOUT_MS = 60_000;
-
-const JudgeContentSchema = v.object({
-	score: v.number(),
-	reason: v.string(),
-});
 
 export interface GoogleGeminiJudgeOptions {
 	readonly apiKey: () => string | undefined;
@@ -112,39 +106,7 @@ export function createGoogleGeminiJudgeProvider(opts: GoogleGeminiJudgeOptions):
 				raw,
 				(message) => new JudgeProviderError("google-gemini", message),
 			);
-			return parseJudgeContent(content);
+			return parseJudgeContent("google-gemini", content);
 		},
 	};
-}
-
-function parseJudgeContent(content: string): JudgeProviderResponse {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(content);
-	} catch (cause) {
-		throw new JudgeOutputParseError("google-gemini", content, "content was not valid JSON", {
-			cause,
-		});
-	}
-	const result = v.safeParse(JudgeContentSchema, parsed);
-	if (!result.success) {
-		throw new JudgeOutputParseError(
-			"google-gemini",
-			content,
-			`content failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
-		);
-	}
-	const score = result.output.score;
-	if (!Number.isFinite(score)) {
-		throw new JudgeOutputParseError("google-gemini", content, "score was not a finite number");
-	}
-	const intScore = Math.round(score);
-	if (intScore < 0 || intScore > 100) {
-		throw new JudgeOutputParseError(
-			"google-gemini",
-			content,
-			`score ${intScore} outside the 0..100 range`,
-		);
-	}
-	return { score: intScore, reason: result.output.reason };
 }

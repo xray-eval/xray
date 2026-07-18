@@ -51,11 +51,13 @@ describe("createGoogleGeminiTtsProvider", () => {
 		expect([...result.pcm]).toEqual([0, 250, -250]);
 	});
 
-	it("exposes name, default model, and default voice", () => {
+	it("exposes name, default model, and default voice", async () => {
 		const provider = createGoogleGeminiTtsProvider({ apiKey: () => "k", fetchImpl: fetch });
 		expect(provider.name).toBe("google-gemini");
 		expect(provider.model).toBe("gemini-2.5-flash-preview-tts");
-		expect(provider.defaultVoice).toBe("Kore");
+		expect(await provider.resolveDefaultVoice()).toBe("Kore");
+		// Gemini voices are multilingual — language never changes the pick.
+		expect(await provider.resolveDefaultVoice("de")).toBe("Kore");
 	});
 
 	it("throws MissingProviderCredentialError naming GOOGLE_API_KEY when the key is absent", async () => {

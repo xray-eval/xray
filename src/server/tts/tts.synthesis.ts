@@ -14,6 +14,10 @@ export interface TurnSynthesisInput {
 	readonly text: string;
 	/** Explicit per-turn voice from the spec. Wins over `voiceOverride`. */
 	readonly voiceId?: string;
+	/** Declared language of the turn (`de`, `en_us`). Only consulted when
+	 *  neither `voiceId` nor `voiceOverride` picks a voice — it steers the
+	 *  provider's default-voice resolution, nothing else. */
+	readonly language?: string;
 }
 
 /** Synthesize one tts turn (or return its cached result): resolves the
@@ -52,14 +56,19 @@ export interface TurnSynthesizerDeps {
 export function createTurnSynthesizer(deps: TurnSynthesizerDeps): TurnSynthesizer {
 	const inFlight = new Map<string, Promise<{ sha256: string }>>();
 	return (input, signal) => {
-		const voice = input.voiceId ?? deps.voiceOverride ?? deps.provider.defaultVoice;
-		const fingerprintInput = JSON.stringify([
-			deps.provider.name,
-			deps.provider.model,
-			voice,
-			input.text,
-		]);
 		const job = (async () => {
+			// Resolving the default may hit the provider's voice catalog, so it
+			// only runs when neither the turn nor the operator picked a voice.
+			const voice =
+				input.voiceId ??
+				deps.voiceOverride ??
+				(await deps.provider.resolveDefaultVoice(input.language));
+			const fingerprintInput = JSON.stringify([
+				deps.provider.name,
+				deps.provider.model,
+				voice,
+				input.text,
+			]);
 			const fingerprint = await sha256Hex(new TextEncoder().encode(fingerprintInput));
 			const existing = inFlight.get(fingerprint);
 			if (existing !== undefined) return existing;

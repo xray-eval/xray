@@ -38,10 +38,19 @@ export const ConversationNameSchema = v.pipe(
 
 const TurnRoleSchema = v.picklist(["user", "agent"]);
 
+// Lowercase language tag, primary subtag + optional region (`de`, `en_us`) —
+// matches the tag format of Mistral's voice catalog. TTS providers with
+// language-specific voices use it to pick a default voice for the turn.
+const TurnLanguageSchema = v.pipe(
+	v.string(),
+	v.regex(/^[a-z]{2,3}(_[a-z]{2})?$/, 'Must be a lowercase language tag like "de" or "en_us"'),
+);
+
 /** Request form: the SDK declares "synthesize this turn server-side". */
 const TtsAudioUploadSchema = v.object({
 	kind: v.literal("tts"),
 	voice_id: v.optional(v.pipe(v.string(), v.maxLength(MAX_AUDIO_VOICE_ID))),
+	language: v.optional(TurnLanguageSchema),
 });
 
 // ─── Request-form schemas (what the SDK POSTs in the `spec` part) ─────
@@ -134,6 +143,7 @@ const TtsAudioRefSchema = v.object({
 	kind: v.literal("tts"),
 	sha256: ConversationHashSchema,
 	voice_id: v.optional(v.pipe(v.string(), v.maxLength(MAX_AUDIO_VOICE_ID))),
+	language: v.optional(TurnLanguageSchema),
 });
 
 const TurnAudioRefSchema = v.variant("kind", [RecordedAudioRefSchema, TtsAudioRefSchema]);

@@ -9,10 +9,15 @@ export interface FakeTtsProviderOptions {
 	/** Per-call PCM override — vary output across calls to simulate
 	 *  non-deterministic synthesis. */
 	readonly pcmFor?: (call: { text: string; voice: string; callIndex: number }) => Int16Array;
+	/** Voice returned by resolveDefaultVoice (default "fake-voice");
+	 *  receives the language so tests can assert language-aware picks. */
+	readonly defaultVoiceFor?: (language?: string) => string;
 }
 
 export interface FakeTtsProvider extends TtsProvider {
 	readonly calls: ReadonlyArray<{ text: string; voice: string }>;
+	/** Languages passed to resolveDefaultVoice, in call order. */
+	readonly resolveCalls: ReadonlyArray<string | undefined>;
 }
 
 /**
@@ -22,12 +27,19 @@ export interface FakeTtsProvider extends TtsProvider {
  */
 export function makeFakeTtsProvider(opts: FakeTtsProviderOptions = {}): FakeTtsProvider {
 	const calls: { text: string; voice: string }[] = [];
+	const resolveCalls: (string | undefined)[] = [];
 	return {
 		name: "fake-tts",
 		model: "fake-tts-1",
-		defaultVoice: "fake-voice",
 		get calls() {
 			return calls;
+		},
+		get resolveCalls() {
+			return resolveCalls;
+		},
+		async resolveDefaultVoice(language?: string): Promise<string> {
+			resolveCalls.push(language);
+			return opts.defaultVoiceFor?.(language) ?? "fake-voice";
 		},
 		async synthesize(input): Promise<TtsResult> {
 			const callIndex = calls.length;

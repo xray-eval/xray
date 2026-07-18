@@ -1,3 +1,5 @@
+import * as v from "valibot";
+
 import type { Judge } from "@/server/judges/judges.types.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
@@ -14,20 +16,25 @@ import {
 } from "./conversations.service.ts";
 import { makeTurns } from "./conversations.test-utils.ts";
 import type { ConversationTurn } from "./conversations.types.ts";
+import { CreateConversationRequestSchema } from "./conversations.types.ts";
 import { describe, expect, it } from "bun:test";
 
 /** Deterministic stand-in for the tts synthesizer: sha derived from the
  *  call inputs so tests can assert which (text, voice) was synthesized. */
 function fakeSynthesizer(): {
-	synthesize: (input: { text: string; voiceId?: string }) => Promise<{ sha256: string }>;
-	calls: { text: string; voiceId?: string }[];
+	synthesize: (input: {
+		text: string;
+		voiceId?: string;
+		language?: string;
+	}) => Promise<{ sha256: string }>;
+	calls: { text: string; voiceId?: string; language?: string }[];
 } {
-	const calls: { text: string; voiceId?: string }[] = [];
+	const calls: { text: string; voiceId?: string; language?: string }[] = [];
 	return {
 		calls,
 		async synthesize(input) {
 			calls.push(input);
-			const tag = `${input.text}|${input.voiceId ?? ""}`;
+			const tag = `${input.text}|${input.voiceId ?? ""}|${input.language ?? ""}`;
 			const hex = [...new TextEncoder().encode(tag)]
 				.map((b) => b.toString(16).padStart(2, "0"))
 				.join("");
@@ -429,7 +436,7 @@ describe("materializeRequestTurns", () => {
 		expect(canonicalTurns[1]?.audio).toBeUndefined();
 	});
 
-	it("omits voice_id from the canonical tts ref when the spec didn't set one", async () => {
+	it("omits voice_id and language from the canonical tts ref when the spec didn't set them", async () => {
 		const synth = fakeSynthesizer();
 		const { canonicalTurns } = await materializeRequestTurns(
 			[{ role: "user", text: "hi", audio: { kind: "tts" }, assertions: [] }],
@@ -440,6 +447,35 @@ describe("materializeRequestTurns", () => {
 		const audio = canonicalTurns[0]?.audio;
 		if (audio?.kind !== "tts") throw new Error("expected tts audio");
 		expect("voice_id" in audio).toBe(false);
+		expect("language" in audio).toBe(false);
+	});
+
+	it("forwards the turn language to the synthesizer and keeps it on the canonical tts ref", async () => {
+		const synth = fakeSynthesizer();
+		const { canonicalTurns } = await materializeRequestTurns(
+			[
+				{
+					role: "user",
+					text: "guten tag",
+					audio: { kind: "tts", language: "de" },
+					assertions: [],
+				},
+			],
+			new Map(),
+			synth.synthesize,
+		);
+		expect(synth.calls).toEqual([{ text: "guten tag", language: "de" }]);
+		const audio = canonicalTurns[0]?.audio;
+		if (audio?.kind !== "tts") throw new Error("expected tts audio");
+		expect(audio.language).toBe("de");
+	});
+
+	it("rejects a malformed turn language at the request schema", () => {
+		const result = v.safeParse(CreateConversationRequestSchema, {
+			name: "t",
+			turns: [{ role: "user", text: "x", audio: { kind: "tts", language: "German" } }],
+		});
+		expect(result.success).toBe(false);
 	});
 
 	it("throws TtsTurnMissingTextError for a tts turn without text", async () => {
