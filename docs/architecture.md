@@ -321,7 +321,7 @@ sequenceDiagram
     W->>W: compute agent_response_ms<br/>+ interrupted per turn
     W->>X: insert replay_metrics<br/>analysis_step='evaluate'<br/>enqueue evaluate-replay
     X->>W: bunqueue enqueue evaluate-replay
-    W->>W: run each declared Assertion<br/>(pure ts-pattern dispatch)<br/>+ each declared Judge<br/>(LLM via configured provider:<br/>OpenAI / Google Gemini / Mistral)
+    W->>W: run each declared Assertion<br/>(pure ts-pattern dispatch)<br/>+ each declared Judge<br/>(LLM via configured provider:<br/>OpenAI / Google Gemini / Mistral / AWS Bedrock)
     W->>X: insert assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed'
     X-->>D: SSE 'evaluation_complete' event<br/>(full ReplayResult payload)
 ```

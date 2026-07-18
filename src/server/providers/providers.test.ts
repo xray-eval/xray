@@ -97,7 +97,7 @@ describe("buildTranscriptionProvider", () => {
 	it("builds the Voxtral provider when only MISTRAL_API_KEY is set", () => {
 		const p = buildTranscriptionProvider(makeEnv({ MISTRAL_API_KEY: "mk-x" }));
 		expect(p.name).toBe("mistral-voxtral");
-		expect(p.model).toBe("voxtral-mini-2602");
+		expect(p.model).toBe("voxtral-small-2507");
 	});
 
 	it("honors the explicit selector over key inference", () => {
@@ -112,6 +112,37 @@ describe("buildTranscriptionProvider", () => {
 			makeEnv({ MISTRAL_API_KEY: "mk-x", XRAY_TRANSCRIPTION_MODEL: "voxtral-small-2507" }),
 		);
 		expect(p.model).toBe("voxtral-small-2507");
+	});
+
+	it("ignores AWS_BEARER_TOKEN_BEDROCK (judge-only) and falls back to Whisper", () => {
+		const p = buildTranscriptionProvider(makeEnv({ AWS_BEARER_TOKEN_BEDROCK: "bk-x" }));
+		expect(p.name).toBe("openai-whisper");
+	});
+
+	it("builds the Deepgram provider when only DEEPGRAM_API_KEY is set", () => {
+		const p = buildTranscriptionProvider(makeEnv({ DEEPGRAM_API_KEY: "dg-x" }));
+		expect(p.name).toBe("deepgram-nova");
+		expect(p.model).toBe("nova-3");
+	});
+
+	it("honors the explicit deepgram-nova selector over key inference", () => {
+		const p = buildTranscriptionProvider(
+			makeEnv({ OPENAI_API_KEY: "sk-x", XRAY_TRANSCRIPTION_PROVIDER: "deepgram-nova" }),
+		);
+		expect(p.name).toBe("deepgram-nova");
+	});
+
+	it("applies XRAY_TRANSCRIPTION_MODEL as the Deepgram model override", () => {
+		const p = buildTranscriptionProvider(
+			makeEnv({ DEEPGRAM_API_KEY: "dg-x", XRAY_TRANSCRIPTION_MODEL: "nova-2" }),
+		);
+		expect(p.model).toBe("nova-2");
+	});
+
+	it("throws when the Deepgram key and another key are set with no selector", () => {
+		expect(() =>
+			buildTranscriptionProvider(makeEnv({ OPENAI_API_KEY: "sk-x", DEEPGRAM_API_KEY: "dg-x" })),
+		).toThrow(AmbiguousProviderConfigError);
 	});
 
 	it("throws when two keys are set and no selector is given", () => {
@@ -157,6 +188,29 @@ describe("buildTtsProvider", () => {
 			buildTtsProvider(makeEnv({ OPENAI_API_KEY: "sk-x", GOOGLE_API_KEY: "AIza-x" })),
 		).toThrow(AmbiguousProviderConfigError);
 	});
+
+	it("ignores AWS_BEARER_TOKEN_BEDROCK (no Bedrock TTS) and falls back to OpenAI", () => {
+		const p = buildTtsProvider(makeEnv({ AWS_BEARER_TOKEN_BEDROCK: "bk-x" }));
+		expect(p.name).toBe("openai");
+	});
+
+	it("builds the Deepgram TTS provider when only DEEPGRAM_API_KEY is set", async () => {
+		const p = buildTtsProvider(makeEnv({ DEEPGRAM_API_KEY: "dg-x" }));
+		expect(p.name).toBe("deepgram");
+		expect(p.model).toBe("aura-2");
+		expect(await p.resolveDefaultVoice()).toBe("aura-2-thalia-en");
+	});
+
+	it("honors the explicit deepgram TTS selector over key inference", () => {
+		const p = buildTtsProvider(makeEnv({ OPENAI_API_KEY: "sk-x", XRAY_TTS_PROVIDER: "deepgram" }));
+		expect(p.name).toBe("deepgram");
+	});
+
+	it("throws when the Deepgram key and another key are set with no TTS selector", () => {
+		expect(() =>
+			buildTtsProvider(makeEnv({ MISTRAL_API_KEY: "mk-x", DEEPGRAM_API_KEY: "dg-x" })),
+		).toThrow(AmbiguousProviderConfigError);
+	});
 });
 
 describe("buildJudgeProvider", () => {
@@ -195,6 +249,32 @@ describe("buildJudgeProvider", () => {
 	it("throws when two keys are set and no selector is given", () => {
 		expect(() =>
 			buildJudgeProvider(makeEnv({ GOOGLE_API_KEY: "AIza-x", MISTRAL_API_KEY: "mk-x" })),
+		).toThrow(AmbiguousProviderConfigError);
+	});
+
+	it("builds the Bedrock judge when only AWS_BEARER_TOKEN_BEDROCK is set", () => {
+		const p = buildJudgeProvider(makeEnv({ AWS_BEARER_TOKEN_BEDROCK: "bk-x" }));
+		expect(p.name).toBe("bedrock");
+		expect(p.model).toBe("global.anthropic.claude-opus-4-8");
+	});
+
+	it("honors the explicit bedrock selector over key inference", () => {
+		const p = buildJudgeProvider(
+			makeEnv({ OPENAI_API_KEY: "sk-x", XRAY_JUDGE_PROVIDER: "bedrock" }),
+		);
+		expect(p.name).toBe("bedrock");
+	});
+
+	it("applies XRAY_JUDGE_MODEL as the Bedrock model override", () => {
+		const p = buildJudgeProvider(
+			makeEnv({ AWS_BEARER_TOKEN_BEDROCK: "bk-x", XRAY_JUDGE_MODEL: "us.amazon.nova-2-pro-v1:0" }),
+		);
+		expect(p.model).toBe("us.amazon.nova-2-pro-v1:0");
+	});
+
+	it("throws when the Bedrock token and another key are set with no selector", () => {
+		expect(() =>
+			buildJudgeProvider(makeEnv({ MISTRAL_API_KEY: "mk-x", AWS_BEARER_TOKEN_BEDROCK: "bk-x" })),
 		).toThrow(AmbiguousProviderConfigError);
 	});
 });

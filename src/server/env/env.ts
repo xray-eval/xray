@@ -32,28 +32,43 @@ const EnvSchema = v.object({
 	OPENAI_API_KEY: v.optional(v.pipe(v.string(), v.nonEmpty())),
 	GOOGLE_API_KEY: v.optional(v.pipe(v.string(), v.nonEmpty())),
 	MISTRAL_API_KEY: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// Deepgram covers transcription (Nova) and TTS (Aura) — no judge (there
+	// is no judge-capable LLM behind this key).
+	DEEPGRAM_API_KEY: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// Bedrock API key (bearer auth against bedrock-runtime — no SigV4, no
+	// AWS SDK). The standard AWS-documented variable name, kept as-is so
+	// operators can reuse a key they already export for other tooling.
+	// Judge-only: Bedrock has no request/response TTS model and its only
+	// audio-input chat models lag the providers we already ship.
+	AWS_BEARER_TOKEN_BEDROCK: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// Region of the bedrock-runtime endpoint the Bedrock judge calls.
+	// Defaults to us-east-1 inside the provider when unset.
+	XRAY_BEDROCK_REGION: v.optional(v.pipe(v.string(), v.nonEmpty())),
 	// Selectors per stage. When unset, main.ts infers from which key is
 	// present (exactly one provider key set → that provider, errors at boot
 	// when several are set + selector unset — explicit beats ambiguous
 	// default).
 	XRAY_TRANSCRIPTION_PROVIDER: v.optional(
-		v.picklist(["openai-whisper", "google-gemini", "mistral-voxtral"]),
+		v.picklist(["openai-whisper", "google-gemini", "mistral-voxtral", "deepgram-nova"]),
 	),
-	XRAY_JUDGE_PROVIDER: v.optional(v.picklist(["openai", "google-gemini", "mistral"])),
+	XRAY_JUDGE_PROVIDER: v.optional(v.picklist(["openai", "google-gemini", "mistral", "bedrock"])),
 	// TTS runs during POST /v1/conversations (user-turn audio synthesis),
 	// not in the analyze chain — but the selector follows the same pattern.
-	XRAY_TTS_PROVIDER: v.optional(v.picklist(["openai", "google-gemini", "mistral"])),
+	XRAY_TTS_PROVIDER: v.optional(v.picklist(["openai", "google-gemini", "mistral", "deepgram"])),
 	// Override the transcription model. Defaults to whisper-1 (OpenAI),
-	// gemini-2.5-flash (Google), or voxtral-mini-2602 (Mistral) inside the
-	// respective provider when unset.
+	// gemini-2.5-flash (Google), voxtral-small-2507 (Mistral), or nova-3
+	// (Deepgram) inside the respective provider when unset.
 	XRAY_TRANSCRIPTION_MODEL: v.optional(v.pipe(v.string(), v.nonEmpty())),
 	// Override the judge LLM model. Defaults to gpt-4o-2024-08-06 (OpenAI),
-	// gemini-3.5-flash (Google), or mistral-medium-2604 (Mistral) inside the
-	// respective provider when unset.
+	// gemini-3.5-flash (Google), mistral-medium-2604 (Mistral), or
+	// global.anthropic.claude-opus-4-8 (Bedrock) inside the respective
+	// provider when unset.
 	XRAY_JUDGE_MODEL: v.optional(v.pipe(v.string(), v.nonEmpty())),
 	// Override the TTS model. Defaults to gpt-4o-mini-tts (OpenAI),
-	// gemini-2.5-flash-preview-tts (Google), or voxtral-mini-tts-2603
-	// (Mistral) inside the respective provider when unset.
+	// gemini-2.5-flash-preview-tts (Google), voxtral-mini-tts-2603
+	// (Mistral), or the aura-2 voice family (Deepgram — voice ids fold the
+	// family in, so this override is the family prefix there) inside the
+	// respective provider when unset.
 	XRAY_TTS_MODEL: v.optional(v.pipe(v.string(), v.nonEmpty())),
 	// Default voice for synthesized user turns. A turn's explicit `voice_id`
 	// wins over this; this wins over the provider's built-in default.
