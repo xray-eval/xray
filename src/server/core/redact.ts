@@ -8,7 +8,12 @@
  * Patterns covered:
  *   - OpenAI: `sk-...` (project keys `sk-proj-...` + classic)
  *   - Google: `AIza...` (39+ chars, the common Google API key prefix)
+ *   - Bedrock: `ABSK...` (long-term Bedrock API keys; 20+ chars to avoid
+ *     false positives on unrelated ABSK-prefixed words)
  */
 export function redactProviderSecrets(text: string): string {
-	return text.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***").replace(/AIza[A-Za-z0-9_-]{35,}/g, "AIza***");
+	return text
+		.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***")
+		.replace(/AIza[A-Za-z0-9_-]{35,}/g, "AIza***")
+		.replace(/ABSK[A-Za-z0-9+/=_-]{20,}/g, "ABSK***");
 }

@@ -21,6 +21,16 @@ describe("redactProviderSecrets", () => {
 		expect(redactProviderSecrets(input)).toBe("openai sk-*** google AIza***");
 	});
 
+	it("redacts Bedrock ABSK bearer keys", () => {
+		expect(
+			redactProviderSecrets("key ABSKQmVkcm9ja0FQSUtleTEyMzQ1Njc4OTAxMjM0NTY3ODkw rejected"),
+		).toBe("key ABSK*** rejected");
+	});
+
+	it("does not redact short ABSK-prefixed substrings", () => {
+		expect(redactProviderSecrets("ABSKshort")).toBe("ABSKshort");
+	});
+
 	it("leaves strings without keys unchanged", () => {
 		expect(redactProviderSecrets("no keys here")).toBe("no keys here");
 	});

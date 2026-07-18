@@ -1,3 +1,5 @@
+import * as v from "valibot";
+
 import { makeFetch } from "@/server/core/test-utils.ts";
 
 import {
@@ -7,148 +9,138 @@ import {
 import { createMistralVoxtralProvider } from "./transcription.mistral-voxtral.ts";
 import { describe, expect, it } from "bun:test";
 
-function voxtralResponse(body: unknown): Response {
-	return new Response(JSON.stringify(body), {
+const ChatBodySchema = v.object({
+	model: v.optional(v.string()),
+	temperature: v.optional(v.number()),
+	response_format: v.optional(v.object({ type: v.optional(v.string()) })),
+	messages: v.optional(
+		v.array(
+			v.object({
+				role: v.string(),
+				content: v.union([
+					v.string(),
+					v.array(
+						v.object({
+							type: v.string(),
+							text: v.optional(v.string()),
+							input_audio: v.optional(v.object({ data: v.string(), format: v.string() })),
+						}),
+					),
+				]),
+			}),
+		),
+	),
+});
+type ChatBody = v.InferOutput<typeof ChatBodySchema>;
+
+function asChatBody(value: unknown): ChatBody | null {
+	const result = v.safeParse(ChatBodySchema, value);
+	return result.success ? result.output : null;
+}
+
+function chatResponse(content: string): Response {
+	return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content } }] }), {
 		status: 200,
 		headers: { "content-type": "application/json" },
 	});
 }
 
 describe("createMistralVoxtralProvider", () => {
-	it("posts a multipart request to /v1/audio/transcriptions with the pinned model + word timestamps", async () => {
-		const observed: {
-			url: string;
-			auth: string;
-			model: string;
-			granularity: string | null;
-			language: string | null;
-		} = { url: "", auth: "", model: "", granularity: null, language: null };
+	it("posts to chat completions with the pinned voxtral-small model, json mode, temperature 0, and a wav input_audio block", async () => {
+		let observedUrl = "";
+		let observedAuth = "";
+		let observedBody: ChatBody = {};
 		const fetchImpl = makeFetch(({ url, headers, body }) => {
-			observed.url = url;
-			observed.auth = headers.get("authorization") ?? "";
-			if (body instanceof FormData) {
-				observed.model = String(body.get("model") ?? "");
-				const granularity = body.get("timestamp_granularities[]");
-				observed.granularity = typeof granularity === "string" ? granularity : null;
-				const lang = body.get("language");
-				observed.language = typeof lang === "string" ? lang : null;
-			}
-			return voxtralResponse({
-				model: "voxtral-mini-2602",
-				text: "hi",
-				language: null,
-				segments: [],
-			});
+			observedUrl = url;
+			observedAuth = headers.get("authorization") ?? "";
+			const parsed = asChatBody(body);
+			if (parsed !== null) observedBody = parsed;
+			return chatResponse(JSON.stringify({ text: "hello world", language: "en" }));
 		});
 		const provider = createMistralVoxtralProvider({ apiKey: () => "mk-test", fetchImpl });
 		await provider.transcribe({
 			audio: new Int16Array([0, 1, 2, 3, 4, 5, 6, 7]),
 			sampleRate: 16_000,
 		});
-		expect(observed.url).toBe("https://api.mistral.ai/v1/audio/transcriptions");
-		expect(observed.auth).toBe("Bearer mk-test");
-		// Pinned dated snapshot, not the floating `voxtral-mini-latest` alias.
-		expect(observed.model).toBe("voxtral-mini-2602");
-		expect(observed.granularity).toBe("word");
-		expect(observed.language).toBeNull();
+		expect(observedUrl).toBe("https://api.mistral.ai/v1/chat/completions");
+		expect(observedAuth).toBe("Bearer mk-test");
+		expect(observedBody.model).toBe("voxtral-small-2507");
+		expect(observedBody.temperature).toBe(0);
+		expect(observedBody.response_format?.type).toBe("json_object");
+		const userMessage = observedBody.messages?.find((m) => m.role === "user");
+		if (userMessage === undefined || typeof userMessage.content === "string") {
+			throw new Error("expected a content-block user message");
+		}
+		const audioBlock = userMessage.content.find((b) => b.type === "input_audio")?.input_audio;
+		if (audioBlock === undefined) throw new Error("expected an input_audio block");
+		expect(audioBlock.format).toBe("wav");
+		expect(audioBlock.data.length).toBeGreaterThan(0);
 	});
 
-	it("sends the language hint and omits timestamp granularities when a language is given", async () => {
-		const observed: { granularity: string | null; language: string | null } = {
-			granularity: null,
-			language: null,
-		};
+	it("respects an explicit model override", async () => {
+		let observedBody: ChatBody = {};
 		const fetchImpl = makeFetch(({ body }) => {
-			if (body instanceof FormData) {
-				const granularity = body.get("timestamp_granularities[]");
-				observed.granularity = typeof granularity === "string" ? granularity : null;
-				const lang = body.get("language");
-				observed.language = typeof lang === "string" ? lang : null;
-			}
-			return voxtralResponse({
-				model: "voxtral-mini-2602",
-				text: "x",
-				language: "en",
-				segments: [],
-			});
+			const parsed = asChatBody(body);
+			if (parsed !== null) observedBody = parsed;
+			return chatResponse(JSON.stringify({ text: "x" }));
+		});
+		const provider = createMistralVoxtralProvider({
+			apiKey: () => "mk",
+			model: "voxtral-small-9999",
+			fetchImpl,
+		});
+		expect(provider.model).toBe("voxtral-small-9999");
+		await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 });
+		expect(observedBody.model).toBe("voxtral-small-9999");
+	});
+
+	it("parses model JSON into TranscriptionResult and computes durationMs locally", async () => {
+		const fetchImpl = makeFetch(() =>
+			chatResponse(JSON.stringify({ text: "hi there", language: "de" })),
+		);
+		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
+		const result = await provider.transcribe({
+			// 1600 samples @ 16kHz = 100ms
+			audio: new Int16Array(1600),
+			sampleRate: 16_000,
+		});
+		expect(result.text).toBe("hi there");
+		expect(result.language).toBe("de");
+		expect(result.durationMs).toBe(100);
+		// Chat-audio transcription has no signal-aligned word timings
+		// (capability gap vs. Whisper; words_json is nullable).
+		expect(result.words).toBeNull();
+	});
+
+	it("defaults language to null when the model omits it", async () => {
+		const fetchImpl = makeFetch(() => chatResponse(JSON.stringify({ text: "ok" })));
+		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
+		const result = await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 });
+		expect(result.language).toBeNull();
+	});
+
+	it("folds the language hint into the user prompt when provided", async () => {
+		let observedBody: ChatBody = {};
+		const fetchImpl = makeFetch(({ body }) => {
+			const parsed = asChatBody(body);
+			if (parsed !== null) observedBody = parsed;
+			return chatResponse(JSON.stringify({ text: "x" }));
 		});
 		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
 		await provider.transcribe({
-			audio: new Int16Array([0, 0]),
+			audio: new Int16Array([0]),
 			sampleRate: 16_000,
-			language: "en",
+			language: "de",
 		});
-		expect(observed.language).toBe("en");
-		expect(observed.granularity).toBeNull();
+		const userMessage = observedBody.messages?.find((m) => m.role === "user");
+		if (userMessage === undefined || typeof userMessage.content === "string") {
+			throw new Error("expected a content-block user message");
+		}
+		const textBlock = userMessage.content.find((b) => b.type === "text");
+		expect(textBlock?.text).toContain('"de"');
 	});
 
-	it("maps word-granularity segments to trimmed word timings and computes duration locally", async () => {
-		const fetchImpl = makeFetch(() =>
-			voxtralResponse({
-				model: "voxtral-mini-2602",
-				text: "Hello world,",
-				language: null,
-				segments: [
-					{ text: "Hello", start: 0.0, end: 0.3, speaker_id: null, type: "transcription_segment" },
-					{
-						text: " world,",
-						start: 0.4,
-						end: 0.8,
-						speaker_id: null,
-						type: "transcription_segment",
-					},
-				],
-			}),
-		);
-		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
-		// 16_000 samples at 16kHz = exactly 1000ms, independent of what the
-		// provider reports (the response carries no duration field).
-		const result = await provider.transcribe({
-			audio: new Int16Array(16_000),
-			sampleRate: 16_000,
-		});
-		expect(result.text).toBe("Hello world,");
-		expect(result.durationMs).toBe(1000);
-		expect(result.words).toEqual([
-			{ text: "Hello", startMs: 0, endMs: 300 },
-			{ text: "world,", startMs: 400, endMs: 800 },
-		]);
-	});
-
-	it("returns null words when segments are empty or missing", async () => {
-		const fetchImpl = makeFetch(() =>
-			voxtralResponse({ model: "voxtral-mini-2602", text: "x", language: null, segments: [] }),
-		);
-		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
-		const result = await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 });
-		expect(result.words).toBeNull();
-
-		const fetchNoSegments = makeFetch(() => voxtralResponse({ text: "y" }));
-		const provider2 = createMistralVoxtralProvider({
-			apiKey: () => "mk",
-			fetchImpl: fetchNoSegments,
-		});
-		const result2 = await provider2.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 });
-		expect(result2.words).toBeNull();
-	});
-
-	it("passes the response language through when present", async () => {
-		const fetchImpl = makeFetch(() =>
-			voxtralResponse({
-				model: "voxtral-mini-2602",
-				text: "bonjour",
-				language: "fr",
-				segments: [],
-			}),
-		);
-		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
-		const result = await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 });
-		// Narrow before equality — the union with null trips bun:test's overload.
-		if (result.language === null) throw new Error("expected language");
-		expect(result.language).toBe("fr");
-	});
-
-	it("throws MissingProviderCredentialError naming MISTRAL_API_KEY when the apiKey resolver returns undefined", async () => {
+	it("throws MissingProviderCredentialError naming MISTRAL_API_KEY when the key is absent", async () => {
 		const provider = createMistralVoxtralProvider({ apiKey: () => undefined, fetchImpl: fetch });
 		const err = await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }).then(
 			() => null,
@@ -170,15 +162,34 @@ describe("createMistralVoxtralProvider", () => {
 		if (!(err instanceof TranscriptionProviderError)) {
 			throw new Error(`expected TranscriptionProviderError, got ${err}`);
 		}
-		expect(err.provider).toBe("mistral-voxtral");
 		expect(err.statusCode).toBe(429);
+		expect(err.provider).toBe("mistral-voxtral");
 	});
 
-	it("throws TranscriptionProviderError on a malformed JSON response", async () => {
+	it("throws TranscriptionProviderError when the response has no choices", async () => {
 		const fetchImpl = makeFetch(
 			() =>
-				new Response("not json", { status: 200, headers: { "content-type": "application/json" } }),
+				new Response(JSON.stringify({ choices: [] }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
 		);
+		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
+		await expect(
+			provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }),
+		).rejects.toBeInstanceOf(TranscriptionProviderError);
+	});
+
+	it("throws TranscriptionProviderError when the model output is not valid JSON", async () => {
+		const fetchImpl = makeFetch(() => chatResponse("not json"));
+		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
+		await expect(
+			provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }),
+		).rejects.toBeInstanceOf(TranscriptionProviderError);
+	});
+
+	it("throws TranscriptionProviderError when the model JSON misses the text field", async () => {
+		const fetchImpl = makeFetch(() => chatResponse(JSON.stringify({ language: "en" })));
 		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
 		await expect(
 			provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }),
