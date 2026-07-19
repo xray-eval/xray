@@ -10,6 +10,32 @@ import type { TtsProvider } from "./tts.types.ts";
 /** The 48kHz the LiveKit driver publishes; all stored turn audio uses it. */
 const TARGET_SAMPLE_RATE = 48_000;
 
+// Stored turn audio must clear the level the VAD calibration assumes:
+// segmentation (audio.vad.ts) only marks frames voiced above ≈-23 dBFS mean
+// energy, and provider/voice loudness varies wildly — Deepgram Aura's German
+// voices ship raw linear16 near -33 dBFS RMS, which the VAD cannot see at
+// all, so every scripted replay with such a turn died with
+// `spec_vad_mismatch` (zero user segments in the mixdown). Peak-normalizing
+// every synthesis to one fixed target (-1.4 dBFS peak) makes the stored WAV —
+// and the driver-published audio recorded into the mixdown — level-
+// deterministic regardless of provider or voice.
+const TARGET_PEAK = 27_852;
+
+function peakNormalize(pcm: Int16Array, targetPeak: number): Int16Array {
+	let peak = 0;
+	for (let i = 0; i < pcm.length; i++) {
+		const a = Math.abs(pcm[i] ?? 0);
+		if (a > peak) peak = a;
+	}
+	if (peak === 0) return pcm;
+	const gain = targetPeak / peak;
+	const out = new Int16Array(pcm.length);
+	for (let i = 0; i < pcm.length; i++) {
+		out[i] = Math.max(-32_768, Math.min(32_767, Math.round((pcm[i] ?? 0) * gain)));
+	}
+	return out;
+}
+
 export interface TurnSynthesisInput {
 	readonly text: string;
 	/** Explicit per-turn voice from the spec. Wins over `voiceOverride`. */
@@ -63,11 +89,14 @@ export function createTurnSynthesizer(deps: TurnSynthesizerDeps): TurnSynthesize
 				input.voiceId ??
 				deps.voiceOverride ??
 				(await deps.provider.resolveDefaultVoice(input.language));
+			// TARGET_PEAK is folded in so cache rows written before (or with a
+			// different) normalization level are misses, not stale quiet audio.
 			const fingerprintInput = JSON.stringify([
 				deps.provider.name,
 				deps.provider.model,
 				voice,
 				input.text,
+				TARGET_PEAK,
 			]);
 			const fingerprint = await sha256Hex(new TextEncoder().encode(fingerprintInput));
 			const existing = inFlight.get(fingerprint);
@@ -102,7 +131,10 @@ async function synthesizeOrReuse(
 		voice,
 		...(signal !== undefined ? { signal } : {}),
 	});
-	const pcm48k = resamplePcm(result.pcm, result.sampleRate, TARGET_SAMPLE_RATE);
+	const pcm48k = peakNormalize(
+		resamplePcm(result.pcm, result.sampleRate, TARGET_SAMPLE_RATE),
+		TARGET_PEAK,
+	);
 	const wavBytes = writeMonoWav(pcm48k, TARGET_SAMPLE_RATE);
 	const sha256 = await sha256Hex(wavBytes);
 	await saveTtsConversationAudio(deps.audioRoot, sha256, wavBytes);
