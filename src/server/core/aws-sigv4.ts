@@ -104,14 +104,16 @@ function toAmzDate(now: Date): string {
 }
 
 // The canonical URI is the URI-encoded path, encoded a SECOND time for
-// every service except S3. `URL.pathname` is already percent-encoded, so
-// re-encoding the `%` (and any other reserved char) is what produces the
-// double-encoding AWS expects — a Bedrock model id's `%3A` becomes `%253A`.
+// every service except S3. Decode each segment to its raw form, then encode
+// twice: a Bedrock model id's colon becomes `:` → `%3A` → `%253A`, which is
+// what AWS signs over. A single encode (the earlier bug) left `%3A` and
+// produced SignatureDoesNotMatch for any model id containing a colon (Nova
+// ids, inference-profile / provisioned-throughput ARNs).
 function canonicalUri(pathname: string): string {
 	if (pathname === "") return "/";
 	return pathname
 		.split("/")
-		.map((seg) => encodeRfc3986(decodeURIComponent(seg)))
+		.map((seg) => encodeRfc3986(encodeRfc3986(decodeURIComponent(seg))))
 		.join("/");
 }
 

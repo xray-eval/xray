@@ -94,6 +94,14 @@ describe("createDeepgramTtsProvider", () => {
 		expect(await provider.resolveDefaultVoice("en")).toBe("aura-asteria-en");
 	});
 
+	it("honors a family override even for an untagged (no-language) default", async () => {
+		// No-language default must respect XRAY_TTS_MODEL: an "aura" family
+		// resolves an aura voice via the catalog, not the hardcoded aura-2 one.
+		const fetchImpl = makeFetch(() => modelsResponse(AURA_CATALOG));
+		const provider = createDeepgramTtsProvider({ apiKey: () => "dg", model: "aura", fetchImpl });
+		expect(await provider.resolveDefaultVoice()).toBe("aura-asteria-en");
+	});
+
 	it("fetches the catalog once and serves later languages from the cache", async () => {
 		let fetches = 0;
 		const fetchImpl = makeFetch(() => {
