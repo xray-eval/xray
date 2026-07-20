@@ -197,11 +197,16 @@ def _stage_agent_track(frames: list[bytes]) -> tuple[str, tuple[Any, ...]]:
 
 
 def _stage_transcription_final(text: str) -> tuple[str, tuple[Any, ...]]:
+    return _stage_transcription(text, seg_id=f"seg-{text}", final=True)
+
+
+def _stage_transcription(text: str, *, seg_id: str, final: bool) -> tuple[str, tuple[Any, ...]]:
     agent = MagicMock()
     agent.identity = "agent-bot"
     seg = MagicMock()
+    seg.id = seg_id
     seg.text = text
-    seg.final = True
+    seg.final = final
     return ("transcription_received", ([seg], agent, MagicMock()))
 
 
@@ -471,6 +476,74 @@ def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
     # on entry and (since no new segments arrive for it) time out with
     # an empty transcript.
     assert "stale" not in result.responses[2].transcript
+
+
+def _run_agent_turn_with_caption_events(
+    tmp_path: Path, events: list[tuple[str, tuple[Any, ...]]]
+) -> str:
+    """Drive one user + one agent turn; fire the given caption events after
+    the agent turn's first audio frame; return the agent transcript."""
+    track_event = _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)])
+    track_obj = track_event[1][0]
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join(), track_event])
+
+    def _fire_captions() -> None:
+        for name, args in events:
+            rtc.Room.rooms[0].fire(name, *args)
+
+    track_obj._xray_after_frame_callbacks = [_fire_captions, None]
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api)
+    rt.agent_turn_timeout_s = 2.0
+
+    conv = Conversation(name="c", turns=[Turn.user("hello", key="u0"), Turn.agent(key="a0")])
+    result = asyncio.run(rt.run(conv))
+    return result.responses[1].transcript
+
+
+def test_cumulative_caption_segments_are_replaced_not_appended(tmp_path: Path):
+    """TTS-aligned caption streams (e.g. Gradium via LiveKit's
+    ``use_tts_aligned_transcript``) re-send one segment id with cumulatively
+    growing text, and the final full-utterance segment can arrive under a
+    NEW id. Appending every event repeats the whole prefix per partial
+    (``Hallo! Hallo! Ich Hallo! Ich bin …``) — the driver must keep only
+    the latest text per segment id and merge overlapping texts."""
+    transcript = _run_agent_turn_with_caption_events(
+        tmp_path,
+        [
+            _stage_transcription("Hallo!", seg_id="s1", final=False),
+            _stage_transcription("Hallo! Ich bin der Assistent.", seg_id="s1", final=False),
+            _stage_transcription(
+                "Hallo! Ich bin der Assistent. Wie kann ich helfen?", seg_id="s2", final=True
+            ),
+        ],
+    )
+    assert transcript == "Hallo! Ich bin der Assistent. Wie kann ich helfen?"
+
+
+def test_distinct_caption_segments_join_in_arrival_order(tmp_path: Path):
+    """Two segments carrying different sentences (the non-cumulative case)
+    still join with a space, in first-arrival order."""
+    transcript = _run_agent_turn_with_caption_events(
+        tmp_path,
+        [
+            _stage_transcription("Erste Antwort.", seg_id="a", final=False),
+            _stage_transcription("Zweite Antwort.", seg_id="b", final=True),
+        ],
+    )
+    assert transcript == "Erste Antwort. Zweite Antwort."
+
+
+def test_flush_control_token_is_stripped_from_transcript(tmp_path: Path):
+    """Gradium terminates utterances with a literal ``<flush>`` control tag;
+    it must never leak into stored transcripts (spans, UI, judge input)."""
+    transcript = _run_agent_turn_with_caption_events(
+        tmp_path,
+        [
+            _stage_transcription("Guten Tag. <flush>", seg_id="s1", final=True),
+        ],
+    )
+    assert transcript == "Guten Tag."
 
 
 def test_agent_already_in_room_at_connect_is_detected(tmp_path: Path):

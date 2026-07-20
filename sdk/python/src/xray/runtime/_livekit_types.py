@@ -96,6 +96,7 @@ class LkRoomOptions(Protocol):
 
 
 class LkTranscriptionSegment(Protocol):
+    id: str
     text: str
     final: bool
 
