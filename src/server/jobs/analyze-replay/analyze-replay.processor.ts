@@ -10,6 +10,7 @@ import { runVadOnChannel } from "@/server/audio/audio.vad.ts";
 import { readStereoWav, resamplePcm } from "@/server/audio/audio.wav.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
 import { findReplay, markReplayFailed } from "@/server/replays/replays.service.ts";
+import { clampedTurnWindows } from "@/server/replays/timeline.ts";
 import { replays, replayTurns, speechSegments, turnTranscripts } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
@@ -198,7 +199,19 @@ export function makeAnalyzeProcessor(
  * partial transcription would leave the evaluator working on a
  * misleading subset.
  *
- * Empty turn slices (voice_end_ms <= voice_start_ms) are skipped — no
+ * Each slice covers the turn's tiling attribution window
+ * (`clampedTurnWindows` over `voiceEndMs` — the same geometry the
+ * evaluator and the trace tree attribute spans with — with the last
+ * window extended to the recording's end), on the turn's channel. NOT
+ * the VAD voiced extent: the energy VAD is calibrated on synthetic
+ * fixtures and can mark the wrong stretch of a turn as voiced (quiet
+ * real reply below threshold, spurious early segment claiming the
+ * extent). A voiced-extent slice then carries only pre-reply audio,
+ * `turn_transcripts.text` comes back empty, and judges score against a
+ * blank reply even though the speech is in the WAV. In-window silence
+ * costs nothing — the provider transcribes it as empty.
+ *
+ * Interrupted turns collapse to an empty `[c, c)` window — no
  * transcript row is written and the assertion evaluator treats the
  * missing row as a null transcript.
  */
@@ -209,11 +222,12 @@ async function runTranscriptionStage(
 	turns: ReadonlyArray<{
 		idx: number;
 		role: "user" | "agent";
-		voiceStartMs: number;
 		voiceEndMs: number;
 	}>,
 	transcription: TranscriptionProvider,
 ): Promise<number> {
+	const recordingEndMs = Math.round((wav.left.length / wav.sampleRate) * 1000);
+	const windows = clampedTurnWindows(turns.map((t) => t.voiceEndMs));
 	// Shared AbortController so one Whisper rejection cancels the other
 	// in-flight siblings. `Promise.all` rejects on first failure but does
 	// NOT cancel the rest — they keep running and burning provider quota
@@ -231,9 +245,13 @@ async function runTranscriptionStage(
 	}>;
 	try {
 		const settled = await Promise.all(
-			turns.map(async (turn) => {
-				if (turn.voiceEndMs <= turn.voiceStartMs) return null;
-				const pcm = sliceTurnAudio(wav, turn.role, turn.voiceStartMs, turn.voiceEndMs);
+			turns.map(async (turn, i) => {
+				const window = windows[i];
+				if (window === undefined) return null;
+				const endMs =
+					i === turns.length - 1 ? Math.max(window.turnEndMs, recordingEndMs) : window.turnEndMs;
+				if (endMs <= window.turnStartMs) return null;
+				const pcm = sliceTurnAudio(wav, turn.role, window.turnStartMs, endMs);
 				if (pcm.length === 0) return null;
 				const result = await transcription.transcribe({
 					audio: pcm,

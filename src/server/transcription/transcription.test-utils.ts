@@ -15,13 +15,13 @@ export interface FakeTranscriptionProviderOptions {
  * every call so tests can assert ordering / per-channel input.
  */
 export interface FakeTranscriptionProvider extends TranscriptionProvider {
-	readonly calls: ReadonlyArray<{ sampleRate: number; sampleCount: number }>;
+	readonly calls: ReadonlyArray<{ sampleRate: number; sampleCount: number; audio: Int16Array }>;
 }
 
 export function makeFakeTranscriptionProvider(
 	opts: FakeTranscriptionProviderOptions = {},
 ): FakeTranscriptionProvider {
-	const calls: { sampleRate: number; sampleCount: number }[] = [];
+	const calls: { sampleRate: number; sampleCount: number; audio: Int16Array }[] = [];
 	return {
 		name: "fake-transcription",
 		model: "fake-1",
@@ -29,7 +29,11 @@ export function makeFakeTranscriptionProvider(
 			return calls;
 		},
 		async transcribe(input): Promise<TranscriptionResult> {
-			calls.push({ sampleRate: input.sampleRate, sampleCount: input.audio.length });
+			calls.push({
+				sampleRate: input.sampleRate,
+				sampleCount: input.audio.length,
+				audio: input.audio,
+			});
 			if (opts.error !== undefined) throw opts.error;
 			const text =
 				opts.textFor?.({ sampleRate: input.sampleRate, sampleCount: input.audio.length }) ??
