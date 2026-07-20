@@ -13,7 +13,7 @@ foreign types — we Protocol-type them.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Literal, Protocol, runtime_checkable
 
 # LiveKit's ParticipantKind picklist (livekit-api access_token.py). Mirrored
@@ -75,6 +75,12 @@ class LkParticipant(Protocol):
 
 class LkRoom(Protocol):
     local_participant: LkLocalParticipant
+
+    @property
+    def remote_participants(self) -> Mapping[str, LkParticipant]:
+        """Participants already in the room, keyed by identity. Read after
+        ``connect`` — ``participant_connected`` does not fire for them."""
+        ...
 
     def on(self, event: str) -> Callable[[Callable[..., object]], Callable[..., object]]:
         """Register an event listener. LiveKit's API is decorator-style

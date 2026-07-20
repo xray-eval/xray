@@ -182,6 +182,12 @@ class LiveKitLiveRuntime(Runtime):
         agent_frames: list[TimedFrame] = []
 
         await room.connect(self.url, token, options=lk_rtc.RoomOptions())
+        # Same join race as the scripted runtime: an agent that entered the
+        # room before the driver connected never triggers
+        # `participant_connected`. Scan the participants already present so
+        # the join wait below can't time out against a joined agent.
+        for existing in room.remote_participants.values():
+            _on_join(existing)
         mic_task: asyncio.Task[None] | None = None
         agent_task: asyncio.Task[None] | None = None
         try:

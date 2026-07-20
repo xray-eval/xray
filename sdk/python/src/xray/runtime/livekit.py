@@ -214,6 +214,15 @@ class LiveKitRuntime(Runtime):
         room.on("transcription_received")(_on_transcription)
 
         await room.connect(self.url, token, options=lk_rtc.RoomOptions())
+        # The agent job is dispatched on room creation, so the agent can be
+        # in the room before the driver connects — `participant_connected`
+        # never fires for a participant that is already present, and the
+        # join wait below would time out with both parties in the room.
+        # Pre-existing *audio tracks* need no equivalent scan: with
+        # autosubscribe, `track_subscribed` fires after connect for
+        # existing publications.
+        for existing in room.remote_participants.values():
+            _on_join(existing)
         try:
             try:
                 await asyncio.wait_for(agent_joined.wait(), timeout=self.agent_join_timeout_s)
