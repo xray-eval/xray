@@ -315,7 +315,7 @@ sequenceDiagram
     X->>W: bunqueue enqueue analyze-replay
     W->>W: read WAV, downsample to 16k,<br/>VAD per channel,<br/>derive turn boundaries
     W->>X: insert speech_segments + replay_turns<br/>analysis_step='transcribe'
-    W->>W: slice per-turn audio, call Whisper<br/>(Promise.all over turns)
+    W->>W: slice each turn's attribution window,<br/>call the STT provider<br/>(Promise.all over turns)
     W->>X: insert turn_transcripts<br/>enqueue calculate-metrics
     X->>W: bunqueue enqueue calculate-metrics
     W->>W: compute agent_response_ms<br/>+ interrupted per turn
