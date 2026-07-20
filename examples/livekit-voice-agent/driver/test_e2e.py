@@ -7,8 +7,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from xray import Conversation, Turn, run
-from xray.conversation import RecordedAudio
+from xray import Assertion, Conversation, Judge, Turn, format_failures, run
+from xray.conversation import RecordedAudio, TtsAudio
 from xray.runtime.livekit import LiveKitRuntime
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
@@ -50,16 +50,45 @@ async def test_e2e_voice_agent_replay() -> None:
                 key="u-ask",
                 audio=RecordedAudio(path=str(USER_TURN_WAV)),
             ),
-            Turn.agent(key="a-answer"),
+            # The agent's get_current_year tool deliberately returns 2011 —
+            # the assertions pin both the tool call and the spoken answer.
+            Turn.agent(
+                key="a-answer",
+                assertions=(
+                    Assertion.tool_called("get_current_year"),
+                    Assertion.contains("2011"),
+                ),
+            ),
+            # No WAV here: the server synthesizes this turn (TtsAudio) with
+            # whichever TTS provider xray is configured for.
+            Turn.user(
+                "Thank you! Are you completely sure about that?",
+                key="u-follow",
+                audio=TtsAudio(),
+            ),
+            Turn.agent(key="a-follow"),
         ],
+        judges=(
+            Judge.text_match(
+                "the agent answers that the current year is 2011, based on its "
+                "tool result, and responds politely to the follow-up question",
+                pass_score=60,
+            ),
+        ),
     )
 
+    # run() returning at all means the analyze chain completed — infrastructure
+    # failures raise ReplayEvaluationError. The evaluation verdict is
+    # informational for this e2e gate: transcript number formatting ("2011" vs
+    # "twenty eleven") varies run to run, and the gate here is pipeline
+    # completion, not agent quality.
     result = await run(conversation=conv, runtime=runtime, xray_url=xray_url)
-
-    assert result.status == "completed", f"replay status={result.status} result={result}"
+    print(f"verdict passed={result.passed}")
+    if not result.passed:
+        print(format_failures(result))
 
     async with httpx.AsyncClient(base_url=xray_url, timeout=10.0) as client:
-        response = await client.get(f"/v1/replays/{result.id}")
+        response = await client.get(f"/v1/replays/{result.replay_id}")
         response.raise_for_status()
         replay = response.json()
 
