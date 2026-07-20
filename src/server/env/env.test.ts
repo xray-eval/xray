@@ -72,6 +72,18 @@ describe("loadEnv", () => {
 		expect(env.XRAY_JUDGE_PROVIDER).toBe("bedrock");
 	});
 
+	test("accepts SigV4 access-key credentials for the Bedrock judge", () => {
+		const env = loadEnv({
+			AWS_ACCESS_KEY_ID: "AKID",
+			AWS_SECRET_ACCESS_KEY: "secret",
+			AWS_SESSION_TOKEN: "session==",
+			XRAY_JUDGE_PROVIDER: "bedrock",
+		});
+		expect(env.AWS_ACCESS_KEY_ID).toBe("AKID");
+		expect(env.AWS_SECRET_ACCESS_KEY).toBe("secret");
+		expect(env.AWS_SESSION_TOKEN).toBe("session==");
+	});
+
 	test("rejects bedrock as a transcription provider selector (judge-only)", () => {
 		expect(() => loadEnv({ XRAY_TRANSCRIPTION_PROVIDER: "bedrock-nova" })).toThrow(InvalidEnvError);
 	});

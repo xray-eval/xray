@@ -132,7 +132,7 @@ describe("createBedrockJudgeProvider", () => {
 		expect(out.reason).toBe("fenced");
 	});
 
-	it("throws MissingProviderCredentialError(AWS_BEARER_TOKEN_BEDROCK) when the key is undefined", async () => {
+	it("throws MissingProviderCredentialError naming both auth forms when neither is present", async () => {
 		const provider = createBedrockJudgeProvider({ apiKey: () => undefined, fetchImpl: fetch });
 		const err = await provider.judge({ systemPrompt: "s", userPrompt: "u" }).then(
 			() => null,
@@ -141,7 +141,66 @@ describe("createBedrockJudgeProvider", () => {
 		if (!(err instanceof MissingProviderCredentialError)) {
 			throw new Error(`expected MissingProviderCredentialError, got ${err}`);
 		}
-		expect(err.envVar).toBe("AWS_BEARER_TOKEN_BEDROCK");
+		expect(err.envVar).toContain("AWS_BEARER_TOKEN_BEDROCK");
+		expect(err.envVar).toContain("AWS_ACCESS_KEY_ID");
+	});
+
+	it("signs with SigV4 when only awsCredentials are given (no bearer)", async () => {
+		let observedAuth = "";
+		let observedToken = "absent";
+		const fetchImpl = makeFetch(({ headers }) => {
+			observedAuth = headers.get("authorization") ?? "";
+			observedToken = headers.get("x-amz-security-token") ?? "absent";
+			return converseTextResponse(JSON.stringify({ score: 77, reason: "ok" }));
+		});
+		const provider = createBedrockJudgeProvider({
+			apiKey: () => undefined,
+			awsCredentials: () => ({ accessKeyId: "AKID", secretAccessKey: "secret" }),
+			region: "eu-central-1",
+			fetchImpl,
+		});
+		const out = await provider.judge({ systemPrompt: "s", userPrompt: "u" });
+		expect(out.score).toBe(77);
+		expect(observedAuth).toStartWith("AWS4-HMAC-SHA256 Credential=AKID/");
+		expect(observedAuth).toContain("/eu-central-1/bedrock/aws4_request");
+		expect(observedToken).toBe("absent");
+	});
+
+	it("carries the session token as a signed header for temporary credentials", async () => {
+		let observedAuth = "";
+		let observedToken = "absent";
+		const fetchImpl = makeFetch(({ headers }) => {
+			observedAuth = headers.get("authorization") ?? "";
+			observedToken = headers.get("x-amz-security-token") ?? "absent";
+			return converseTextResponse(JSON.stringify({ score: 50, reason: "ok" }));
+		});
+		const provider = createBedrockJudgeProvider({
+			apiKey: () => undefined,
+			awsCredentials: () => ({
+				accessKeyId: "AKID",
+				secretAccessKey: "secret",
+				sessionToken: "SESSION==",
+			}),
+			fetchImpl,
+		});
+		await provider.judge({ systemPrompt: "s", userPrompt: "u" });
+		expect(observedToken).toBe("SESSION==");
+		expect(observedAuth).toContain("x-amz-security-token");
+	});
+
+	it("prefers the bearer token over SigV4 when both are present", async () => {
+		let observedAuth = "";
+		const fetchImpl = makeFetch(({ headers }) => {
+			observedAuth = headers.get("authorization") ?? "";
+			return converseTextResponse(JSON.stringify({ score: 60, reason: "ok" }));
+		});
+		const provider = createBedrockJudgeProvider({
+			apiKey: () => "bearer-key",
+			awsCredentials: () => ({ accessKeyId: "AKID", secretAccessKey: "secret" }),
+			fetchImpl,
+		});
+		await provider.judge({ systemPrompt: "s", userPrompt: "u" });
+		expect(observedAuth).toBe("Bearer bearer-key");
 	});
 
 	it("throws JudgeProviderError on 4xx/5xx, preserving status code", async () => {

@@ -207,6 +207,16 @@ export function buildJudgeProvider(cfg: Env): JudgeProvider {
 		.with("bedrock", () =>
 			createBedrockJudgeProvider({
 				apiKey: () => cfg.AWS_BEARER_TOKEN_BEDROCK,
+				awsCredentials: () =>
+					cfg.AWS_ACCESS_KEY_ID !== undefined && cfg.AWS_SECRET_ACCESS_KEY !== undefined
+						? {
+								accessKeyId: cfg.AWS_ACCESS_KEY_ID,
+								secretAccessKey: cfg.AWS_SECRET_ACCESS_KEY,
+								...(cfg.AWS_SESSION_TOKEN !== undefined
+									? { sessionToken: cfg.AWS_SESSION_TOKEN }
+									: {}),
+							}
+						: undefined,
 				...(cfg.XRAY_BEDROCK_REGION !== undefined ? { region: cfg.XRAY_BEDROCK_REGION } : {}),
 				...(modelOverride !== undefined ? { model: modelOverride } : {}),
 			}),

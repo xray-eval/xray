@@ -41,6 +41,16 @@ const EnvSchema = v.object({
 	// Judge-only: Bedrock has no request/response TTS model and its only
 	// audio-input chat models lag the providers we already ship.
 	AWS_BEARER_TOKEN_BEDROCK: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	// SigV4 fallback auth for the Bedrock judge when no bearer token is set —
+	// standard AWS names so operators reuse creds they already export (access
+	// keys, or assumed-role temporary creds via AWS_SESSION_TOKEN), signed
+	// in-process (no AWS SDK). Only consumed when XRAY_JUDGE_PROVIDER=bedrock
+	// is explicit: these vars are commonly present for unrelated AWS access, so
+	// they never auto-infer the judge provider (which would spuriously trip
+	// AmbiguousProviderConfigError).
+	AWS_ACCESS_KEY_ID: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	AWS_SECRET_ACCESS_KEY: v.optional(v.pipe(v.string(), v.nonEmpty())),
+	AWS_SESSION_TOKEN: v.optional(v.pipe(v.string(), v.nonEmpty())),
 	// Region of the bedrock-runtime endpoint the Bedrock judge calls.
 	// Defaults to us-east-1 inside the provider when unset.
 	XRAY_BEDROCK_REGION: v.optional(v.pipe(v.string(), v.nonEmpty())),

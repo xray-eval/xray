@@ -272,6 +272,31 @@ describe("buildJudgeProvider", () => {
 		expect(p.model).toBe("us.amazon.nova-2-pro-v1:0");
 	});
 
+	it("builds the Bedrock judge from SigV4 access keys when explicitly selected", () => {
+		const p = buildJudgeProvider(
+			makeEnv({
+				AWS_ACCESS_KEY_ID: "AKID",
+				AWS_SECRET_ACCESS_KEY: "secret",
+				XRAY_JUDGE_PROVIDER: "bedrock",
+			}),
+		);
+		expect(p.name).toBe("bedrock");
+	});
+
+	it("does NOT auto-infer the Bedrock judge from ambient AWS access keys", () => {
+		// AWS_ACCESS_KEY_ID / SECRET are commonly present for unrelated AWS
+		// access; with an actual judge key set and no selector, only that key's
+		// provider is inferred — the AWS creds must not create ambiguity.
+		const p = buildJudgeProvider(
+			makeEnv({
+				OPENAI_API_KEY: "sk-x",
+				AWS_ACCESS_KEY_ID: "AKID",
+				AWS_SECRET_ACCESS_KEY: "secret",
+			}),
+		);
+		expect(p.name).toBe("openai");
+	});
+
 	it("throws when the Bedrock token and another key are set with no selector", () => {
 		expect(() =>
 			buildJudgeProvider(makeEnv({ MISTRAL_API_KEY: "mk-x", AWS_BEARER_TOKEN_BEDROCK: "bk-x" })),
