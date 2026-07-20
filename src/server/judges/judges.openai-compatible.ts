@@ -4,7 +4,8 @@ import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
-import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
+import { parseJudgeContent } from "./judges.content.ts";
+import { JudgeProviderError } from "./judges.errors.ts";
 import type { JudgeProvider, JudgeProviderResponse } from "./judges.types.ts";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -13,7 +14,8 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 // `.claude/rules/boundary-validation.md`. We model only the path we read:
 // `choices[0].message.content` is a JSON string (because we forced
 // `response_format: json_object` on the request) that itself decodes to
-// `{score: int, reason: string}`.
+// `{score: int, reason: string}` (parsed by the shared
+// `parseJudgeContent` in judges.content.ts).
 const ChatCompletionsResponseSchema = v.object({
 	choices: v.array(
 		v.object({
@@ -22,10 +24,6 @@ const ChatCompletionsResponseSchema = v.object({
 			}),
 		}),
 	),
-});
-const JudgeContentSchema = v.object({
-	score: v.number(),
-	reason: v.string(),
 });
 
 /**
@@ -155,36 +153,4 @@ function extractMessageContent(provider: string, raw: unknown): string {
 		throw new JudgeProviderError(provider, "response choices array was empty");
 	}
 	return first.message.content;
-}
-
-function parseJudgeContent(provider: string, content: string): JudgeProviderResponse {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(content);
-	} catch (cause) {
-		throw new JudgeOutputParseError(provider, content, "content was not valid JSON", {
-			cause,
-		});
-	}
-	const result = v.safeParse(JudgeContentSchema, parsed);
-	if (!result.success) {
-		throw new JudgeOutputParseError(
-			provider,
-			content,
-			`content failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
-		);
-	}
-	const score = result.output.score;
-	if (!Number.isFinite(score)) {
-		throw new JudgeOutputParseError(provider, content, "score was not a finite number");
-	}
-	const intScore = Math.round(score);
-	if (intScore < 0 || intScore > 100) {
-		throw new JudgeOutputParseError(
-			provider,
-			content,
-			`score ${intScore} outside the 0..100 range`,
-		);
-	}
-	return { score: intScore, reason: result.output.reason };
 }

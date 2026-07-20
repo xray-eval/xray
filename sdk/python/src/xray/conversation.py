@@ -51,10 +51,14 @@ class TtsAudio:
     generated 48 kHz WAV content-addressed, and folds its sha256 into the
     conversation hash; the driver pulls the bytes back before the run.
     ``voice_id`` is provider-specific and wins over the server's
-    ``XRAY_TTS_VOICE`` default. A user turn with no ``audio`` at all is
-    equivalent to ``TtsAudio()``."""
+    ``XRAY_TTS_VOICE`` default. ``language`` is a lowercase tag (``"de"``,
+    ``"en_us"``); when no explicit voice is picked, providers with
+    language-specific voices (Mistral) use it to select a matching voice —
+    an English preset speaking German is accented English, not German. A
+    user turn with no ``audio`` at all is equivalent to ``TtsAudio()``."""
 
     voice_id: str | None = None
+    language: str | None = None
     kind: Literal["tts"] = field(default="tts", init=False)
 
 
@@ -312,6 +316,7 @@ class RecordedAudioWirePayload(TypedDict):
 class TtsAudioWirePayload(TypedDict):
     kind: Literal["tts"]
     voice_id: NotRequired[str]
+    language: NotRequired[str]
 
 
 AudioWirePayload: TypeAlias = RecordedAudioWirePayload | TtsAudioWirePayload
@@ -346,10 +351,13 @@ def _audio_to_wire(audio: AudioRef, turn_idx: int) -> AudioWirePayload:
     match audio:
         case RecordedAudio():
             return {"kind": "recorded", "upload_key": _recorded_upload_key(turn_idx)}
-        case TtsAudio(voice_id=voice_id):
-            if voice_id is None:
-                return {"kind": "tts"}
-            return {"kind": "tts", "voice_id": voice_id}
+        case TtsAudio(voice_id=voice_id, language=language):
+            payload: TtsAudioWirePayload = {"kind": "tts"}
+            if voice_id is not None:
+                payload["voice_id"] = voice_id
+            if language is not None:
+                payload["language"] = language
+            return payload
         case _:
             assert_never(audio)
 

@@ -220,7 +220,7 @@ Failure model: assertion failures don't raise. They are outcomes on `result.asse
 User-turn audio formats:
 
 - `RecordedAudio(path=...)`. This is a 48 kHz mono int16 WAV file on disk. It is uploaded to xray with the conversation spec.
-- `TtsAudio()` (or no `audio` at all). This is synthesized **server-side** during the conversation upsert. (TTS means text-to-speech: turning written text into spoken audio.) The xray server uses whichever provider it is configured with (`XRAY_TTS_PROVIDER`: OpenAI, Google, or Mistral). The generated audio is stored content-addressed, and its sha256 is part of the conversation hash. The driver pulls the exact bytes back before joining the room. There is no TTS key in the SDK's process.
+- `TtsAudio()` (or no `audio` at all). This is synthesized **server-side** during the conversation upsert. (TTS means text-to-speech: turning written text into spoken audio.) The xray server uses whichever provider it is configured with (`XRAY_TTS_PROVIDER`: OpenAI, Google, or Mistral). Pass `TtsAudio(language="de")` for non-English turns — providers with language-specific voices use the tag to pick a matching default voice instead of an English one. The generated audio is stored content-addressed, and its sha256 is part of the conversation hash. The driver pulls the exact bytes back before joining the room. There is no TTS key in the SDK's process.
 
 For Cartesia, 11Labs, or Deepgram, synthesize the audio yourself and pass the output as `RecordedAudio`. Adding more server-side TTS providers is one file each in `src/server/tts/`.
 

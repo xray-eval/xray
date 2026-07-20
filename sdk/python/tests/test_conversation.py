@@ -62,6 +62,30 @@ def test_replay_spec_payload_tts_audio_inline(tmp_path: Path):
     assert payload["turns"][0].get("audio") == {"kind": "tts", "voice_id": "alloy"}
 
 
+def test_replay_spec_payload_tts_audio_language(tmp_path: Path):
+    c = Conversation(
+        name="x",
+        turns=[Turn.user("guten tag", key="u0", audio=TtsAudio(language="de"))],
+    )
+    payload = c.to_conversation_spec_payload()
+    assert payload["turns"][0].get("audio") == {"kind": "tts", "language": "de"}
+
+
+def test_replay_spec_payload_tts_audio_voice_and_language(tmp_path: Path):
+    c = Conversation(
+        name="x",
+        turns=[
+            Turn.user("hallo", key="u0", audio=TtsAudio(voice_id="v-1", language="de")),
+        ],
+    )
+    payload = c.to_conversation_spec_payload()
+    assert payload["turns"][0].get("audio") == {
+        "kind": "tts",
+        "voice_id": "v-1",
+        "language": "de",
+    }
+
+
 def test_recorded_audio_uploads_yields_one_pair_per_recorded_turn(tmp_path: Path):
     wav1 = tmp_path / "u0.wav"
     wav1.write_bytes(b"\x00")

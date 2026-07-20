@@ -58,11 +58,13 @@ describe("createOpenAITtsProvider", () => {
 		expect([...result.pcm]).toEqual([0, 1000, -1000, 32767]);
 	});
 
-	it("exposes name, pinned default model, and default voice", () => {
+	it("exposes name, pinned default model, and default voice", async () => {
 		const provider = createOpenAITtsProvider({ apiKey: () => "sk", fetchImpl: fetch });
 		expect(provider.name).toBe("openai");
 		expect(provider.model).toBe("gpt-4o-mini-tts");
-		expect(provider.defaultVoice).toBe("alloy");
+		expect(await provider.resolveDefaultVoice()).toBe("alloy");
+		// OpenAI voices are multilingual — language never changes the pick.
+		expect(await provider.resolveDefaultVoice("de")).toBe("alloy");
 	});
 
 	it("respects an explicit model override", async () => {

@@ -35,7 +35,12 @@ export function createOpenAITtsProvider(opts: OpenAITtsOptions): TtsProvider {
 	return {
 		name: "openai",
 		model,
-		defaultVoice: DEFAULT_VOICE,
+		// OpenAI voices are multilingual — the same voice speaks every
+		// supported language natively, so the turn language never changes
+		// the pick.
+		async resolveDefaultVoice(): Promise<string> {
+			return DEFAULT_VOICE;
+		},
 		async synthesize(input: TtsRequest): Promise<TtsResult> {
 			const key = opts.apiKey();
 			if (key === undefined || key.length === 0) {

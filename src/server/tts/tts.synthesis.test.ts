@@ -112,6 +112,31 @@ describe("createTurnSynthesizer", () => {
 		expect(provider.calls[2]?.voice).toBe("fake-voice");
 	});
 
+	it("passes the turn language to resolveDefaultVoice when no explicit voice is set", async () => {
+		const { store, audioRoot } = makeDeps();
+		const provider = makeFakeTtsProvider({
+			defaultVoiceFor: (language) => (language === "de" ? "de-voice" : "fake-voice"),
+		});
+		const synthesize = createTurnSynthesizer({ store, audioRoot, provider });
+		await synthesize({ text: "hallo", language: "de" });
+		expect(provider.resolveCalls).toEqual(["de"]);
+		expect(provider.calls[0]?.voice).toBe("de-voice");
+	});
+
+	it("skips resolveDefaultVoice entirely when the turn or operator picked a voice", async () => {
+		const { store, audioRoot } = makeDeps();
+		const provider = makeFakeTtsProvider({ pcm: new Int16Array([1]) });
+		const synthesize = createTurnSynthesizer({
+			store,
+			audioRoot,
+			provider,
+			voiceOverride: "env-voice",
+		});
+		await synthesize({ text: "a", language: "de" });
+		await synthesize({ text: "b", voiceId: "turn-voice", language: "de" });
+		expect(provider.resolveCalls).toHaveLength(0);
+	});
+
 	it("stamps provider, model, and voice on the cache row", async () => {
 		const { store, audioRoot } = makeDeps();
 		const provider = makeFakeTtsProvider({ pcm: new Int16Array([1]) });

@@ -176,17 +176,17 @@ Validation raises `ValueError` for any of these: an empty `reference`, an empty 
 
 ```python
 RecordedAudio(path: str)        # an on-disk WAV: 48 kHz, mono, 16-bit
-TtsAudio(voice_id: str | None = None)
+TtsAudio(voice_id: str | None = None, language: str | None = None)
 ```
 
 A user turn's `audio` is one of these two references. You can also omit it, which is the same as passing `TtsAudio()`.
 
 - **`RecordedAudio`** is a real WAV file you already have. Its bytes are uploaded as a multipart file part alongside the conversation, and folded into the hash.
-- **`TtsAudio`** is just a marker. It tells the **server** to synthesize the turn for you.
+- **`TtsAudio`** is just a marker. It tells the **server** to synthesize the turn for you. `language` is a lowercase tag (`"de"`, `"en_us"`) — providers with language-specific voices use it to pick a matching default voice when you don't name one explicitly.
 
 Here is what the server does with a `TtsAudio` marker:
 
-1. It synthesizes the audio at conversation-upsert time, using the provider it's configured with (`XRAY_TTS_PROVIDER`). The voice comes from `XRAY_TTS_VOICE`, or from the per-turn `voice_id`.
+1. It synthesizes the audio at conversation-upsert time, using the provider it's configured with (`XRAY_TTS_PROVIDER`). The voice resolution order is: the turn's `voice_id`, then `XRAY_TTS_VOICE`, then the provider's default voice for the turn's `language`.
 2. It content-addresses the WAV (keys it by content).
 3. It folds the WAV's sha256 into the conversation hash.
 

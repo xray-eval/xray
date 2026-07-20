@@ -60,11 +60,11 @@ describe("createMistralTtsProvider", () => {
 		expect([...result.pcm]).toEqual([0, 500, -500, 12345]);
 	});
 
-	it("exposes name, pinned default model, and default voice", () => {
+	it("exposes name, pinned default model, and default voice", async () => {
 		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl: fetch });
 		expect(provider.name).toBe("mistral");
 		expect(provider.model).toBe("voxtral-mini-tts-2603");
-		expect(provider.defaultVoice).toBe("en_paul_neutral");
+		expect(await provider.resolveDefaultVoice()).toBe("en_paul_neutral");
 	});
 
 	it("throws MissingProviderCredentialError naming MISTRAL_API_KEY when the key is absent", async () => {

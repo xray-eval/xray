@@ -57,6 +57,7 @@ async function materializeOneTurn(
 				{
 					text: turn.text,
 					...(a.voice_id !== undefined ? { voiceId: a.voice_id } : {}),
+					...(a.language !== undefined ? { language: a.language } : {}),
 				},
 				signal,
 			);
@@ -66,6 +67,7 @@ async function materializeOneTurn(
 					kind: "tts",
 					sha256,
 					...(a.voice_id !== undefined ? { voice_id: a.voice_id } : {}),
+					...(a.language !== undefined ? { language: a.language } : {}),
 				},
 			};
 		})

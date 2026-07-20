@@ -2,6 +2,7 @@ import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
 import { mergeAbortSignals } from "@/server/core/abort.ts";
+import { bytesToBase64 } from "@/server/core/base64.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
 import { extractGeminiText } from "@/server/core/gemini.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
@@ -42,15 +43,6 @@ export interface GoogleGeminiTranscriptionOptions {
 	readonly model?: string;
 	readonly fetchImpl?: FetchLike;
 	readonly timeoutMs?: number;
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-	let binary = "";
-	const chunk = 0x8000;
-	for (let i = 0; i < bytes.length; i += chunk) {
-		binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-	}
-	return btoa(binary);
 }
 
 /**
