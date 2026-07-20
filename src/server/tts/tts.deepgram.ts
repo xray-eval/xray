@@ -130,14 +130,20 @@ export function createDeepgramTtsProvider(opts: DeepgramTtsOptions): TtsProvider
 		name: "deepgram",
 		model: family,
 		async resolveDefaultVoice(language?: string): Promise<string> {
-			if (language === undefined) return DEFAULT_VOICE;
+			// DEFAULT_VOICE is an aura-2 voice, so the no-catalog fast path only
+			// applies to the default family. With a family override
+			// (XRAY_TTS_MODEL) and no language, resolve English through the
+			// catalog so the override is honored instead of silently returning
+			// an aura-2 voice.
+			if (language === undefined && family === DEFAULT_FAMILY) return DEFAULT_VOICE;
 			const key = opts.apiKey();
 			if (key === undefined || key.length === 0) {
 				throw new MissingProviderCredentialError("DEEPGRAM_API_KEY");
 			}
+			const requested = (language ?? "en").toLowerCase().replace("-", "_");
 			const voices = await loadCatalog(key);
-			const match = pickVoiceForLanguage(voices, family, language.toLowerCase().replace("-", "_"));
-			if (match === undefined) throw new NoTtsVoiceForLanguageError("deepgram", language);
+			const match = pickVoiceForLanguage(voices, family, requested);
+			if (match === undefined) throw new NoTtsVoiceForLanguageError("deepgram", requested);
 			return match;
 		},
 		async synthesize(input: TtsRequest): Promise<TtsResult> {

@@ -44,28 +44,31 @@ describe("signAwsRequest", () => {
 		expect(headers["x-amz-date"]).toBe("20150830T123600Z");
 	});
 
-	it("double-encodes an already percent-encoded path segment in the canonical URI", () => {
-		// The Bedrock model id carries a colon (%3A) once encoded; the canonical
-		// request re-encodes the percent, so a wrong path encoding would flip the
-		// signature. Two model ids differing only there must sign differently.
-		const base = {
+	it("double-encodes a colon in the path (Bedrock model id) — known-answer", () => {
+		// SigV4 (non-S3) signs over a DOUBLE-encoded path: the model id's colon
+		// is `:` → `%3A` → `%253A`. This known-answer locks that exact form; a
+		// single-encode (the earlier bug) produces a different signature and
+		// AWS returns SignatureDoesNotMatch for any colon-bearing model id.
+		// Value cross-checked against live Bedrock (a colon model authenticates
+		// past the signature stage with this signer).
+		const headers = signAwsRequest({
 			method: "POST",
+			url: "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse",
 			region: "us-east-1",
 			service: "bedrock",
 			body: "{}",
 			headers: { "content-type": "application/json" },
-			credentials: { accessKeyId: "AKID", secretAccessKey: "secret" },
+			credentials: {
+				accessKeyId: "AKIDEXAMPLE",
+				secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+			},
 			now: AT,
-		} as const;
-		const withColon = signAwsRequest({
-			...base,
-			url: "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse",
 		});
-		const withoutColon = signAwsRequest({
-			...base,
-			url: "https://bedrock-runtime.us-east-1.amazonaws.com/model/plain/converse",
-		});
-		expect(withColon.authorization).not.toBe(withoutColon.authorization);
+		expect(headers.authorization).toBe(
+			"AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/bedrock/aws4_request, " +
+				"SignedHeaders=content-type;host;x-amz-date, " +
+				"Signature=21cdb497f6551e9e359bbec0c1b24e51ab1ff889b97e8e14c30b88ddf2fe5884",
+		);
 	});
 
 	it("adds x-amz-security-token and signs it when a session token is present", () => {

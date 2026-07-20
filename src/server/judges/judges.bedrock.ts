@@ -3,7 +3,7 @@ import * as v from "valibot";
 import type { AwsCredentials } from "@/server/core/aws-sigv4.ts";
 import { signAwsRequest } from "@/server/core/aws-sigv4.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
-import { stripCodeFences } from "@/server/core/model-output.ts";
+import { extractJsonObject } from "@/server/core/model-output.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
@@ -142,7 +142,7 @@ export function createBedrockJudgeProvider(opts: BedrockJudgeOptions): JudgeProv
 				);
 			}
 			const content = extractConverseText(raw);
-			return parseJudgeContent("bedrock", stripCodeFences(content));
+			return parseJudgeContent("bedrock", extractJsonObject(content));
 		},
 	};
 }
