@@ -1,5 +1,7 @@
 import * as v from "valibot";
 
+import type { AwsCredentials } from "@/server/core/aws-sigv4.ts";
+import { signAwsRequest } from "@/server/core/aws-sigv4.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
 import { stripCodeFences } from "@/server/core/model-output.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
@@ -41,9 +43,16 @@ const ConverseResponseSchema = v.object({
 export type BedrockJudgeEffort = "low" | "medium" | "high" | "xhigh";
 
 export interface BedrockJudgeOptions {
-	/** Read at call time, not at construction — env can be loaded between
-	 *  server boot and the first judge request. */
+	/** Bearer token (`AWS_BEARER_TOKEN_BEDROCK`). Read at call time, not at
+	 *  construction — env can be loaded between boot and the first request.
+	 *  Takes precedence over `awsCredentials` when both resolve. */
 	readonly apiKey: () => string | undefined;
+	/** SigV4 fallback: access-key credentials (`AWS_ACCESS_KEY_ID` /
+	 *  `AWS_SECRET_ACCESS_KEY` / optional `AWS_SESSION_TOKEN`). Used when no
+	 *  bearer token is present — lets operators authenticate with the AWS
+	 *  credential form they already have (access keys, assumed roles) instead
+	 *  of minting a Bedrock API key. Also read at call time. */
+	readonly awsCredentials?: () => AwsCredentials | undefined;
 	readonly region?: string;
 	readonly model?: string;
 	readonly effort?: BedrockJudgeEffort;
@@ -52,10 +61,12 @@ export interface BedrockJudgeOptions {
 }
 
 /**
- * AWS Bedrock judge provider over the Converse API, authenticated with a
- * Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) — bearer auth, no SigV4, no
- * AWS SDK dependency. Defaults to Claude Opus 4.8 with adaptive thinking
- * and `xhigh` effort (passed through `additionalModelRequestFields`).
+ * AWS Bedrock judge provider over the Converse API. Authenticates with
+ * either a Bedrock API key (bearer, `AWS_BEARER_TOKEN_BEDROCK`) or, when no
+ * bearer token is present, AWS SigV4 access-key credentials — the latter
+ * signed in-process over `node:crypto` (see `core/aws-sigv4.ts`), no AWS
+ * SDK dependency either way. Defaults to Claude Opus 4.8 with adaptive
+ * thinking and `xhigh` effort (passed through `additionalModelRequestFields`).
  *
  * Two Anthropic-on-Bedrock constraints shape the request:
  *   - No `temperature`: Opus 4.7+ rejects any non-default sampling
@@ -75,10 +86,6 @@ export function createBedrockJudgeProvider(opts: BedrockJudgeOptions): JudgeProv
 		name: "bedrock",
 		model,
 		async judge(input): Promise<JudgeProviderResponse> {
-			const key = opts.apiKey();
-			if (key === undefined || key.length === 0) {
-				throw new MissingProviderCredentialError("AWS_BEARER_TOKEN_BEDROCK");
-			}
 			const body = {
 				system: [{ text: input.systemPrompt }],
 				messages: [{ role: "user", content: [{ text: input.userPrompt }] }],
@@ -88,16 +95,15 @@ export function createBedrockJudgeProvider(opts: BedrockJudgeOptions): JudgeProv
 					output_config: { effort },
 				},
 			};
+			const bodyStr = JSON.stringify(body);
+			const headers = resolveAuthHeaders(opts, url, region, bodyStr);
 
 			let response: Response;
 			try {
 				response = await fetchImpl(url, {
 					method: "POST",
-					headers: {
-						authorization: `Bearer ${key}`,
-						"content-type": "application/json",
-					},
-					body: JSON.stringify(body),
+					headers,
+					body: bodyStr,
 					signal: AbortSignal.timeout(timeoutMs),
 				});
 			} catch (cause) {
@@ -139,6 +145,36 @@ export function createBedrockJudgeProvider(opts: BedrockJudgeOptions): JudgeProv
 			return parseJudgeContent("bedrock", stripCodeFences(content));
 		},
 	};
+}
+
+// Bearer takes precedence over SigV4 when both resolve; neither → a typed
+// credential error naming both accepted forms. SigV4 signs the exact body +
+// content-type header that will be sent, so the signature covers the wire.
+function resolveAuthHeaders(
+	opts: BedrockJudgeOptions,
+	url: string,
+	region: string,
+	bodyStr: string,
+): Record<string, string> {
+	const bearer = opts.apiKey();
+	if (bearer !== undefined && bearer.length > 0) {
+		return { authorization: `Bearer ${bearer}`, "content-type": "application/json" };
+	}
+	const creds = opts.awsCredentials?.();
+	if (creds !== undefined && creds.accessKeyId.length > 0 && creds.secretAccessKey.length > 0) {
+		return signAwsRequest({
+			method: "POST",
+			url,
+			region,
+			service: "bedrock",
+			body: bodyStr,
+			headers: { "content-type": "application/json" },
+			credentials: creds,
+		});
+	}
+	throw new MissingProviderCredentialError(
+		"AWS_BEARER_TOKEN_BEDROCK or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY",
+	);
 }
 
 function extractConverseText(raw: unknown): string {
