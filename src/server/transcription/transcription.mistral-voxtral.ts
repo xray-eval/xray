@@ -2,6 +2,7 @@ import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
 import { mergeAbortSignals } from "@/server/core/abort.ts";
+import { bytesToBase64 } from "@/server/core/base64.ts";
 import type { FetchLike } from "@/server/core/fetch.ts";
 import { redactProviderSecrets } from "@/server/core/redact.ts";
 
@@ -15,33 +16,40 @@ import type {
 	TranscriptionResult,
 } from "./transcription.types.ts";
 
-const MISTRAL_TRANSCRIPTIONS_URL = "https://api.mistral.ai/v1/audio/transcriptions";
-// Pinned dated snapshot — `voxtral-mini-latest` is a floating alias Mistral
-// re-points across releases, and a moving STT model produces transcript
-// drift between runs of the same replay. Operators pin a different snapshot
-// via XRAY_TRANSCRIPTION_MODEL.
-const DEFAULT_MODEL = "voxtral-mini-2602";
+const MISTRAL_CHAT_URL = "https://api.mistral.ai/v1/chat/completions";
+// Voxtral Small (24B) is Mistral's largest audio-capable model — the only
+// one with `capabilities.audio` on the models API, and it is chat-only:
+// the dedicated /v1/audio/transcriptions endpoint rejects it ("Invalid
+// model", verified live 2026-07-18) and serves just the voxtral-mini
+// transcribe family. Quality-over-speed default, so transcription rides
+// chat completions with an `input_audio` block. Pinned dated snapshot —
+// `voxtral-small-latest` is a floating alias and a moving STT model
+// produces transcript drift between runs of the same replay.
+const DEFAULT_MODEL = "voxtral-small-2507";
 const DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_TOKENS = 8_192;
 
-// Voxtral transcription response shape, validated at the provider boundary
-// per `.claude/rules/boundary-validation.md`. We model only the fields we
-// read. With `timestamp_granularities[]=word` the per-word timings arrive
-// as `segments` entries (one word each); there is no separate `words`
-// array and no `duration` field in this API.
-//
-// All fields are optional defensively, mirroring the Whisper schema: a 200
-// with a missing field should degrade to safe defaults, not fail the
-// analyze chain.
-const VoxtralSegmentSchema = v.object({
-	text: v.optional(v.string()),
-	start: v.optional(v.number()),
-	end: v.optional(v.number()),
-});
-const VoxtralResponseSchema = v.object({
-	text: v.optional(v.string()),
+// The JSON the model is forced to produce via `response_format:
+// json_object`. Language is best-effort ISO-639-1.
+const TranscribedPayloadSchema = v.object({
+	text: v.string(),
 	language: v.optional(v.union([v.string(), v.null()])),
-	segments: v.optional(v.union([v.array(VoxtralSegmentSchema), v.null()])),
 });
+
+const ChatCompletionsResponseSchema = v.object({
+	choices: v.array(
+		v.object({
+			message: v.object({
+				content: v.string(),
+			}),
+		}),
+	),
+});
+
+const SYSTEM_PROMPT =
+	'You are a verbatim audio transcriber. Transcribe the spoken content of the audio exactly as heard, in whatever language is spoken. Do not summarize, paraphrase, translate, or add commentary. If the audio contains no speech, return an empty string for text. Reply only with the JSON object {"text": "...", "language": "<ISO-639-1 or null>"}.';
+
+const USER_PROMPT = "Transcribe the attached audio.";
 
 export interface MistralVoxtralOptions {
 	/** Read at call time, not at construction — env can be loaded between server
@@ -53,17 +61,15 @@ export interface MistralVoxtralOptions {
 }
 
 /**
- * Mistral Voxtral transcription provider. Wraps the mono PCM into a wav
- * before sending — the transcriptions endpoint accepts file uploads and
- * wav is the only format we have a built-in encoder for.
+ * Mistral Voxtral transcription provider. Wraps the mono PCM into a WAV
+ * and sends it inline (base64) as a chat `input_audio` block, with a
+ * JSON-mode-forced `{text, language}` reply.
  *
- * Word timings come back as one `segments` entry per word when
- * `timestamp_granularities[]=word` is requested; mapped into the same
- * `words` shape the Whisper provider produces. Mistral documents
- * `timestamp_granularities` as incompatible with `language`, so a request
- * carrying a language hint sends the hint and skips the timestamps
- * (transcript correctness beats word timings; the analyze-replay caller
- * never passes a hint, so the production path always gets words).
+ * Trade-off vs. the previous /v1/audio/transcriptions integration: no
+ * signal-aligned word timings — `words` is always null (same tolerated
+ * capability gap as the Gemini provider; `turn_transcripts.words_json` is
+ * nullable). In exchange the transcript comes from the 24B model instead
+ * of the 3B mini, and the reply carries a detected language.
  */
 export function createMistralVoxtralProvider(opts: MistralVoxtralOptions): TranscriptionProvider {
 	const model = opts.model ?? DEFAULT_MODEL;
@@ -78,21 +84,39 @@ export function createMistralVoxtralProvider(opts: MistralVoxtralOptions): Trans
 				throw new MissingProviderCredentialError("MISTRAL_API_KEY");
 			}
 			const wavBytes = writeMonoWav(input.audio, input.sampleRate);
-			const form = new FormData();
-			form.append("file", new File([wavBytes], "audio.wav", { type: "audio/wav" }));
-			form.append("model", model);
-			if (input.language !== undefined) {
-				form.append("language", input.language);
-			} else {
-				form.append("timestamp_granularities[]", "word");
-			}
+			const prompt =
+				input.language !== undefined
+					? `${USER_PROMPT} The audio is expected to be in "${input.language}".`
+					: USER_PROMPT;
+			const body = {
+				model,
+				temperature: 0,
+				max_tokens: MAX_TOKENS,
+				response_format: { type: "json_object" as const },
+				messages: [
+					{ role: "system", content: SYSTEM_PROMPT },
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: prompt },
+							{
+								type: "input_audio",
+								input_audio: { data: bytesToBase64(wavBytes), format: "wav" },
+							},
+						],
+					},
+				],
+			};
 
 			let response: Response;
 			try {
-				response = await fetchImpl(MISTRAL_TRANSCRIPTIONS_URL, {
+				response = await fetchImpl(MISTRAL_CHAT_URL, {
 					method: "POST",
-					headers: { authorization: `Bearer ${key}` },
-					body: form,
+					headers: {
+						authorization: `Bearer ${key}`,
+						"content-type": "application/json",
+					},
+					body: JSON.stringify(body),
 					signal: mergeAbortSignals(input.signal, timeoutMs),
 				});
 			} catch (cause) {
@@ -131,46 +155,60 @@ export function createMistralVoxtralProvider(opts: MistralVoxtralOptions): Trans
 				);
 			}
 
-			// Duration is computed locally rather than read off the response —
-			// the API reports only integer `usage.prompt_audio_seconds`, and the
-			// PCM length divided by sample rate is exact.
+			const content = extractMessageContent(raw);
+			const payload = parseTranscribedPayload(content);
+
+			// Duration is computed locally rather than asked-of-the-model.
+			// The PCM length divided by sample rate is exact; relying on the
+			// model would add a hallucination surface for a value we already
+			// know.
 			const durationMs = Math.max(0, Math.round((input.audio.length / input.sampleRate) * 1000));
-			return parseVoxtralResponse(raw, durationMs);
+			return {
+				text: payload.text,
+				language: payload.language ?? null,
+				durationMs,
+				words: null,
+			};
 		},
 	};
 }
 
-function parseVoxtralResponse(raw: unknown, durationMs: number): TranscriptionResult {
-	const result = v.safeParse(VoxtralResponseSchema, raw);
+function extractMessageContent(raw: unknown): string {
+	const result = v.safeParse(ChatCompletionsResponseSchema, raw);
 	if (!result.success) {
 		throw new TranscriptionProviderError(
 			"mistral-voxtral",
-			`response body failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
+			`response failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
 		);
 	}
-	const parsed = result.output;
-	const segments = parsed.segments ?? null;
-	// Word segments carry the leading inter-word space (` world,`) — trim so
-	// the stored words match what the Whisper provider produces.
-	const words =
-		segments !== null
-			? segments
-					.map((s) => {
-						if (s.text === undefined || s.start === undefined || s.end === undefined) return null;
-						const text = s.text.trim();
-						if (text.length === 0) return null;
-						return {
-							text,
-							startMs: Math.max(0, Math.round(s.start * 1000)),
-							endMs: Math.max(0, Math.round(s.end * 1000)),
-						};
-					})
-					.filter((w): w is { text: string; startMs: number; endMs: number } => w !== null)
-			: null;
+	const first = result.output.choices[0];
+	if (first === undefined) {
+		throw new TranscriptionProviderError("mistral-voxtral", "response choices array was empty");
+	}
+	return first.message.content;
+}
+
+function parseTranscribedPayload(content: string): { text: string; language: string | null } {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(content);
+	} catch (cause) {
+		throw new TranscriptionProviderError(
+			"mistral-voxtral",
+			"model output was not valid JSON",
+			null,
+			{ cause },
+		);
+	}
+	const result = v.safeParse(TranscribedPayloadSchema, parsed);
+	if (!result.success) {
+		throw new TranscriptionProviderError(
+			"mistral-voxtral",
+			`model output failed validation: ${result.issues.map((i) => i.message).join("; ")}`,
+		);
+	}
 	return {
-		text: parsed.text ?? "",
-		language: parsed.language ?? null,
-		durationMs,
-		words: words !== null && words.length > 0 ? words : null,
+		text: result.output.text,
+		language: result.output.language ?? null,
 	};
 }

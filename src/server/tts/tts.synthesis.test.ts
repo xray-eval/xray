@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
 import { makeTempAudioRoot } from "@/server/audio/audio.test-utils.ts";
+import { runVadOnChannel } from "@/server/audio/audio.vad.ts";
 import { readMonoWav } from "@/server/audio/audio.wav.ts";
 import { ttsSynthCache } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
@@ -8,6 +9,16 @@ import { makeTempStore } from "@/server/store/test-utils.ts";
 import { createTurnSynthesizer } from "./tts.synthesis.ts";
 import { makeFakeTtsProvider } from "./tts.test-utils.ts";
 import { afterEach, describe, expect, it } from "bun:test";
+
+/** Speech-like fixture: a 200 Hz sine sits inside the VAD's zero-crossing
+ *  band, so its visibility to segmentation is decided by amplitude alone. */
+function makeSine(amplitude: number, ms: number, sampleRate = 48_000): Int16Array {
+	const pcm = new Int16Array(Math.round((ms / 1000) * sampleRate));
+	for (let i = 0; i < pcm.length; i++) {
+		pcm[i] = Math.round(amplitude * Math.sin((2 * Math.PI * 200 * i) / sampleRate));
+	}
+	return pcm;
+}
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -35,7 +46,56 @@ describe("createTurnSynthesizer", () => {
 		expect(await file.exists()).toBe(true);
 		const parsed = readMonoWav(new Uint8Array(await file.arrayBuffer()));
 		expect(parsed.sampleRate).toBe(48_000);
-		expect([...parsed.pcm]).toEqual([0, 1000, -1000]);
+		// Stored audio is peak-normalized (see the level tests below), so the
+		// waveform shape survives while the amplitude lands on the target.
+		expect([...parsed.pcm]).toEqual([0, 27852, -27852]);
+	});
+
+	it("peak-normalizes stored audio so VAD-calibrated segmentation can see quiet providers", async () => {
+		// Regression for the Deepgram Aura German voices: their raw linear16
+		// sits near -33 dBFS RMS — below the ≈-23 dBFS energy threshold the
+		// VAD is calibrated for — so every replay with such a turn died with
+		// spec_vad_mismatch (zero user segments detected in the mixdown).
+		const quiet = makeSine(800, 500);
+		// Prove the fixture actually reproduces the failure pre-normalization.
+		expect(runVadOnChannel(quiet, 48_000, {})).toHaveLength(0);
+
+		const { store, audioRoot } = makeDeps();
+		const provider = makeFakeTtsProvider({ pcm: quiet });
+		const synthesize = createTurnSynthesizer({ store, audioRoot, provider });
+		const { sha256 } = await synthesize({ text: "guten tag" });
+		const file = Bun.file(join(audioRoot, "tts", `${sha256}.wav`));
+		const parsed = readMonoWav(new Uint8Array(await file.arrayBuffer()));
+		let peak = 0;
+		for (const s of parsed.pcm) peak = Math.max(peak, Math.abs(s));
+		expect(peak).toBeGreaterThanOrEqual(27800);
+		expect(peak).toBeLessThanOrEqual(27900);
+		expect(runVadOnChannel(parsed.pcm, 48_000, {}).length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("normalizes hot provider output down to the same deterministic target", async () => {
+		const { store, audioRoot } = makeDeps();
+		const provider = makeFakeTtsProvider({ pcm: makeSine(32_000, 200) });
+		const synthesize = createTurnSynthesizer({ store, audioRoot, provider });
+		const { sha256 } = await synthesize({ text: "loud" });
+		const parsed = readMonoWav(
+			new Uint8Array(await Bun.file(join(audioRoot, "tts", `${sha256}.wav`)).arrayBuffer()),
+		);
+		let peak = 0;
+		for (const s of parsed.pcm) peak = Math.max(peak, Math.abs(s));
+		expect(peak).toBeGreaterThanOrEqual(27800);
+		expect(peak).toBeLessThanOrEqual(27900);
+	});
+
+	it("leaves an all-silence synthesis untouched", async () => {
+		const { store, audioRoot } = makeDeps();
+		const provider = makeFakeTtsProvider({ pcm: new Int16Array(480) });
+		const synthesize = createTurnSynthesizer({ store, audioRoot, provider });
+		const { sha256 } = await synthesize({ text: "..." });
+		const parsed = readMonoWav(
+			new Uint8Array(await Bun.file(join(audioRoot, "tts", `${sha256}.wav`)).arrayBuffer()),
+		);
+		expect([...parsed.pcm].every((s) => s === 0)).toBe(true);
 	});
 
 	it("resamples 24kHz provider output to 48kHz", async () => {

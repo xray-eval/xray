@@ -1,14 +1,17 @@
 import { match } from "ts-pattern";
 
 import type { Env } from "@/server/env/env.ts";
+import { createBedrockJudgeProvider } from "@/server/judges/judges.bedrock.ts";
 import { createGoogleGeminiJudgeProvider } from "@/server/judges/judges.google-gemini.ts";
 import { createMistralJudgeProvider } from "@/server/judges/judges.mistral.ts";
 import { createOpenAIJudgeProvider } from "@/server/judges/judges.openai.ts";
 import type { JudgeProvider } from "@/server/judges/judges.types.ts";
+import { createDeepgramProvider } from "@/server/transcription/transcription.deepgram.ts";
 import { createGoogleGeminiTranscriptionProvider } from "@/server/transcription/transcription.google-gemini.ts";
 import { createMistralVoxtralProvider } from "@/server/transcription/transcription.mistral-voxtral.ts";
 import { createOpenAIWhisperProvider } from "@/server/transcription/transcription.openai-whisper.ts";
 import type { TranscriptionProvider } from "@/server/transcription/transcription.types.ts";
+import { createDeepgramTtsProvider } from "@/server/tts/tts.deepgram.ts";
 import { createGoogleGeminiTtsProvider } from "@/server/tts/tts.google-gemini.ts";
 import { createMistralTtsProvider } from "@/server/tts/tts.mistral.ts";
 import { createOpenAITtsProvider } from "@/server/tts/tts.openai.ts";
@@ -71,6 +74,11 @@ export function buildTranscriptionProvider(cfg: Env): TranscriptionProvider {
 			keyEnvVar: "MISTRAL_API_KEY",
 			hasKey: cfg.MISTRAL_API_KEY !== undefined,
 		},
+		{
+			kind: "deepgram-nova" as const,
+			keyEnvVar: "DEEPGRAM_API_KEY",
+			hasKey: cfg.DEEPGRAM_API_KEY !== undefined,
+		},
 	]);
 	const modelOverride = cfg.XRAY_TRANSCRIPTION_MODEL;
 	return match(kind)
@@ -89,6 +97,12 @@ export function buildTranscriptionProvider(cfg: Env): TranscriptionProvider {
 		.with("mistral-voxtral", () =>
 			createMistralVoxtralProvider({
 				apiKey: () => cfg.MISTRAL_API_KEY,
+				...(modelOverride !== undefined ? { model: modelOverride } : {}),
+			}),
+		)
+		.with("deepgram-nova", () =>
+			createDeepgramProvider({
+				apiKey: () => cfg.DEEPGRAM_API_KEY,
 				...(modelOverride !== undefined ? { model: modelOverride } : {}),
 			}),
 		)
@@ -112,6 +126,11 @@ export function buildTtsProvider(cfg: Env): TtsProvider {
 			keyEnvVar: "MISTRAL_API_KEY",
 			hasKey: cfg.MISTRAL_API_KEY !== undefined,
 		},
+		{
+			kind: "deepgram" as const,
+			keyEnvVar: "DEEPGRAM_API_KEY",
+			hasKey: cfg.DEEPGRAM_API_KEY !== undefined,
+		},
 	]);
 	const modelOverride = cfg.XRAY_TTS_MODEL;
 	return match(kind)
@@ -130,6 +149,12 @@ export function buildTtsProvider(cfg: Env): TtsProvider {
 		.with("mistral", () =>
 			createMistralTtsProvider({
 				apiKey: () => cfg.MISTRAL_API_KEY,
+				...(modelOverride !== undefined ? { model: modelOverride } : {}),
+			}),
+		)
+		.with("deepgram", () =>
+			createDeepgramTtsProvider({
+				apiKey: () => cfg.DEEPGRAM_API_KEY,
 				...(modelOverride !== undefined ? { model: modelOverride } : {}),
 			}),
 		)
@@ -153,6 +178,11 @@ export function buildJudgeProvider(cfg: Env): JudgeProvider {
 			keyEnvVar: "MISTRAL_API_KEY",
 			hasKey: cfg.MISTRAL_API_KEY !== undefined,
 		},
+		{
+			kind: "bedrock" as const,
+			keyEnvVar: "AWS_BEARER_TOKEN_BEDROCK",
+			hasKey: cfg.AWS_BEARER_TOKEN_BEDROCK !== undefined,
+		},
 	]);
 	const modelOverride = cfg.XRAY_JUDGE_MODEL;
 	return match(kind)
@@ -171,6 +201,23 @@ export function buildJudgeProvider(cfg: Env): JudgeProvider {
 		.with("mistral", () =>
 			createMistralJudgeProvider({
 				apiKey: () => cfg.MISTRAL_API_KEY,
+				...(modelOverride !== undefined ? { model: modelOverride } : {}),
+			}),
+		)
+		.with("bedrock", () =>
+			createBedrockJudgeProvider({
+				apiKey: () => cfg.AWS_BEARER_TOKEN_BEDROCK,
+				awsCredentials: () =>
+					cfg.AWS_ACCESS_KEY_ID !== undefined && cfg.AWS_SECRET_ACCESS_KEY !== undefined
+						? {
+								accessKeyId: cfg.AWS_ACCESS_KEY_ID,
+								secretAccessKey: cfg.AWS_SECRET_ACCESS_KEY,
+								...(cfg.AWS_SESSION_TOKEN !== undefined
+									? { sessionToken: cfg.AWS_SESSION_TOKEN }
+									: {}),
+							}
+						: undefined,
+				...(cfg.XRAY_BEDROCK_REGION !== undefined ? { region: cfg.XRAY_BEDROCK_REGION } : {}),
 				...(modelOverride !== undefined ? { model: modelOverride } : {}),
 			}),
 		)
