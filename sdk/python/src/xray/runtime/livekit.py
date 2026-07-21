@@ -28,7 +28,7 @@ import importlib
 import logging
 import time
 import wave
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -80,6 +80,40 @@ SAMPLES_PER_FRAME: Final[int] = SAMPLE_RATE * FRAME_MS // 1000
 # ``runtime.run``) lifts the replay-scope baggage onto these spans so
 # the OTLP receiver can route them to ``replay_turns``.
 _TRACER = trace.get_tracer("xray-py-driver", "0.0.1")
+
+# Provider control tags that leak into caption text. `<flush>` is
+# Gradium's utterance-flush marker — it must never reach stored
+# transcripts (spans, UI, judge input).
+_CAPTION_CONTROL_TOKENS: Final[tuple[str, ...]] = ("<flush>",)
+
+
+def _assemble_transcript(parts: Iterable[str]) -> str:
+    """Join per-segment-id caption texts into one turn transcript.
+
+    ``parts`` is the latest text per segment id, in first-arrival order.
+    Cumulative caption streams re-send the whole utterance so far — and a
+    final segment can arrive under a NEW id carrying the full utterance
+    again — so texts are merged by containment: a part that extends the
+    assembled text replaces it, a part the assembled text already starts
+    with is dropped, anything else is appended with a space. Control
+    tokens are stripped and whitespace collapsed before comparing, so
+    token/spacing artifacts can't defeat the prefix check.
+    """
+    out = ""
+    for raw in parts:
+        text = raw
+        for token in _CAPTION_CONTROL_TOKENS:
+            text = text.replace(token, " ")
+        text = " ".join(text.split())
+        if not text:
+            continue
+        if not out or text.startswith(out):
+            out = text
+        elif out.startswith(text):
+            continue
+        else:
+            out = f"{out} {text}"
+    return out
 
 
 @asynccontextmanager
@@ -214,6 +248,15 @@ class LiveKitRuntime(Runtime):
         room.on("transcription_received")(_on_transcription)
 
         await room.connect(self.url, token, options=lk_rtc.RoomOptions())
+        # The agent job is dispatched on room creation, so the agent can be
+        # in the room before the driver connects — `participant_connected`
+        # never fires for a participant that is already present, and the
+        # join wait below would time out with both parties in the room.
+        # Pre-existing *audio tracks* need no equivalent scan: with
+        # autosubscribe, `track_subscribed` fires after connect for
+        # existing publications.
+        for existing in room.remote_participants.values():
+            _on_join(existing)
         try:
             try:
                 await asyncio.wait_for(agent_joined.wait(), timeout=self.agent_join_timeout_s)
@@ -369,16 +412,22 @@ class LiveKitRuntime(Runtime):
                 transcription_queue.get_nowait()
 
         segment = _TurnSegment(role="agent", idx=idx, key=turn.key)
-        transcript_buf: list[str] = []
+        # Caption streams (e.g. Gradium's TTS-aligned transcript) re-send
+        # one segment id with cumulatively growing text — keep only the
+        # latest text per id (insertion-ordered), never append, or every
+        # partial repeats the whole prefix in the stored transcript.
+        latest_text_by_segment_id: dict[str, str] = {}
         final_seen = asyncio.Event()
+
+        def _ingest(seg: LkTranscriptionSegment) -> None:
+            latest_text_by_segment_id[seg.id] = seg.text
+            if seg.final:
+                final_seen.set()
 
         async def _drain_transcripts() -> None:
             while not final_seen.is_set():
                 seg = await transcription_queue.get()
-                transcript_buf.append(seg.text)
-                if seg.final:
-                    final_seen.set()
-                    return
+                _ingest(seg)
 
         # Emit the agent-role ``xray.turn`` span from the driver too.
         # The driver owns turn-idx allocation end-to-end (enumerated
@@ -416,17 +465,14 @@ class LiveKitRuntime(Runtime):
                 # loop (common when the stream finishes synchronously, as in
                 # the test mocks).
                 while not transcription_queue.empty():
-                    seg = transcription_queue.get_nowait()
-                    transcript_buf.append(seg.text)
-                    if seg.final:
-                        final_seen.set()
+                    _ingest(transcription_queue.get_nowait())
                 if not transcript_task.done():
                     transcript_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await transcript_task
 
             segment.ended_at = time.time()
-            segment.transcript = " ".join(transcript_buf).strip()
+            segment.transcript = _assemble_transcript(latest_text_by_segment_id.values())
             if segment.transcript:
                 span.set_attribute("xray.turn.transcript", segment.transcript)
 

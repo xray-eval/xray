@@ -31,9 +31,14 @@ from xray.runtime.livekit_live import LiveKitLiveRuntime
 
 
 class _FakeRoom:
-    def __init__(self, staged_events: list[tuple[str, tuple[Any, ...]]]) -> None:
+    def __init__(
+        self,
+        staged_events: list[tuple[str, tuple[Any, ...]]],
+        remote_participants: dict[str, Any] | None = None,
+    ) -> None:
         self._handlers: dict[str, list[Any]] = {}
         self._staged_events = staged_events
+        self.remote_participants: dict[str, Any] = dict(remote_participants or {})
         self.local_participant = MagicMock()
         self.local_participant.publish_track = AsyncMock(return_value=MagicMock())
         self.disconnect = AsyncMock(return_value=None)
@@ -59,12 +64,20 @@ class _FakeRoom:
 
 
 class _FakeRoomFactory:
-    def __init__(self, staged_events: list[tuple[str, tuple[Any, ...]]]) -> None:
+    def __init__(
+        self,
+        staged_events: list[tuple[str, tuple[Any, ...]]],
+        remote_participants: dict[str, Any] | None = None,
+    ) -> None:
         self.staged_events = staged_events
+        self.remote_participants = remote_participants or {}
         self.rooms: list[_FakeRoom] = []
 
     def __call__(self) -> _FakeRoom:
-        room = _FakeRoom(staged_events=self.staged_events)
+        room = _FakeRoom(
+            staged_events=self.staged_events,
+            remote_participants=self.remote_participants,
+        )
         self.rooms.append(room)
         return room
 
@@ -174,9 +187,15 @@ def _fake_speaker_factory(sink: _FakeSpeaker) -> Any:
     return factory
 
 
-def _build_fake_lk_rtc(staged_events: list[tuple[str, tuple[Any, ...]]] | None = None) -> Any:
+def _build_fake_lk_rtc(
+    staged_events: list[tuple[str, tuple[Any, ...]]] | None = None,
+    remote_participants: dict[str, Any] | None = None,
+) -> Any:
     rtc = MagicMock(name="lk_rtc")
-    rtc.Room = _FakeRoomFactory(staged_events=staged_events or [])
+    rtc.Room = _FakeRoomFactory(
+        staged_events=staged_events or [],
+        remote_participants=remote_participants,
+    )
     rtc.AudioSource = _FakeAudioSource
     rtc.AudioFrame = _FakeAudioFrame
     rtc.LocalAudioTrack = _FakeLocalAudioTrack
@@ -390,6 +409,27 @@ async def test_request_stop_ends_open_ended_session(tmp_path: Path):
     rt.request_stop()
     result = await asyncio.wait_for(task, timeout=3.0)
     assert result.responses == []
+
+
+@pytest.mark.asyncio
+async def test_agent_already_in_room_at_connect_is_detected(tmp_path: Path):
+    """Same join race as the scripted runtime: the agent can be in the room
+    before the driver connects, so ``participant_connected`` never fires.
+    The live runtime must also scan ``room.remote_participants`` after
+    connect instead of dying with ``AgentNotJoinedError``."""
+    agent = MagicMock()
+    agent.identity = "agent-bot"
+    rtc = _build_fake_lk_rtc(staged_events=[], remote_participants={"agent-bot": agent})
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api, mic_frames=[_silence(20)])
+    rt.agent_join_timeout_s = 0.05
+    conv = Conversation(name="live", turns=[], live=True)
+
+    task = asyncio.create_task(rt.run(conv))
+    await asyncio.sleep(0.05)
+    rt.request_stop()
+    result = await asyncio.wait_for(task, timeout=3.0)
+    assert result.full_audio_path is not None
 
 
 def test_agent_not_joined_raises(tmp_path: Path):

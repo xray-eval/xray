@@ -32,9 +32,14 @@ from xray.runtime.livekit import (
 
 
 class _FakeRoom:
-    def __init__(self, staged_events: list[tuple[str, tuple[Any, ...]]]) -> None:
+    def __init__(
+        self,
+        staged_events: list[tuple[str, tuple[Any, ...]]],
+        remote_participants: dict[str, Any] | None = None,
+    ) -> None:
         self._handlers: dict[str, list[Any]] = {}
         self._staged_events = staged_events
+        self.remote_participants: dict[str, Any] = dict(remote_participants or {})
         self.local_participant = MagicMock()
         self.local_participant.set_metadata = AsyncMock(return_value=None)
         self.local_participant.publish_track = AsyncMock(return_value=MagicMock())
@@ -64,15 +69,20 @@ class _FakeRoom:
 @dataclass
 class _FakeRoomFactory:
     """Builds a single ``_FakeRoom`` per call, but holds the staged
-    events that the room fires inside ``connect``."""
+    events that the room fires inside ``connect`` and the participants
+    already present in the room at connect time."""
 
     staged_events: list[tuple[str, tuple[Any, ...]]] = field(
         default_factory=list[tuple[str, tuple[Any, ...]]]
     )
+    remote_participants: dict[str, Any] = field(default_factory=dict[str, Any])
     rooms: list[_FakeRoom] = field(default_factory=list[_FakeRoom])
 
     def __call__(self) -> _FakeRoom:
-        room = _FakeRoom(staged_events=self.staged_events)
+        room = _FakeRoom(
+            staged_events=self.staged_events,
+            remote_participants=self.remote_participants,
+        )
         self.rooms.append(room)
         return room
 
@@ -138,9 +148,15 @@ class _FakeAudioStream:
         return _gen()
 
 
-def _build_fake_lk_rtc(staged_events: list[tuple[str, tuple[Any, ...]]] | None = None) -> Any:
+def _build_fake_lk_rtc(
+    staged_events: list[tuple[str, tuple[Any, ...]]] | None = None,
+    remote_participants: dict[str, Any] | None = None,
+) -> Any:
     rtc = MagicMock(name="lk_rtc")
-    rtc.Room = _FakeRoomFactory(staged_events=staged_events or [])
+    rtc.Room = _FakeRoomFactory(
+        staged_events=staged_events or [],
+        remote_participants=remote_participants or {},
+    )
     rtc.AudioSource = _FakeAudioSource
     rtc.AudioFrame = _FakeAudioFrame
     rtc.LocalAudioTrack = _FakeLocalAudioTrack
@@ -181,11 +197,16 @@ def _stage_agent_track(frames: list[bytes]) -> tuple[str, tuple[Any, ...]]:
 
 
 def _stage_transcription_final(text: str) -> tuple[str, tuple[Any, ...]]:
+    return _stage_transcription(text, seg_id=f"seg-{text}", final=True)
+
+
+def _stage_transcription(text: str, *, seg_id: str, final: bool) -> tuple[str, tuple[Any, ...]]:
     agent = MagicMock()
     agent.identity = "agent-bot"
     seg = MagicMock()
+    seg.id = seg_id
     seg.text = text
-    seg.final = True
+    seg.final = final
     return ("transcription_received", ([seg], agent, MagicMock()))
 
 
@@ -455,6 +476,110 @@ def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
     # on entry and (since no new segments arrive for it) time out with
     # an empty transcript.
     assert "stale" not in result.responses[2].transcript
+
+
+def _run_agent_turn_with_caption_events(
+    tmp_path: Path, events: list[tuple[str, tuple[Any, ...]]]
+) -> str:
+    """Drive one user + one agent turn; fire the given caption events after
+    the agent turn's first audio frame; return the agent transcript."""
+    track_event = _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)])
+    track_obj = track_event[1][0]
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join(), track_event])
+
+    def _fire_captions() -> None:
+        for name, args in events:
+            rtc.Room.rooms[0].fire(name, *args)
+
+    track_obj._xray_after_frame_callbacks = [_fire_captions, None]
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api)
+    rt.agent_turn_timeout_s = 2.0
+
+    conv = Conversation(name="c", turns=[Turn.user("hello", key="u0"), Turn.agent(key="a0")])
+    result = asyncio.run(rt.run(conv))
+    return result.responses[1].transcript
+
+
+def test_cumulative_caption_segments_are_replaced_not_appended(tmp_path: Path):
+    """TTS-aligned caption streams (e.g. Gradium via LiveKit's
+    ``use_tts_aligned_transcript``) re-send one segment id with cumulatively
+    growing text, and the final full-utterance segment can arrive under a
+    NEW id. Appending every event repeats the whole prefix per partial
+    (``Hallo! Hallo! Ich Hallo! Ich bin …``) — the driver must keep only
+    the latest text per segment id and merge overlapping texts."""
+    transcript = _run_agent_turn_with_caption_events(
+        tmp_path,
+        [
+            _stage_transcription("Hallo!", seg_id="s1", final=False),
+            _stage_transcription("Hallo! Ich bin der Assistent.", seg_id="s1", final=False),
+            _stage_transcription(
+                "Hallo! Ich bin der Assistent. Wie kann ich helfen?", seg_id="s2", final=True
+            ),
+        ],
+    )
+    assert transcript == "Hallo! Ich bin der Assistent. Wie kann ich helfen?"
+
+
+def test_distinct_caption_segments_join_in_arrival_order(tmp_path: Path):
+    """Two segments carrying different sentences (the non-cumulative case)
+    still join with a space, in first-arrival order."""
+    transcript = _run_agent_turn_with_caption_events(
+        tmp_path,
+        [
+            _stage_transcription("Erste Antwort.", seg_id="a", final=False),
+            _stage_transcription("Zweite Antwort.", seg_id="b", final=True),
+        ],
+    )
+    assert transcript == "Erste Antwort. Zweite Antwort."
+
+
+def test_flush_control_token_is_stripped_from_transcript(tmp_path: Path):
+    """Gradium terminates utterances with a literal ``<flush>`` control tag;
+    it must never leak into stored transcripts (spans, UI, judge input)."""
+    transcript = _run_agent_turn_with_caption_events(
+        tmp_path,
+        [
+            _stage_transcription("Guten Tag. <flush>", seg_id="s1", final=True),
+        ],
+    )
+    assert transcript == "Guten Tag."
+
+
+def test_agent_already_in_room_at_connect_is_detected(tmp_path: Path):
+    """The agent job is dispatched on room creation, so the agent can join
+    BEFORE the driver connects. ``participant_connected`` never fires for a
+    participant that is already in the room — the runtime must scan
+    ``room.remote_participants`` after connect or the replay dies with
+    ``AgentNotJoinedError`` while both parties sit in the room."""
+    agent = MagicMock()
+    agent.identity = "agent-bot"
+    rtc = _build_fake_lk_rtc(staged_events=[], remote_participants={"agent-bot": agent})
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api)
+    rt.agent_join_timeout_s = 0.05
+
+    conv = Conversation(name="c", turns=[Turn.user("hi", key="u0")])
+
+    result = asyncio.run(rt.run(conv))
+    assert result.full_audio_path is not None
+
+
+def test_pre_joined_driver_identity_does_not_count_as_agent(tmp_path: Path):
+    """A stale remote participant carrying the driver's own identity (e.g. a
+    zombie session from a crashed prior run) must not satisfy the join wait
+    — the scan goes through the same identity filter as the event handler."""
+    ghost = MagicMock()
+    ghost.identity = "xray-driver"
+    rtc = _build_fake_lk_rtc(staged_events=[], remote_participants={"xray-driver": ghost})
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api)
+    rt.agent_join_timeout_s = 0.05
+
+    conv = Conversation(name="c", turns=[Turn.user("hi")])
+
+    with pytest.raises(AgentNotJoinedError):
+        asyncio.run(rt.run(conv))
 
 
 def test_runtime_raises_agent_not_joined_on_timeout(tmp_path: Path):
