@@ -124,16 +124,19 @@ overrides:
   # that bumps qs. Added 2026-05-24.
   "express>qs": "^6.15.2"
   "body-parser>qs": "^6.15.2"
-  # GHSA-h67p-54hq-rp68 — js-yaml <=4.1.1 has a quadratic-complexity DoS in
-  # YAML merge-key (`<<`) handling via repeated aliases. Pulled in transitively
-  # via @commitlint/cli > @commitlint/load > cosmiconfig > js-yaml — a dev-only
-  # commit-message linter that only ever parses our own config, never untrusted
-  # YAML, so practical risk is nil — but `pnpm audit --audit-level=moderate`
-  # blocks merge. Upstream never published the advisory's nominal 4.1.2; the
-  # fix shipped in 4.2.0 (published 2026-05-31, past the 7-day cooldown), which
-  # satisfies the advisory's >=4.1.2. Surgical pin on the cosmiconfig parent.
-  # Remove once cosmiconfig bumps js-yaml. Added 2026-06-16.
-  "cosmiconfig>js-yaml": "^4.2.0"
+  # GHSA-h67p-54hq-rp68 / GHSA-52cp-r559-cp3m — js-yaml has quadratic-complexity
+  # DoS bugs in YAML merge-key (`<<`) handling via repeated aliases. The first
+  # advisory covered <=4.1.1 (fixed in 4.2.0); GHSA-52cp-r559-cp3m widened the
+  # vulnerable range to <4.3.0, so the prior ^4.2.0 pin stopped clearing the
+  # gate. Pulled in transitively via @commitlint/cli > @commitlint/load >
+  # cosmiconfig > js-yaml — a dev-only commit-message linter that only ever
+  # parses our own config, never untrusted YAML, and isn't in the shipped image
+  # (the prod Docker stage installs `--prod`), so practical risk is nil — but
+  # `pnpm audit --audit-level=moderate` blocks merge. js-yaml 4.3.0 (published
+  # 2026-06-26, past the 7-day cooldown) clears both advisories. Surgical pin on
+  # the cosmiconfig parent. Remove once cosmiconfig bumps js-yaml. Updated
+  # 2026-07-21.
+  "cosmiconfig>js-yaml": "^4.3.0"
   # GHSA-j6c9-x7qj-28xf / GHSA-rv63-4mwf-qqc2 / GHSA-wgpf-jwqj-8h8p — hono
   # <4.12.25 has body-limit-middleware bypasses (Content-Length understated on
   # AWS Lambda) and a Lambda@Edge adapter that keeps only the last value of a
@@ -150,28 +153,39 @@ overrides:
   # ships a release on hono >=4.12.25. Added 2026-06-17.
   "@modelcontextprotocol/sdk>hono": "^4.12.25"
   "@hono/node-server>hono": "^4.12.25"
+  # GHSA-cmwh-pvxp-8882 — DOMPurify <3.4.11 has an ALLOWED_ATTR pollution via
+  # setConfig(). Rides in via mermaid>dompurify (docs-site toolchain). mermaid
+  # sanitizes the diagrams WE author at build time, never untrusted input, and
+  # we never call setConfig with attacker-controlled config — and it's dev-only
+  # (VitePress is dropped from the prod `--prod` image), so practical risk is
+  # nil. Was suppressed via auditConfig.ignoreGhsas while the fix sat in
+  # cooldown; dompurify 3.4.11 (published 2026-06-17) is now well past the 7-day
+  # cooldown, so we pin it as a real fix instead of ignoring. mermaid@11.15.0
+  # declares dompurify ^3.3.1, so ^3.4.11 is compatible. Surgical pin on the
+  # mermaid parent. Remove once mermaid bumps dompurify. Added 2026-07-21.
+  "mermaid>dompurify": "^3.4.11"
 
 # VEX-style "not affected" disposition: GHSA-gv7w-rqvm-qjhr is unreachable in
-# this repo, so the audit gate is told to skip that one advisory — we do NOT
-# relax the 7-day cooldown to pull the fix. The advisory is in esbuild's *Deno*
-# installer (`lib/deno/mod.ts`), which fetches the native binary with no SHA-256
-# check. We never invoke esbuild via Deno: it's a dev-only drizzle-kit
-# transitive, installed through the *Node* path (`lib/npm/node-install.ts`),
-# which hardcodes registry.npmjs.org (it does NOT read NPM_CONFIG_REGISTRY) and
-# SHA-256-checks the binary before exec. The vulnerable code path does not run
-# here.
+# this repo, so the audit gate is told to skip that one advisory. The advisory
+# is in esbuild's *Deno* installer (`lib/deno/mod.ts`), which fetches the native
+# binary with no SHA-256 check. We never invoke esbuild via Deno: every esbuild
+# copy here is a dev-only build-tool transitive (drizzle-kit, and — since the
+# docs site — vitepress>vite), installed through the *Node* path
+# (`lib/npm/node-install.ts`), which hardcodes registry.npmjs.org (it does NOT
+# read NPM_CONFIG_REGISTRY) and SHA-256-checks the binary before exec. The
+# vulnerable code path does not run here, and none of it ships in the `--prod`
+# image.
 #
-# Why ignore instead of bumping to the patched esbuild 0.28.1: that release was
-# published 2026-06-11 (<7 days old), so pinning it would force a cooldown
-# bypass. Bypassing would pull a fresh release of a build tool that runs a
-# native-binary postinstall and executes at build time with full filesystem /
-# CI access — the exact high-blast-radius supply-chain risk the cooldown exists
-# to contain (cf. the active June 2026 "Miasma" npm worm). Provenance/signatures
-# do NOT rule that out ("attestations can't block a pipeline hijack"). Taking
-# that risk to remediate a finding that cannot reach us is the wrong trade when
-# the cooldown clears on its own in ~2 days. So: once 0.28.1 ages past the
-# cooldown (after ~2026-06-18), bump esbuild to ^0.28.1 in `overrides` above and
-# delete this ignore — fix landed, zero cooldown bypass. Added 2026-06-16.
+# Why keep ignoring rather than bumping to the patched esbuild 0.28.1: when this
+# entry was added (2026-06-16) drizzle-kit's was the only esbuild in the tree,
+# and the plan was to pin ^0.28.1 once it cleared the 7-day cooldown. That plan
+# no longer works — the later VitePress docs PR pulled in vite 5.4, which pins
+# esbuild ~0.21.5; our esbuild copies (0.21.5 via vite, 0.25.x via drizzle-kit)
+# are all <0.28.1, and vite 5.4 can't move to 0.28 without breaking. vitepress
+# has no stable release off vite 5.4 yet (only a 2.0.0-alpha on vite 6), so an
+# override can't eliminate this ignore — the vite-pinned copy would still trip
+# it. This now shares the fate of the vite/esbuild dev-server ignores below:
+# revisit when vitepress ships a stable vite-6 release. Updated 2026-07-21.
 auditConfig:
   ignoreGhsas:
     - GHSA-gv7w-rqvm-qjhr
@@ -208,11 +222,3 @@ auditConfig:
     # Bumping vite's esbuild to 0.25 risks breaking vite 5.4's build, so ignore
     # rather than override. Added 2026-06-21.
     - GHSA-67mh-4wv8-2f99
-    # GHSA-cmwh-pvxp-8882 (moderate) — DOMPurify ALLOWED_ATTR pollution via
-    # setConfig(). Rides in via mermaid>dompurify; mermaid sanitizes the diagrams
-    # WE author at build time, never untrusted input, and we never call setConfig
-    # with attacker-controlled config — unreachable. The fix (dompurify 3.4.11,
-    # published 2026-06-17) is still inside the 7-day cooldown and the finding is
-    # not urgent, so we don't bypass it. Convert to `overrides: mermaid>dompurify:
-    # ^3.4.11` once 3.4.11 clears cooldown (~2026-06-24). Added 2026-06-21.
-    - GHSA-cmwh-pvxp-8882
