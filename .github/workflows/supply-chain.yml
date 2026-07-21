@@ -1,6 +1,8 @@
 # Supply-chain audit — see .claude/rules/supply-chain.md (section 2).
-# Runs on every PR and every push to main. Don't add `workflow_dispatch`
-# without thinking about who can manually trigger and skip checks.
+# Runs on every PR, every push to main, and daily on a schedule (to catch
+# advisory-DB drift — see the `schedule` trigger below). Don't add
+# `workflow_dispatch` without thinking about who can manually trigger and skip
+# checks.
 
 name: Supply chain
 
@@ -8,6 +10,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # pnpm audit is time-sensitive: a newly-disclosed advisory can flip a commit
+    # that was green to red with no new push. A daily run surfaces that drift on
+    # main proactively instead of at release time. Issue #109.
+    - cron: "17 6 * * *"
 
 # Default-deny — each job re-grants only what it needs.
 permissions: {}

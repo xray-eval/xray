@@ -131,6 +131,27 @@ Follow the 5-step gate in [`.claude/rules/supply-chain.md`](./.claude/rules/supp
 - Do not put secrets, internal hostnames, customer names, or exploit details in PR titles, PR descriptions, commit messages, or issue bodies. GitHub keeps PR metadata even after force-push, and the public Events API surfaces it within seconds. See [`.claude/rules/public-repo.md`](./.claude/rules/public-repo.md) §3.
 - One topic per PR. Refactor and feature in the same PR makes review painful.
 
+## Releasing
+
+Releases are **tag-driven**. Pushing a `v*.*.*` tag is the entire release action — there is **no** version bump in `package.json` / `sdk/python/pyproject.toml` (the image version is derived from the git tag by `docker/metadata-action`).
+
+1. **Make sure `main` is green — especially `Supply-chain audit`.** That check also runs daily on a schedule, so `pnpm audit` drift (a newly-disclosed advisory flagging an already-pinned dep) surfaces here rather than at release time. If it's red, fix it first — usually a surgical `overrides` bump in `pnpm-workspace.yaml` (see [`.claude/rules/supply-chain.md`](./.claude/rules/supply-chain.md)).
+2. **Tag and push** the commit you want to ship:
+   ```bash
+   git tag -s v0.0.1-alpha.N -m "v0.0.1-alpha.N"   # signed annotated tag
+   git push origin v0.0.1-alpha.N
+   ```
+   A `-alpha.N` / `-rc.N` suffix marks a pre-release; a bare `vX.Y.Z` is a stable release.
+3. The tag push then does everything automatically:
+   - **`publish.yml`** builds the multi-arch image, pushes `ghcr.io/xray-eval/xray:<version>`, cosign-signs it (keyless OIDC), and attaches SLSA-provenance + SPDX-SBOM attestations.
+   - its **`release`** job creates the GitHub Release (pre-release for `-suffix` tags) with the image ref + digest and an auto-generated changelog.
+   - **`docs.yml`** rebuilds the VitePress site and deploys it to GitHub Pages.
+
+Verify the published image afterward:
+```bash
+gh attestation verify oci://ghcr.io/xray-eval/xray:<version> --owner xray-eval
+```
+
 ## Reporting a security issue
 
 Please **do not** open a public issue for a vulnerability. Email `bong.basile@gmail.com` with details and we'll coordinate a fix and disclosure timeline.
