@@ -114,9 +114,6 @@ def test_recorded_audio_uploads_skips_turns_without_recorded_audio():
     assert c.recorded_audio_uploads() == []
 
 
-# ─── Assertion / Judge wire encoding ──────────────────────────────────
-
-
 def test_assertion_contains_wire_includes_kind_text_and_case_insensitive_default():
     a = Assertion.contains("hello")
     assert a.to_wire() == {"kind": "contains", "text": "hello", "case_insensitive": True}

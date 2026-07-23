@@ -28,8 +28,6 @@ from xray.runtime.livekit import (
     write_stereo_mixdown,
 )
 
-# ─── Fakes ────────────────────────────────────────────────────────────
-
 
 class _FakeRoom:
     def __init__(
@@ -234,9 +232,6 @@ def _runtime(
     rt.bind(replay_id="rep-1", conversation_hash="a" * 64)
     rt.inject_user_audio(user_audio if user_audio is not None else {0: _make_silence_pcm(40)})
     return rt
-
-
-# ─── Tests ────────────────────────────────────────────────────────────
 
 
 def test_bind_required_before_run():

@@ -95,8 +95,6 @@ ReplayLifecycleState: TypeAlias = Literal[
     "pending", "running", "recording_uploaded", "analyzing", "completed", "failed"
 ]
 
-# ─── Wire payloads (snake_case) ───────────────────────────────────────
-
 
 class ReplayCreateBody(TypedDict):
     """Body of ``POST /v1/replays``."""
@@ -120,9 +118,6 @@ class ReplayPatchBody(TypedDict):
 
     lifecycle_state: NotRequired[ReplayLifecycleState]
     failure_reason: NotRequired[FailureReason]
-
-
-# ─── Public entrypoint ────────────────────────────────────────────────
 
 
 async def run(
@@ -441,9 +436,6 @@ def _signal_signal_stops(stoppable: StoppableRuntime) -> Generator[None, None, N
         signal.signal(signal.SIGINT, previous)
 
 
-# ─── Result translation ──────────────────────────────────────────────
-
-
 class _AssertionOutcomePayload(BaseModel):
     turn_idx: int
     assertion_idx: int
@@ -523,9 +515,6 @@ def _result_from_payload(payload: _ReplayResultPayload, *, replay_id: str) -> Re
             for m in payload.metrics.turns
         ),
     )
-
-
-# ─── SSE wait ────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -622,9 +611,6 @@ def _parse_failed_reason(raw: str) -> FailureReason | None:
     return "evaluation_failed"
 
 
-# ─── Driver-side failure PATCH (the one remaining PATCH path) ────────
-
-
 async def _patch_driver_failure(
     client: httpx.AsyncClient, replay_id: str, failure_reason: FailureReason
 ) -> None:
@@ -639,9 +625,6 @@ async def _patch_driver_failure(
         )
         return
     _raise_for_status_typed(r, f"PATCH /v1/replays/{replay_id}")
-
-
-# ─── Helpers ──────────────────────────────────────────────────────────
 
 
 _TResponse = TypeVar("_TResponse", bound=BaseModel)

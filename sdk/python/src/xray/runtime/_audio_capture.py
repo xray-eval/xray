@@ -25,8 +25,6 @@ from typing_extensions import Buffer
 
 from xray.errors import LiveDependencyError, MicCaptureError, SpeakerPlaybackError
 
-# ─── sounddevice surface (Protocol-typed) ─────────────────────────────
-
 
 class _RawInputStream(Protocol):
     """The slice of ``sounddevice.RawInputStream`` instances we drive."""
@@ -76,9 +74,6 @@ class SoundDeviceModule(Protocol):
     ) -> _RawOutputStream: ...
 
 
-# ─── Runtime-facing contract ──────────────────────────────────────────
-
-
 class MicStream(Protocol):
     """An async-iterable of raw int16 mono PCM frames from the mic.
 
@@ -118,9 +113,6 @@ class SpeakerSinkFactory(Protocol):
     """Builds a :class:`SpeakerSink` for a given output format."""
 
     def __call__(self, *, sample_rate: int, channels: int) -> SpeakerSink: ...
-
-
-# ─── sounddevice-backed implementation ────────────────────────────────
 
 
 def load_sounddevice() -> SoundDeviceModule:

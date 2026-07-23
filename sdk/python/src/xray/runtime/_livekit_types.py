@@ -21,8 +21,6 @@ from typing import Literal, Protocol, runtime_checkable
 # from the optional ``livekit`` package at module scope.
 LkParticipantKind = Literal["standard", "egress", "ingress", "sip", "agent"]
 
-# ─── Runtime objects (instances) ──────────────────────────────────────
-
 
 class LkAudioFrame(Protocol):
     """A single ~20 ms PCM frame in/out of an audio source/stream."""
@@ -101,9 +99,6 @@ class LkTranscriptionSegment(Protocol):
     final: bool
 
 
-# ─── Module surface — constructors + enum values ──────────────────────
-
-
 class _LkLocalAudioTrack(Protocol):
     @staticmethod
     def create_audio_track(name: str, source: LkAudioSource) -> LkTrack: ...
@@ -130,9 +125,6 @@ class LkRtcModule(Protocol):
     TrackPublishOptions: Callable[[], LkTrackPublishOptions]
     TrackKind: _LkTrackKind
     TrackSource: _LkTrackSource
-
-
-# ─── livekit.api ──────────────────────────────────────────────────────
 
 
 class LkAccessToken(Protocol):

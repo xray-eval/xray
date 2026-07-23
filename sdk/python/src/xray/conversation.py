@@ -32,9 +32,6 @@ Role: TypeAlias = Literal["user", "agent"]
 EvaluationStatus: TypeAlias = Literal["passed", "failed", "errored"]
 
 
-# ─── AudioRef: discriminated union ────────────────────────────────────
-
-
 @dataclass(frozen=True)
 class RecordedAudio:
     """Point at a pre-recorded WAV on disk. Must be 48 kHz / mono / 16-bit."""
@@ -63,9 +60,6 @@ class TtsAudio:
 
 
 AudioRef: TypeAlias = RecordedAudio | TtsAudio
-
-
-# ─── Assertion: declarative, server-evaluated ────────────────────────
 
 
 @dataclass(frozen=True)
@@ -163,9 +157,6 @@ class Assertion:
         return {**self.params, "kind": self.kind}
 
 
-# ─── Judge: conversation-level ──────────────────────────────────────
-
-
 @dataclass(frozen=True)
 class Judge:
     """A conversation-level evaluator the server runs once per replay.
@@ -205,9 +196,6 @@ class Judge:
 
     def to_wire(self) -> JudgeWirePayload:
         return {**self.params, "kind": self.kind}
-
-
-# ─── Turn + Conversation ──────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -305,9 +293,6 @@ def _recorded_upload_key(turn_idx: int) -> str:
     return f"audio_{turn_idx}"
 
 
-# ─── Wire payloads (TypedDicts) ───────────────────────────────────────
-
-
 class RecordedAudioWirePayload(TypedDict):
     kind: Literal["recorded"]
     upload_key: str
@@ -344,9 +329,6 @@ class ConversationSpecBody(TypedDict):
     live: NotRequired[bool]
 
 
-# ─── Wire encoders ────────────────────────────────────────────────────
-
-
 def _audio_to_wire(audio: AudioRef, turn_idx: int) -> AudioWirePayload:
     match audio:
         case RecordedAudio():
@@ -381,7 +363,6 @@ def _turn_to_wire(turn: Turn, turn_idx: int) -> TurnWirePayload:
     return out
 
 
-# ─── Runtime-produced records (informational only) ───────────────────
 # Kept for runtime APIs (LiveKitRuntime returns AgentResponse per turn).
 # The orchestrator no longer reads these — assertion + judge evaluation
 # happens server-side. Devs who want to introspect runtime output can
@@ -426,9 +407,6 @@ class AgentResponse:
     tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
     model_usage: tuple[ModelUsage, ...] = field(default_factory=tuple)
     stage_timings: StageTimings = field(default_factory=dict[str, float])
-
-
-# ─── Server-computed verdict dataclasses ─────────────────────────────
 
 
 @dataclass(frozen=True)
