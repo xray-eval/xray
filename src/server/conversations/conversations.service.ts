@@ -260,7 +260,6 @@ function parseStoredSpec(
 	return { turns: result.output.turns, judges: result.output.judges, live: result.output.live };
 }
 
-/** Project a stored row back onto the wire response shape. */
 export function toConversationResponse(row: ConversationRow): ConversationResponse {
 	const { turns, judges, live } = parseStoredSpec(row.turnsJson, row.hash);
 	return {

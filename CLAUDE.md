@@ -64,6 +64,7 @@ Every CI step must be runnable on a developer machine with one command — image
 @.claude/rules/pattern-matching.md
 @.claude/rules/boundary-validation.md
 @.claude/rules/comments.md
+_Comments — in doubt, delete. Default to no comment; earn each one with a non-obvious **why**. A missing comment is recoverable; a misleading or noisy one isn't._
 @.claude/rules/no-lint-suppressions.md
 @.claude/rules/tdd.md
 @.claude/rules/supply-chain.md
