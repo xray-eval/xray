@@ -46,17 +46,11 @@ export interface GoogleGeminiTranscriptionOptions {
 }
 
 /**
- * Google Gemini transcription provider. Wraps the mono PCM into a WAV and
- * sends it inline (base64) to `generateContent` with a JSON-schema-forced
- * response. v1 trade-off vs. the OpenAI Whisper provider: Gemini does not
- * produce signal-aligned word timings — `words` is always null. The
- * inspector's `words_json` column is already nullable so this is a
- * tolerated capability gap, not a contract break.
- *
- * The Cloud Speech-to-Text APIs have true word timings but sit behind a
- * different auth surface (service account) than the generativelanguage
- * endpoint this provider targets. A future provider file lands here once
- * that path matters.
+ * Google Gemini transcription provider. Wraps the mono PCM into a WAV and sends
+ * it inline (base64) to `generateContent` with a JSON-schema-forced response.
+ * Trade-off vs. Whisper: Gemini produces no signal-aligned word timings —
+ * `words` is always null (a tolerated gap; `turn_transcripts.words_json` is
+ * nullable), not a contract break.
  */
 export function createGoogleGeminiTranscriptionProvider(
 	opts: GoogleGeminiTranscriptionOptions,

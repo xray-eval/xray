@@ -35,7 +35,6 @@ export class MalformedOtlpBodyError extends OtlpError {
 	}
 }
 
-/** Body exceeded the per-request byte cap. */
 export class OtlpBodyTooLargeError extends OtlpError {
 	readonly maxBytes: number;
 	constructor(maxBytes: number) {
@@ -45,7 +44,6 @@ export class OtlpBodyTooLargeError extends OtlpError {
 	}
 }
 
-/** Request contained more spans than the per-request cap. */
 export class TooManySpansPerRequestError extends OtlpError {
 	readonly maxSpans: number;
 	readonly received: number;
@@ -70,7 +68,6 @@ export class UnsupportedOtlpContentTypeError extends OtlpError {
 	}
 }
 
-/** Protobuf body referenced a wire-type byte we don't know how to skip. */
 export class UnsupportedWireTypeError extends OtlpError {
 	readonly wireType: number;
 	constructor(wireType: number) {
@@ -80,7 +77,6 @@ export class UnsupportedWireTypeError extends OtlpError {
 	}
 }
 
-/** Protobuf AnyValue / KeyValue nesting exceeded the depth cap. */
 export class OtlpProtobufNestingTooDeepError extends OtlpError {
 	readonly maxDepth: number;
 	constructor(maxDepth: number) {

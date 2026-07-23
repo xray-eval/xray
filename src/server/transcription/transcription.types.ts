@@ -6,7 +6,7 @@ export interface TranscriptionResult {
 }
 
 export interface TranscriptionRequest {
-	/** Mono int16 PCM samples. Provider implementations wrap as wav before send. */
+	/** Mono int16 PCM samples. */
 	readonly audio: Int16Array;
 	readonly sampleRate: number;
 	/** ISO-639-1 language hint passed through to the provider. */
@@ -20,12 +20,7 @@ export interface TranscriptionRequest {
 	readonly signal?: AbortSignal;
 }
 
-/**
- * Interface implemented by every transcription back-end. v1 ships one
- * implementation (OpenAI Whisper); the abstraction exists so a future
- * Deepgram / local-whisper variant slots in as one file + one line in the
- * provider selector.
- */
+/** Interface implemented by every transcription back-end (v1: OpenAI Whisper). */
 export interface TranscriptionProvider {
 	/** Stable name persisted on `turn_transcripts.provider`. */
 	readonly name: string;

@@ -353,9 +353,8 @@ export interface MarkReplayFailedOptions {
 /**
  * Hydrate the `ReplayResult` payload for a completed replay. Returns
  * `undefined` if the replay doesn't exist or hasn't reached the
- * `replay_evaluations` write — late SSE subscribers and the GET
- * /v1/replays/:id/result handler share this. A handful of small per-replay
- * reads joined row-side; the table sizes per-replay are tiny.
+ * `replay_evaluations` write — shared by late SSE subscribers and the
+ * `GET /v1/replays/:id/result` handler.
  */
 export function getReplayResult(store: Store, id: string): ReplayResult | undefined {
 	const replay = findReplay(store, id);
@@ -400,12 +399,6 @@ export function getReplayResult(store: Store, id: string): ReplayResult | undefi
 	};
 }
 
-/**
- * Read this replay's turns + metrics and project them via the shared
- * `projectTurnMetrics`. Used by the replay-detail read (Run details UI) and
- * the GET /result hydration path; the SSE `evaluation_complete` payloads built
- * in the analyze jobs call the same projector, so all three stay byte-identical.
- */
 function buildTurnMetrics(store: Store, id: string): TurnMetricsResponse[] {
 	const turnRows = store.db
 		.select()
@@ -427,17 +420,16 @@ function assertionStatusFor(raw: string): "passed" | "failed" | "errored" {
 }
 
 /**
- * Stamp a replay's row with `lifecycle_state='failed'` + reason + cleared
- * `analysis_step` + `finished_at`, then emit the matching SSE events.
+ * Stamp a replay's row `failed` (+ reason, cleared `analysis_step`,
+ * `finished_at`) and emit the matching SSE events.
  *
- * Idempotent and terminal-safe: if the row is already in a terminal state
- * (`completed` or `failed`), this is a no-op — no DB write, no SSE emit. That
- * matters because bunqueue's `failed` event can fire more than once across a
- * job's retry lifecycle, and a terminal `completed` row must not be unwound
- * by a stray late failure.
+ * Idempotent and terminal-safe: if the row is already terminal (`completed` or
+ * `failed`), this is a no-op. bunqueue's `failed` event can fire more than once
+ * across a job's retry lifecycle, and a terminal `completed` row must not be
+ * unwound by a stray late failure.
  *
- * Silent on a missing row — the bunqueue onFailed callback must not throw on
- * a replay whose row vanished (e.g. operator wiped /data mid-flight).
+ * Silent on a missing row — the bunqueue onFailed callback must not throw on a
+ * replay whose row vanished (e.g. operator wiped /data mid-flight).
  */
 export function markReplayFailed(
 	store: Store,

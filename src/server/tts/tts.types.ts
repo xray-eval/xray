@@ -18,11 +18,8 @@ export interface TtsResult {
 }
 
 /**
- * Interface implemented by every TTS back-end. Synthesizes the user-side
- * audio for `{kind: "tts"}` conversation turns during the
- * `POST /v1/conversations` upsert. Same shape discipline as
- * `TranscriptionProvider` / `JudgeProvider`: one file per provider, one
- * line in the provider selector.
+ * Interface implemented by every TTS back-end — synthesizes user-side audio
+ * for `{kind: "tts"}` turns during the `POST /v1/conversations` upsert.
  */
 export interface TtsProvider {
 	/** Stable name folded into the synth-cache fingerprint. */
@@ -30,13 +27,12 @@ export interface TtsProvider {
 	/** Stable model id folded into the synth-cache fingerprint. */
 	readonly model: string;
 	/**
-	 * Voice used when neither the turn's `voice_id` nor `XRAY_TTS_VOICE`
-	 * picks one. `language` is the turn's declared tag (`de`, `en_us`) —
-	 * providers with language-specific voices (Mistral) pick a matching one
-	 * (which may require a catalog request, hence async + Promise); providers
-	 * with multilingual voices ignore it. Throws
-	 * `NoTtsVoiceForLanguageError` when the language has no voice at all —
-	 * a silently mispronouncing fallback voice would be worse than the 4xx.
+	 * Voice used when neither the turn's `voice_id` nor `XRAY_TTS_VOICE` picks
+	 * one. `language` (the turn's tag, `de` / `en_us`) steers providers with
+	 * language-specific voices (Mistral — may need a catalog request, hence
+	 * async); multilingual providers ignore it. Throws
+	 * `NoTtsVoiceForLanguageError` when the language has no voice at all — a
+	 * silently mispronouncing fallback would be worse than the 4xx.
 	 */
 	resolveDefaultVoice(language?: string): Promise<string>;
 	synthesize(input: TtsRequest): Promise<TtsResult>;

@@ -6,9 +6,8 @@ export class TtsError extends Error {
 }
 
 /**
- * The provider rejected the synthesis request — network error, 4xx/5xx
- * from the upstream API, malformed response body. Wraps the underlying
- * cause so a debugger can pull the stack chain.
+ * The provider rejected the synthesis request — network error, 4xx/5xx, or
+ * malformed response body. Wraps the underlying cause.
  */
 export class TtsProviderError extends TtsError {
 	readonly provider: string;
@@ -27,10 +26,8 @@ export class TtsProviderError extends TtsError {
 }
 
 /**
- * A turn declared a language the provider has no voice for — neither a
- * built-in preset nor an org-cloned voice. Surfaced as a 4xx on the
- * conversation upsert so the operator learns the fix (clone a voice for
- * the language, or pick one explicitly) instead of getting an English
+ * A turn declared a language the provider has no voice for. Surfaced as a 4xx
+ * on the conversation upsert so the operator fixes it, rather than an English
  * voice silently mispronouncing the text.
  */
 export class NoTtsVoiceForLanguageError extends TtsError {

@@ -29,11 +29,9 @@ describe("deriveTurns", () => {
 		expect(turns[0]?.role).toBe("user");
 		expect(turns[1]?.role).toBe("agent");
 		expect(turns[2]?.role).toBe("user");
-		// turnStartMs follows the rule: directly after the other side's last segment ended.
 		expect(turns[0]?.turnStartMs).toBe(0);
 		expect(turns[1]?.turnStartMs).toBe(1000);
 		expect(turns[2]?.turnStartMs).toBe(2500);
-		// voice_* boundaries reflect actual speech in the turn.
 		expect(turns[0]?.voiceStartMs).toBe(0);
 		expect(turns[0]?.voiceEndMs).toBe(1000);
 		expect(turns[2]?.voiceStartMs).toBe(2500);

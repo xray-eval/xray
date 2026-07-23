@@ -15,11 +15,10 @@ export interface TranscriptEntry {
 }
 
 /**
- * Join each transcript to its turn's voice window (by turn_idx) so a click can
- * seek the player and the playhead can light the active turn / word. Both are
- * keyed by the same VAD turn index, so a missing match shouldn't happen — when
- * it does, the entry is kept with a zero-length window rather than dropped, so
- * the text is never silently lost.
+ * Join each transcript to its turn's voice window (by turn_idx). A missing
+ * match shouldn't happen (same VAD turn index keys both) — when it does, the
+ * entry is kept with a zero-length window rather than dropped, so text is never
+ * silently lost.
  */
 export function buildTranscriptView(
 	transcripts: readonly TurnTranscriptResponse[],
@@ -58,11 +57,10 @@ export function activeWordIndex(words: readonly TranscriptWord[] | null, ms: num
 }
 
 /**
- * Index of the active word for a playhead expressed in recording-absolute ms.
  * Word timings are 0-based within the turn's audio slice (Whisper transcribes
- * the per-turn slice cut at `voice_start_ms`), so the absolute playhead is
- * shifted by `voiceStartMs` before matching — otherwise no word ever lights up
- * on any turn that doesn't start at recording t=0.
+ * the per-turn slice cut at `voice_start_ms`), so the recording-absolute
+ * playhead is shifted by `voiceStartMs` before matching — otherwise no word
+ * ever lights up on any turn that doesn't start at recording t=0.
  */
 export function activeWordIndexForEntry(entry: TranscriptEntry, playheadMs: number): number {
 	return activeWordIndex(entry.words, playheadMs - entry.voiceStartMs);

@@ -5,9 +5,9 @@ import { JsonView } from "react-json-view-lite";
 import { isJsonContainer, safeParseJson } from "@/client/lib/json.ts";
 
 /**
- * Style props for `react-json-view-lite`. Built entirely with our Tailwind
- * tokens so we don't have to import the library's bundled CSS (the package
- * ships hashed class names that would collide with our design system).
+ * Built entirely with our Tailwind tokens so we don't import the library's
+ * bundled CSS (it ships hashed class names that would collide with our design
+ * system).
  */
 // react-json-view-lite@2.5.0 imports StyleProps internally but doesn't
 // re-export it; recover the type from the typed `defaultStyles` export.
@@ -31,7 +31,6 @@ const JSON_VIEW_STYLE: typeof defaultStyles = {
 	stringifyStringValues: false,
 };
 
-/** Syntax-styled JSON tree. `expandLevel` nodes are open on first render. */
 export function JsonTree({
 	data,
 	expandLevel = 1,
@@ -49,9 +48,9 @@ export function JsonTree({
 }
 
 /**
- * A JSON tree when `raw` parses to an object or array, else `null` so each
- * caller supplies its own non-JSON fallback. The one place the string→JSON
- * detection lives — `JsonOrText` and the span attribute renderer share it.
+ * Returns `null` (not the raw text) when `raw` isn't a JSON object/array, so
+ * each caller supplies its own non-JSON fallback. The one place the string→JSON
+ * detection lives — shared with the span attribute renderer.
  */
 export function jsonTreeOrNull(raw: string, expandLevel?: number): ReactElement | null {
 	const parsed = safeParseJson(raw);
@@ -62,9 +61,8 @@ export function jsonTreeOrNull(raw: string, expandLevel?: number): ReactElement 
 }
 
 /**
- * Render an opaque JSON string: a pretty tree when it parses to an object or
- * array, the raw text otherwise. Tool args/results and span attribute values
- * arrive as strings that may or may not be JSON.
+ * Tool args/results and span attribute values arrive as strings that may or
+ * may not be JSON — render a tree when parseable, the raw text otherwise.
  */
 export function JsonOrText({ raw, expandLevel }: { raw: string; expandLevel?: number }) {
 	return (

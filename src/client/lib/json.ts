@@ -1,10 +1,9 @@
 export type JsonParseResult = { ok: true; value: unknown } | { ok: false };
 
 /**
- * Parse a JSON string without throwing. The success branch carries `unknown`
- * (not `any`) so callers must narrow before use — see `isJsonContainer` /
- * `isJsonRecord`. Used wherever the wire hands us an opaque JSON string
- * (tool args/results, span attribute bags, run config).
+ * Parse JSON without throwing. The success branch carries `unknown` (not
+ * `any`) so callers must narrow before use — see `isJsonContainer` /
+ * `isJsonRecord`.
  */
 export function safeParseJson(raw: string): JsonParseResult {
 	try {
@@ -20,11 +19,7 @@ export function isJsonContainer(value: unknown): value is object {
 	return typeof value === "object" && value !== null;
 }
 
-/**
- * A key-value JSON object, excluding arrays. Narrows to `Record<string,
- * unknown>` via a type predicate (no cast) so the entries can be walked
- * with `Object.entries` and each value stays `unknown`.
- */
+/** JSON object excluding arrays — narrows to `Record<string, unknown>` without a cast. */
 export function isJsonRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

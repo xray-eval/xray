@@ -139,8 +139,7 @@ export function Inspector() {
 }
 
 function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
-	// Stream live analysis transitions so a replay opened mid-analysis advances
-	// without a manual reload. No-op once the replay reaches a terminal state.
+	// Advances a replay opened mid-analysis without a manual reload; no-op once terminal.
 	useReplayLiveUpdates(replay.id, replay.lifecycle_state);
 	return (
 		<PlayerProvider>

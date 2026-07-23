@@ -114,10 +114,7 @@ type OtlpJsonAnyValue =
 /**
  * Minimal protobuf reader — only the wire types OTLP traces use:
  * varint (0), fixed64 (1), length-delimited (2), fixed32 (5).
- *
- * State is the underlying buffer + a moving cursor. The reader's
- * methods consume bytes; the cursor advances. `skip(wireType)` is the
- * fallback for unknown fields.
+ * `skip(wireType)` is the fallback for unknown fields.
  */
 class Reader {
 	private readonly buf: Uint8Array;

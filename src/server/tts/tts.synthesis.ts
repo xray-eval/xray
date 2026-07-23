@@ -13,12 +13,10 @@ const TARGET_SAMPLE_RATE = 48_000;
 // Stored turn audio must clear the level the VAD calibration assumes:
 // segmentation (audio.vad.ts) only marks frames voiced above ≈-23 dBFS mean
 // energy, and provider/voice loudness varies wildly — Deepgram Aura's German
-// voices ship raw linear16 near -33 dBFS RMS, which the VAD cannot see at
-// all, so every scripted replay with such a turn died with
-// `spec_vad_mismatch` (zero user segments in the mixdown). Peak-normalizing
-// every synthesis to one fixed target (-1.4 dBFS peak) makes the stored WAV —
-// and the driver-published audio recorded into the mixdown — level-
-// deterministic regardless of provider or voice.
+// voices ship near -33 dBFS RMS, invisible to the VAD, so every scripted
+// replay with such a turn died with `spec_vad_mismatch` (zero user segments).
+// Peak-normalizing every synthesis to one fixed target (-1.4 dBFS peak) makes
+// the stored WAV level-deterministic regardless of provider or voice.
 const TARGET_PEAK = 27_852;
 
 function peakNormalize(pcm: Int16Array, targetPeak: number): Int16Array {
@@ -46,11 +44,9 @@ export interface TurnSynthesisInput {
 	readonly language?: string;
 }
 
-/** Synthesize one tts turn (or return its cached result): resolves the
- *  voice chain, checks the fingerprint cache, and on miss generates +
- *  stores the 48kHz mono WAV content-addressed under `tts/`. The optional
- *  `signal` is shared across a request's turns so one synthesis failure
- *  cancels the in-flight siblings. */
+/** Synthesize one tts turn or return its cached result (48kHz mono WAV,
+ *  content-addressed under `tts/`). The optional `signal` is shared across a
+ *  request's turns so one synthesis failure cancels the in-flight siblings. */
 export type TurnSynthesizer = (
 	input: TurnSynthesisInput,
 	signal?: AbortSignal,
@@ -65,19 +61,16 @@ export interface TurnSynthesizerDeps {
 }
 
 /**
- * Build the synthesizer the conversation upsert injects into
- * `materializeRequestTurns`.
+ * Determinism: the conversation hash folds in the *output* sha256, but TTS
+ * output varies call-to-call — so the fingerprint `sha256([provider, model,
+ * voice, text])` indexes the first synthesis in `tts_synth_cache` and every
+ * later upsert of the same spec + config reuses that sha. A cache row whose WAV
+ * file is missing (operator pruned the audio dir but kept the DB) is treated as
+ * a miss and re-synthesized.
  *
- * Determinism: the conversation hash folds in the *output* sha256, but
- * TTS output varies call-to-call — so the fingerprint
- * `sha256([provider, model, voice, text])` indexes the first synthesis in
- * `tts_synth_cache` and every later upsert of the same spec + config
- * reuses that sha. A cache row whose WAV file is missing (operator pruned
- * the audio dir but kept the DB) is treated as a miss and re-synthesized.
- *
- * Calls are memoized per-synthesizer (= per-request) so a spec repeating
- * the same text doesn't fan out duplicate provider calls racing to insert
- * the same fingerprint.
+ * Calls are memoized per-synthesizer (= per-request) so a spec repeating the
+ * same text doesn't fan out duplicate provider calls racing to insert the same
+ * fingerprint.
  */
 export function createTurnSynthesizer(deps: TurnSynthesizerDeps): TurnSynthesizer {
 	const inFlight = new Map<string, Promise<{ sha256: string }>>();

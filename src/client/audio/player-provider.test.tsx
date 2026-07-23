@@ -143,8 +143,7 @@ describe("usePlayhead / usePublishPlayhead", () => {
 		rerender(<Tree showB={false} />);
 		expect(screen.queryByTestId("b")).toBeNull();
 
-		// The unmounted consumer's listener must have been cleaned up: publishing
-		// again updates the surviving consumer and never touches the gone one.
+		// The unmounted consumer's listener must have been cleaned up — publishing again still updates the survivor.
 		act(() => publish({ sec: 2, playing: false }));
 		expect(screen.getByTestId("a").textContent).toBe("2");
 	});

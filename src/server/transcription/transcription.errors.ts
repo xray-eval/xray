@@ -6,9 +6,8 @@ export class TranscriptionError extends Error {
 }
 
 /**
- * The provider rejected the request — network error, 4xx/5xx from the
- * upstream API, malformed response body. Wraps the underlying cause so a
- * debugger can pull the stack chain.
+ * The provider rejected the request — network error, 4xx/5xx, or malformed
+ * response body. Wraps the underlying cause.
  */
 export class TranscriptionProviderError extends TranscriptionError {
 	readonly provider: string;

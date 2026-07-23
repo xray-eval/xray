@@ -16,9 +16,9 @@ export function spanDurationMs(startedAt: string, endedAt: string): number {
 
 /**
  * Parse `spans.attributes_json` into sorted, namespace-split entries. The
- * stored value is always a flat JSON object in practice, but parse
- * defensively: a malformed string or a non-object top level falls back to a
- * raw view rather than throwing or silently dropping the data.
+ * stored value is a flat JSON object in practice, but parse defensively: a
+ * malformed string or non-object top level falls back to a raw view rather
+ * than throwing or silently dropping the data.
  */
 export function parseSpanAttributes(attributesJson: string): SpanAttributes {
 	const parsed = safeParseJson(attributesJson);
@@ -46,10 +46,10 @@ function resolveParentName(
 }
 
 /**
- * Assemble the full detail model for the selected span, or `null` when no
- * span is selected / the id doesn't resolve. `model_usage` and `tool_calls`
- * are linked by the OTLP `span_id` (unique per replay), which is exactly how
- * the analyze chain associated them with the span that emitted them.
+ * Assemble the detail model for the selected span, or `null` when no span is
+ * selected / the id doesn't resolve. `model_usage` and `tool_calls` are linked
+ * by the OTLP `span_id` (unique per replay) — exactly how the analyze chain
+ * associated them with the span that emitted them.
  */
 export function resolveSpanDetail(
 	spanId: string | null,

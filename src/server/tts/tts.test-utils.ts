@@ -1,10 +1,8 @@
 import type { TtsProvider, TtsResult } from "./tts.types.ts";
 
 export interface FakeTtsProviderOptions {
-	/** PCM returned for every synthesize() call (default: 480 samples of silence). */
 	readonly pcm?: Int16Array;
 	readonly sampleRate?: number;
-	/** Make the provider always throw. */
 	readonly error?: Error;
 	/** Per-call PCM override — vary output across calls to simulate
 	 *  non-deterministic synthesis. */

@@ -155,9 +155,7 @@ describe("Inspector TurnsCard", () => {
 		render(ui);
 
 		await waitFor(() => screen.getByText(/Stereo · 2 turns/i));
-		// Channel legend renders the two side labels and the play button is
-		// part of the bottom bar; together they confirm the stereo player
-		// mounted (not just the header chip text).
+		// Together these confirm the stereo player actually mounted, not just the header chip text.
 		expect(screen.getByText(/^user$/)).toBeTruthy();
 		expect(screen.getByText(/^agent$/)).toBeTruthy();
 		expect(screen.getByLabelText(/^Play$/i)).toBeTruthy();
@@ -169,8 +167,6 @@ describe("Inspector TurnsCard", () => {
 		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
 		render(ui);
 
-		// The player still mounts (chip says "0 turns") and the empty-state
-		// hint appears below it.
 		await waitFor(() => screen.getByText(/Stereo · 0 turns/i));
 		const note = screen.getByText(/Audio uploaded\./i);
 		expect(note.textContent).toMatch(/VAD analysis/);

@@ -19,11 +19,10 @@ import type { AttributeEntry, SpanAttributes, SpanDetailModel } from "./span-det
 import { resolveSpanDetail } from "./span-detail-model.ts";
 
 /**
- * Right-column companion to the trace tree: resolves the selected span from
- * the replay (spans + the model_usage / tool_calls it links by span_id) and
- * renders its full detail. Renders nothing when the replay has no spans, and
- * a discoverability prompt until the user picks one. The detail is derived at
- * render — no effect, no second source of truth (see no-effect-for-data rule).
+ * Right-column companion to the trace tree: resolves the selected span from the
+ * replay and renders its detail (nothing when the replay has no spans, a prompt
+ * until the user picks one). Derived at render — no effect, no second source of
+ * truth (see no-effect-for-data rule).
  */
 export function SpanDetailAside({ replay }: { replay: ReplayDetailResponse }) {
 	const { selectedSpanId, clear } = useSpanSelection();
@@ -39,11 +38,10 @@ export function SpanDetailAside({ replay }: { replay: ReplayDetailResponse }) {
 }
 
 /**
- * Callback ref that scrolls the panel into view on mount below the `lg`
- * breakpoint, where the inspector columns stack and the panel renders far
- * beneath the trace tree — without this, clicking a span reads as a no-op. On
- * `lg`+ the panel sits beside the tree, so it stays put. The panel is re-keyed
- * per selection (see `SpanDetailAside`), so it remounts — and this fires — on
+ * Scrolls the panel into view on mount below the `lg` breakpoint, where the
+ * columns stack and the panel renders far beneath the tree — without this,
+ * clicking a span reads as a no-op. On `lg`+ it sits beside the tree, so it
+ * stays put. Re-keyed per selection (see `SpanDetailAside`), so it fires on
  * every span click, not just the first.
  */
 function scrollSpanDetailIntoView(node: HTMLDivElement | null): void {
@@ -221,8 +219,8 @@ function UsageRow({ usage: u }: { usage: ModelUsageResponse }) {
 }
 
 /**
- * Input-vs-output token split. Decorative — `aria-hidden` because the exact
- * counts sit directly beneath it; hidden entirely when there's nothing to show.
+ * Input-vs-output token split. `aria-hidden` because the exact counts sit
+ * directly beneath it.
  */
 function TokenBar({ input, output }: { input: number | null; output: number | null }) {
 	const inTokens = input ?? 0;
@@ -333,10 +331,9 @@ function AttributeRow({ entry }: { entry: AttributeEntry }) {
 }
 
 /**
- * Render a single attribute value by its runtime JSON type — strings that are
- * themselves JSON (e.g. `langfuse.observation.input`) get the tree treatment;
- * plain strings, numbers and booleans get type-matched colors echoing the
- * JSON palette. `value` is `unknown` and narrowed here rather than upstream.
+ * Render an attribute value by its runtime JSON type — strings that are
+ * themselves JSON (e.g. `langfuse.observation.input`) get the tree treatment.
+ * `value` is `unknown`, narrowed here rather than upstream.
  */
 function AttributeValue({ value }: { value: unknown }) {
 	if (typeof value === "string") {

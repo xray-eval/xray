@@ -151,10 +151,9 @@ describe("readStereoWav — hardening", () => {
 	});
 
 	it("accepts data-before-fmt chunk ordering (RIFF spec permits either order)", () => {
-		// Some encoders emit `data` before `fmt ` — legal RIFF. The parser used
-		// to break out of the loop on DATA before reading FMT, then mis-report
-		// "sample rate 0". Walking every chunk fixes the bug AND accepts the
-		// file.
+		// Some encoders emit `data` before `fmt ` — legal RIFF. Regression: the
+		// parser must walk every chunk, not break on DATA, or it mis-reports
+		// "sample rate 0" when fmt hasn't been read yet.
 		const samples = 4;
 		const buf = new Uint8Array(12 + 8 + samples * 4 + 8 + 16);
 		const view = new DataView(buf.buffer);
@@ -190,11 +189,10 @@ describe("readStereoWav — hardening", () => {
 	});
 
 	it("throws `missing fmt chunk` (not `sample rate 0`) when fmt is entirely absent", () => {
-		// Headers + a single data chunk; no fmt. Pre-fix, parser broke on DATA
-		// and fired "sample rate 0" because fmt fields stayed at their zero
-		// init. Post-fix, validation orders fmt-presence BEFORE field checks.
-		// Pad to ≥44 bytes so the parser doesn't short-circuit on the
-		// "file too short" guard before reaching the chunk loop.
+		// Headers + a single data chunk, no fmt: validation must order fmt-presence
+		// BEFORE field checks, so this reports "missing fmt" not "sample rate 0".
+		// Pad to ≥44 bytes so the parser reaches the chunk loop instead of
+		// short-circuiting on the "file too short" guard.
 		const samples = 8; // 32 data bytes
 		const buf = new Uint8Array(12 + 8 + samples * 4); // 52 bytes
 		const view = new DataView(buf.buffer);

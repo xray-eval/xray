@@ -47,14 +47,10 @@ export interface DeepgramTtsOptions {
 }
 
 /**
- * Deepgram Aura TTS provider. Requests raw PCM (headerless int16 @ 24kHz)
- * so no container parsing is needed; the synthesis service resamples to
- * 48kHz.
- *
- * Aura voices are language-specific (`aura-2-aurelia-de` speaks German,
- * `aura-2-thalia-en` English) — `resolveDefaultVoice` filters the live
- * `/v1/models` catalog by the configured family and the turn's language,
- * so a German turn gets a German voice without per-turn configuration.
+ * Deepgram Aura TTS provider. Requests raw PCM (headerless int16 @ 24kHz).
+ * Aura voices are language-specific — `resolveDefaultVoice` filters the live
+ * `/v1/models` catalog by family and the turn's language, so a German turn
+ * gets a German voice without per-turn configuration.
  */
 export function createDeepgramTtsProvider(opts: DeepgramTtsOptions): TtsProvider {
 	const family = opts.model ?? DEFAULT_FAMILY;

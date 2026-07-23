@@ -14,10 +14,10 @@ export interface ReplayProgressEvent {
 }
 
 /**
- * Emitted exactly once per replay, by the `evaluate-replay` job after the
- * full chain commits. Carries the final pass/fail verdict plus every
- * assertion/judge/metric the SDK needs to render `ReplayResult` without
- * a follow-up GET. Subsumes the legacy `completed` event.
+ * Emitted exactly once per replay, by the `evaluate-replay` job after the full
+ * chain commits. Carries the final pass/fail verdict plus every
+ * assertion/judge/metric the SDK needs to render `ReplayResult` without a
+ * follow-up GET.
  */
 export interface ReplayEvaluationCompleteEvent {
 	readonly type: "evaluation_complete";
@@ -38,10 +38,9 @@ export type ReplayEvent =
 type Listener = (event: ReplayEvent) => void;
 
 /**
- * Per-replay pub/sub for SSE consumers. Listeners are added on connection
- * and removed on client disconnect. The dispatcher runs the listener
- * synchronously; the listener itself decides whether to enqueue the event
- * onto the streaming response.
+ * Per-replay pub/sub for SSE consumers. The dispatcher runs each listener
+ * synchronously; the listener decides whether to enqueue the event onto the
+ * streaming response.
  */
 export class ReplayEvents {
 	private readonly listeners = new Map<string, Set<Listener>>();

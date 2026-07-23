@@ -116,8 +116,6 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 			recordingStartedAt: null,
 			bytes: fakeAudioBytes(1),
 		});
-		// Now in recording_uploaded — re-upload should still work (e.g.
-		// driver retries after a network blip).
 		await expect(
 			uploadReplayAudio(store, audio.path, {
 				replayId,

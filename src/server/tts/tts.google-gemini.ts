@@ -57,10 +57,9 @@ export interface GoogleGeminiTtsOptions {
 }
 
 /**
- * Google Gemini TTS provider. Sends `generateContent` with the AUDIO
- * response modality and a prebuilt voice; decodes the base64 inline L16
- * pcm at the rate declared in the part's mimeType. The synthesis service
- * resamples to 48kHz.
+ * Google Gemini TTS provider. Sends `generateContent` with the AUDIO response
+ * modality; decodes the base64 inline L16 pcm at the rate declared in the
+ * part's mimeType.
  */
 export function createGoogleGeminiTtsProvider(opts: GoogleGeminiTtsOptions): TtsProvider {
 	const model = opts.model ?? DEFAULT_MODEL;

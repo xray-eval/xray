@@ -12,7 +12,6 @@ export interface OutcomeTally {
 	total: number;
 }
 
-/** Count outcomes by status. Works for assertions and judges alike — both carry a `status`. */
 export function tallyOutcomes(outcomes: readonly { status: EvaluationStatus }[]): OutcomeTally {
 	const result: OutcomeTally = { passed: 0, failed: 0, errored: 0, total: outcomes.length };
 	for (const o of outcomes) {
@@ -48,9 +47,8 @@ export interface AssertionTurnGroup {
 }
 
 /**
- * Group assertion outcomes into contiguous runs by turn. The server orders them
- * by (turn_idx, assertion_idx), so opening a new group on each turn change
- * preserves order without a re-sort.
+ * The server orders assertions by (turn_idx, assertion_idx), so opening a new
+ * group on each turn change preserves order without a re-sort.
  */
 export function groupAssertionsByTurn(
 	assertions: readonly AssertionOutcomeResponse[],

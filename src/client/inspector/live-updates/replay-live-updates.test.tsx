@@ -121,8 +121,7 @@ describe("useReplayLiveUpdates", () => {
 		if (source === undefined) throw new Error("expected the hook to open an EventSource");
 		expect(source.closed).toBe(false);
 
-		// The server finished evaluating: the next fetch returns `completed`, and
-		// the SSE event triggers the refetch that surfaces it.
+		// Server finished evaluating: the next fetch returns `completed`, and the SSE event triggers the refetch.
 		state = "completed";
 		source.dispatch("evaluation_complete");
 

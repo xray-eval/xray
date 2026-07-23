@@ -1,11 +1,9 @@
 import type { ModelUsageResponse, SpanResponse, ToolCallResponse } from "@/client/api/api.types.ts";
 
 /**
- * One entry of a span's flattened attribute bag. `key` is the full
- * dotted attribute name; `namespace`/`leaf` split it at the first dot so
- * the UI can dim the shared prefix (e.g. `gen_ai.`) and emphasise the leaf.
- * `value` is the parsed JSON value, left `unknown` so the renderer narrows
- * it (string / number / boolean / null / container) at the point of use.
+ * One entry of a span's flattened attribute bag. `namespace`/`leaf` split `key`
+ * at the first dot so the UI can dim the shared prefix (e.g. `gen_ai.`). `value`
+ * is left `unknown` so the renderer narrows it at the point of use.
  */
 export type AttributeEntry = Readonly<{
 	key: string;

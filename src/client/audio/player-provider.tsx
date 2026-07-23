@@ -120,9 +120,8 @@ export function usePlayhead(): PlayheadState {
 }
 
 /**
- * Returns a stable function the audio player calls to publish the current
- * playhead position. Tolerates being called outside a provider (no-op) so the
- * player can mount standalone — mirrors `useRegisterPlayer`.
+ * Tolerates being called outside a provider (no-op) so the player can mount
+ * standalone — mirrors `useRegisterPlayer`.
  */
 export function usePublishPlayhead(): (state: PlayheadState) => void {
 	const ctx = useContext(PlayerContext);
@@ -136,13 +135,10 @@ export function usePublishPlayhead(): (state: PlayheadState) => void {
 }
 
 /**
- * Called by the audio player to publish its imperative handle to the
- * provider. Pass `null` controls when the underlying player isn't ready
- * yet — consumers' `seek` / `highlight` become safe no-ops.
- *
- * Tolerates being called outside a provider: the player is allowed to mount
- * standalone (no coordinating UI). Only `usePlayer` (the consumer side)
- * treats the missing provider as a programming error.
+ * Pass `null` controls when the underlying player isn't ready yet — consumers'
+ * `seek` / `highlight` become safe no-ops. Tolerates being called outside a
+ * provider (the player can mount standalone); only `usePlayer` treats a
+ * missing provider as a programming error.
  */
 export function useRegisterPlayer(controls: PlayerControls | null): void {
 	const ctx = useContext(PlayerContext);
