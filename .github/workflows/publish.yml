@@ -175,9 +175,19 @@ jobs:
             *)   REL=(--latest) ;;
           esac
           NOTES="$(printf '**Image:** `%s:%s` — multi-arch (amd64/arm64), cosign-signed (keyless OIDC), SLSA provenance + SPDX SBOM attested.\n**Digest:** `%s`' "$IMAGE" "${TAG#v}" "$DIGEST")"
-          # Idempotent: a re-run of a published tag updates notes instead of failing.
+          # Assemble the full body once so create and edit stay byte-identical.
+          # gh's --generate-notes lives only on `create`, so an edit-path re-run
+          # would silently drop the changelog; generate it via the same API and
+          # append it ourselves instead.
+          CHANGELOG="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq '.body' 2>/dev/null || true)"
+          BODY="$NOTES"
+          if [ -n "$CHANGELOG" ]; then
+            BODY="$NOTES"$'\n\n'"$CHANGELOG"
+          fi
+          # Idempotent: a re-run of a published tag rewrites the same body
+          # (current digest + changelog) instead of failing.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --notes "$NOTES" "${REL[@]}"
+            gh release edit "$TAG" --notes "$BODY" "${REL[@]}"
           else
-            gh release create "$TAG" --title "$TAG" --notes "$NOTES" --generate-notes --verify-tag "${REL[@]}"
+            gh release create "$TAG" --title "$TAG" --notes "$BODY" --verify-tag "${REL[@]}"
           fi
