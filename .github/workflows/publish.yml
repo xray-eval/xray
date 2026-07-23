@@ -26,11 +26,16 @@ jobs:
     name: Build, push, sign, attest
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Exposed so the `release` job below can reference the pushed image digest
+    # without holding any of this job's registry/signing permissions.
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     permissions:
-      contents: read         # checkout
-      packages: write        # push to ghcr.io
-      id-token: write        # OIDC for cosign keyless + provenance attestation
-      attestations: write    # actions/attest-build-provenance writes here
+      contents: read           # checkout
+      packages: write          # push to ghcr.io
+      id-token: write          # OIDC for cosign keyless + provenance attestation
+      attestations: write      # actions/attest{,-build-provenance} persist attestations
+      artifact-metadata: write # attest actions create the artifact storage record (issue #109)
 
     env:
       REGISTRY: ghcr.io
@@ -106,7 +111,7 @@ jobs:
           done
 
       - name: Attest build provenance (SLSA)
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -119,16 +124,70 @@ jobs:
           format: spdx-json
           output-file: sbom.spdx.json
           # Don't auto-attach the SBOM as a GitHub Release asset — that needs
-          # `contents: write` and we only grant `contents: read` (default-min
+          # `contents: write` and this job only holds `contents: read` (default-min
           # per supply-chain.md). The canonical attestation path is the
-          # `actions/attest-sbom` step below, which pushes the SBOM to GHCR
-          # as an OCI artifact and doesn't touch the Release.
+          # `actions/attest` step below, which pushes the SBOM to GHCR as an OCI
+          # artifact and doesn't touch the Release.
           upload-release-assets: false
 
       - name: Attest SBOM
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
+        # actions/attest-sbom is deprecated (GitHub folded it into the generic
+        # actions/attest, which takes `sbom-path` directly). Same inputs, same
+        # SPDX attestation pushed to the registry. Issue #109.
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763  # v4.1.1
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           sbom-path: sbom.spdx.json
           push-to-registry: true
+
+  # Create the GitHub Release only after the image is built, signed, and
+  # attested. Isolated in its own job so `contents: write` — which creating a
+  # Release requires — stays OFF the build/sign/attest job above (which holds
+  # packages/id-token/attestations write). Least privilege per job. Issue #109.
+  release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write  # the ONLY grant — create the Release object, nothing else
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5  # v2.19.3
+        with:
+          egress-policy: audit
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # Semver pre-release tags (…-alpha.N / -rc.N) publish as prereleases;
+          # a bare vX.Y.Z publishes as Latest.
+          case "$TAG" in
+            *-*) REL=(--prerelease) ;;
+            *)   REL=(--latest) ;;
+          esac
+          NOTES="$(printf '**Image:** `%s:%s` — multi-arch (amd64/arm64), cosign-signed (keyless OIDC), SLSA provenance + SPDX SBOM attested.\n**Digest:** `%s`' "$IMAGE" "${TAG#v}" "$DIGEST")"
+          # Assemble the full body once so create and edit stay byte-identical.
+          # gh's --generate-notes lives only on `create`, so an edit-path re-run
+          # would silently drop the changelog; generate it via the same API and
+          # append it ourselves instead.
+          CHANGELOG="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq '.body' 2>/dev/null || true)"
+          BODY="$NOTES"
+          if [ -n "$CHANGELOG" ]; then
+            BODY="$NOTES"$'\n\n'"$CHANGELOG"
+          fi
+          # Idempotent: a re-run of a published tag rewrites the same body
+          # (current digest + changelog) instead of failing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes "$BODY" "${REL[@]}"
+          else
+            gh release create "$TAG" --title "$TAG" --notes "$BODY" --verify-tag "${REL[@]}"
+          fi
