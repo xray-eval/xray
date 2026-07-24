@@ -74,12 +74,7 @@ export function formatDuration(ms: number | null): string {
 	return `${m}m${s.toString().padStart(2, "0")}s`;
 }
 
-/**
- * Distinct from `formatDuration`: trace latencies cluster in the sub-5-second
- * range where whole-second rounding erases the signal worth reading, and a
- * row with no resolved duration is missing data — so invalid/negative renders
- * an em-dash, not "in progress".
- */
+// Distinct from formatDuration: sub-second precision for trace latencies; invalid → "—", not "in progress".
 export function formatDurationMs(ms: number): string {
 	if (!Number.isFinite(ms) || ms < 0) return "—";
 	// Round before the cutoff, else [999.5, 1000) rounds to "1000ms".
