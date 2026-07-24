@@ -12,13 +12,10 @@ import type { Store } from "./store/store.ts";
 import type { TtsProvider } from "./tts/tts.types.ts";
 
 export interface AppConfig {
-	/** Absolute path. Full-replay audio files live under this root. */
 	readonly audioRoot: string;
 	readonly jobRunner: JobRunner;
 	readonly events: ReplayEvents;
-	/** Synthesizes `{kind: "tts"}` turns during the conversation upsert. */
 	readonly ttsProvider: TtsProvider;
-	/** XRAY_TTS_VOICE — operator default voice for synthesized turns. */
 	readonly ttsVoice?: string;
 }
 

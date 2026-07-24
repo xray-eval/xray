@@ -41,7 +41,6 @@ export interface VocabularyExtraction {
 	vocabulary: SpanVocabulary;
 	toolCalls?: ExtractedToolCall[];
 	modelUsage?: ExtractedModelUsage[];
-	/** The narrowed attribute bag persisted on `spans.attributes_json`. */
 	attributes: FlatAttributes;
 }
 

@@ -18,7 +18,6 @@ export type PlayerControls = Readonly<{
 	clearHighlight: () => void;
 }>;
 
-/** Current audio playback position, published by the player ~60fps. */
 export type PlayheadState = Readonly<{ sec: number; playing: boolean }>;
 
 const INITIAL_PLAYHEAD: PlayheadState = { sec: 0, playing: false };

@@ -157,7 +157,6 @@ export const TurnMetricsResponseSchema = v.object({
 });
 export type TurnMetricsResponse = v.InferOutput<typeof TurnMetricsResponseSchema>;
 
-/** Summary fields returned by `GET /v1/conversations/:hash/replays`. */
 export const ReplaySummaryResponseSchema = v.object({
 	id: v.string(),
 	conversation_hash: ConversationHashSchema,

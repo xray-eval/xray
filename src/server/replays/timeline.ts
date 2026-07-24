@@ -55,7 +55,6 @@ export interface TurnWindow {
 	readonly turnEndMs: number;
 }
 
-/** True iff `offsetMs` falls in `[turnStartMs, turnEndMs)`. */
 export function offsetInTurnWindow(offsetMs: number, turn: TurnWindow): boolean {
 	return offsetMs >= turn.turnStartMs && offsetMs < turn.turnEndMs;
 }

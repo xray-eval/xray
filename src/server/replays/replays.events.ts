@@ -66,7 +66,6 @@ export class ReplayEvents {
 		};
 	}
 
-	/** Test helper — how many listeners are currently attached to `replayId`. */
 	listenerCount(replayId: string): number {
 		return this.listeners.get(replayId)?.size ?? 0;
 	}

@@ -1,6 +1,5 @@
 export const HASH_PREFIX_LEN = 12;
 
-/** Truncate a SHA-256 hex to a display-only prefix. */
 export function shortHash(hash: string): string {
 	return hash.slice(0, HASH_PREFIX_LEN);
 }

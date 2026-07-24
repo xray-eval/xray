@@ -87,7 +87,6 @@ export function conversationAudioRelativePath(kind: "recorded" | "tts", sha256: 
 	return join(kind, `${sha256}.wav`);
 }
 
-/** Throws `makeNotFoundError()` when the file is absent. */
 export async function readConversationTurnAudio(
 	audioRoot: string,
 	kind: "recorded" | "tts",

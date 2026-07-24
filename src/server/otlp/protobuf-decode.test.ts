@@ -44,13 +44,11 @@ function concat(...parts: Uint8Array[]): Uint8Array {
 	return out;
 }
 
-/** Build the bytes of an OTLP AnyValue with field 3 (intValue) holding `value`. */
 function anyValueInt(value: bigint): Uint8Array {
 	// AnyValue.int_value = field 3, wire type 0 (varint)
 	return concat(tag(3, 0), writeVarint(value & ((1n << 64n) - 1n)));
 }
 
-/** Build an AnyValue { arrayValue: { values: [inner] } }. */
 function anyValueArrayWrapping(inner: Uint8Array): Uint8Array {
 	// AnyValue.array_value = field 5, wire type 2 (length-delimited)
 	// ArrayValue.values   = field 1, wire type 2 (length-delimited AnyValue)
@@ -58,7 +56,6 @@ function anyValueArrayWrapping(inner: Uint8Array): Uint8Array {
 	return concat(tag(5, 2), writeLengthDelimited(arrayValue));
 }
 
-/** Build a KeyValue { key, value }. */
 function keyValue(key: string, valuePayload: Uint8Array): Uint8Array {
 	const keyBytes = new TextEncoder().encode(key);
 	return concat(

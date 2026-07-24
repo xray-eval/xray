@@ -163,7 +163,6 @@ export const StoredConversationSpecSchema = v.object({
 });
 export type StoredConversationSpec = v.InferOutput<typeof StoredConversationSpecSchema>;
 
-/** Response of `GET /v1/conversations/:hash`. */
 export const ConversationResponseSchema = v.object({
 	hash: v.string(),
 	name: v.string(),

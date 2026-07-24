@@ -7,7 +7,6 @@ import type { Store } from "@/server/store/store.ts";
 
 import type { TtsProvider } from "./tts.types.ts";
 
-/** The 48kHz the LiveKit driver publishes; all stored turn audio uses it. */
 const TARGET_SAMPLE_RATE = 48_000;
 
 // Stored turn audio must clear the level the VAD calibration assumes:
@@ -36,7 +35,6 @@ function peakNormalize(pcm: Int16Array, targetPeak: number): Int16Array {
 
 export interface TurnSynthesisInput {
 	readonly text: string;
-	/** Explicit per-turn voice from the spec. Wins over `voiceOverride`. */
 	readonly voiceId?: string;
 	/** Declared language of the turn (`de`, `en_us`). Only consulted when
 	 *  neither `voiceId` nor `voiceOverride` picks a voice — it steers the
@@ -56,7 +54,6 @@ export interface TurnSynthesizerDeps {
 	readonly store: Store;
 	readonly audioRoot: string;
 	readonly provider: TtsProvider;
-	/** Operator default voice (XRAY_TTS_VOICE). Loses to the turn's voiceId. */
 	readonly voiceOverride?: string;
 }
 

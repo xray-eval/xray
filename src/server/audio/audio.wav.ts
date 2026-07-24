@@ -88,7 +88,6 @@ export function readStereoWav(buf: Uint8Array): StereoWav {
 	return { sampleRate, bitsPerSample: 16, left, right };
 }
 
-/** Write a 48kHz int16 stereo WAV (fixed 44-byte PCM/RIFF header). */
 export function writeStereoWav(wav: StereoWav): Uint8Array {
 	if (wav.left.length !== wav.right.length) {
 		throw new InvalidWavFormatError("left and right must have identical length");
@@ -118,7 +117,6 @@ export function writeStereoWav(wav: StereoWav): Uint8Array {
 	return out;
 }
 
-/** Write a mono int16 PCM buffer as a WAV — wraps per-turn slices for the transcription provider's wav upload. */
 export function writeMonoWav(pcm: Int16Array, sampleRate: number): Uint8Array<ArrayBuffer> {
 	const samples = pcm.length;
 	const dataBytes = samples * 2;

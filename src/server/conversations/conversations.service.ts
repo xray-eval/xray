@@ -261,7 +261,6 @@ export function getConversationSpec(
 	return parseStoredSpec(row.turnsJson, row.hash);
 }
 
-/** List all conversations, newest-active first. One row per hash. */
 export function listConversations(store: Store): ConversationSummary[] {
 	const rows = store.db
 		.select({

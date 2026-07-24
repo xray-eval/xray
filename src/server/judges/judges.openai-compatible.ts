@@ -38,11 +38,9 @@ const ChatCompletionsResponseSchema = v.object({
  * genuinely different and lives in its own file.
  */
 export interface OpenAICompatibleChatJudgeConfig {
-	/** Stable provider name; tags `JudgeProvider.name` and every thrown error. */
 	readonly name: string;
 	readonly chatUrl: string;
 	readonly defaultModel: string;
-	/** Env var named in `MissingProviderCredentialError` when the key is absent. */
 	readonly credentialEnvVar: string;
 }
 

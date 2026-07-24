@@ -22,9 +22,7 @@ export interface TtsResult {
  * for `{kind: "tts"}` turns during the `POST /v1/conversations` upsert.
  */
 export interface TtsProvider {
-	/** Stable name folded into the synth-cache fingerprint. */
 	readonly name: string;
-	/** Stable model id folded into the synth-cache fingerprint. */
 	readonly model: string;
 	/**
 	 * Voice used when neither the turn's `voice_id` nor `XRAY_TTS_VOICE` picks

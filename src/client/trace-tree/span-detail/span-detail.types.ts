@@ -42,7 +42,6 @@ export type SpanDetailModel = Readonly<{
 	toolCalls: readonly ToolCallResponse[];
 }>;
 
-/** The slices of a `ReplayDetailResponse` needed to resolve a span detail. */
 export type SpanDetailSource = Readonly<{
 	spans: readonly SpanResponse[];
 	modelUsage: readonly ModelUsageResponse[];

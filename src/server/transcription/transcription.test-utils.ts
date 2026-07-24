@@ -2,7 +2,6 @@ import type { TranscriptionProvider, TranscriptionResult } from "./transcription
 
 export interface FakeTranscriptionProviderOptions {
 	readonly text?: string;
-	/** Optional per-call override — `text` is then used as the fallback. */
 	readonly textFor?: (input: { sampleRate: number; sampleCount: number }) => string;
 	readonly error?: Error;
 }

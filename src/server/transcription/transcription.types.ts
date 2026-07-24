@@ -6,10 +6,8 @@ export interface TranscriptionResult {
 }
 
 export interface TranscriptionRequest {
-	/** Mono int16 PCM samples. */
 	readonly audio: Int16Array;
 	readonly sampleRate: number;
-	/** ISO-639-1 language hint passed through to the provider. */
 	readonly language?: string;
 	/**
 	 * Optional external abort signal — when callers run several
@@ -20,11 +18,8 @@ export interface TranscriptionRequest {
 	readonly signal?: AbortSignal;
 }
 
-/** Interface implemented by every transcription back-end (v1: OpenAI Whisper). */
 export interface TranscriptionProvider {
-	/** Stable name persisted on `turn_transcripts.provider`. */
 	readonly name: string;
-	/** Stable model id persisted on `turn_transcripts.model`. */
 	readonly model: string;
 	transcribe(input: TranscriptionRequest): Promise<TranscriptionResult>;
 }

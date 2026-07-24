@@ -14,7 +14,6 @@ export interface FakeTtsProviderOptions {
 
 export interface FakeTtsProvider extends TtsProvider {
 	readonly calls: ReadonlyArray<{ text: string; voice: string }>;
-	/** Languages passed to resolveDefaultVoice, in call order. */
 	readonly resolveCalls: ReadonlyArray<string | undefined>;
 }
 
