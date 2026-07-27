@@ -45,7 +45,13 @@ dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
   "pyright>=1.1.380",
-  "ruff>=0.6",
+  # Exact-pinned: CI installs dev tools with `uv pip install -e '.[dev]'`
+  # (resolves from this file, not uv.lock), so a floating `ruff>=…` lets CI
+  # pull whatever ruff shipped that day. A ruff minor promotes new lint rules
+  # to the default set and turns green code red with no code change — exactly
+  # the drift that reddened this gate. Pin to the tested version; bump
+  # deliberately after a cooldown-checked audit. 0.15.13 uploaded 2026-05-14.
+  "ruff==0.15.13",
   "respx>=0.21",
 ]
 
