@@ -152,6 +152,20 @@ class Assertion:
             )
         return cls(kind="max_ttft_ms", params={"max_ms": max_ms})
 
+    @classmethod
+    def yielded_within_ms(cls, max_ms: int) -> Assertion:
+        """After being interrupted, this turn must go silent within ``max_ms``
+        — the barge-in "time to yield the floor", measured from when the other
+        speaker cut in to when this turn's own voice stopped. ``errors``
+        (≠ fails) when no interruption actually landed on the turn: the
+        scripted barge-in never overlapped it, so there's nothing to measure.
+        Pair with a user turn's ``interrupt_after_ms`` on the turn before."""
+        if max_ms < 1:
+            raise ValueError(
+                f"Assertion.yielded_within_ms: max_ms must be >= 1 (got {max_ms})",
+            )
+        return cls(kind="yielded_within_ms", params={"max_ms": max_ms})
+
     def to_wire(self) -> AssertionWirePayload:
         # Spread first so a `kind` in params can't clobber the dispatch tag.
         return {**self.params, "kind": self.kind}
@@ -207,6 +221,12 @@ class Turn:
     key: str | None = None
     audio: AudioRef | None = None
     assertions: tuple[Assertion, ...] = ()
+    # Milliseconds into the preceding agent turn's speech at which this user
+    # turn barges in (a scripted interruption). Measured from the agent's
+    # speech onset, not the turn start, so the barge-in lands at the same
+    # point run-to-run regardless of the agent's response latency. None means
+    # the turn waits for the agent to finish (the default).
+    interrupt_after_ms: int | None = None
 
     @classmethod
     def user(
@@ -216,8 +236,20 @@ class Turn:
         key: str | None = None,
         audio: AudioRef | None = None,
         assertions: tuple[Assertion, ...] = (),
+        interrupt_after_ms: int | None = None,
     ) -> Turn:
-        return cls(role="user", text=text, key=key, audio=audio, assertions=assertions)
+        if interrupt_after_ms is not None and interrupt_after_ms < 1:
+            raise ValueError(
+                f"Turn.user: interrupt_after_ms must be >= 1 (got {interrupt_after_ms})",
+            )
+        return cls(
+            role="user",
+            text=text,
+            key=key,
+            audio=audio,
+            assertions=assertions,
+            interrupt_after_ms=interrupt_after_ms,
+        )
 
     @classmethod
     def agent(
@@ -262,6 +294,18 @@ class Conversation:
         # Live sessions have no script — empty turns are valid only when live.
         if len(self.turns) == 0 and not self.live:
             raise ValueError("Conversation must have at least one turn")
+        # A barge-in only makes sense on a user turn cutting into the agent
+        # turn right before it — the server enforces the same rule, but failing
+        # here points at the offending Turn instead of a later server 400.
+        for i, turn in enumerate(self.turns):
+            if turn.interrupt_after_ms is None:
+                continue
+            preceding = self.turns[i - 1] if i > 0 else None
+            if turn.role != "user" or preceding is None or preceding.role != "agent":
+                raise ValueError(
+                    "Turn.interrupt_after_ms is only valid on a user turn that immediately "
+                    f"follows an agent turn (turn {i} does not)"
+                )
 
     def to_conversation_spec_payload(self) -> ConversationSpecBody:
         """JSON ``spec`` part of the multipart POST to ``/v1/conversations``.
@@ -319,6 +363,7 @@ class TurnWirePayload(TypedDict):
     text: NotRequired[str]
     key: NotRequired[str]
     audio: NotRequired[AudioWirePayload]
+    interrupt_after_ms: NotRequired[int]
     assertions: NotRequired[list[AssertionWirePayload]]
 
 
@@ -350,6 +395,8 @@ def _turn_to_wire(turn: Turn, turn_idx: int) -> TurnWirePayload:
         out["text"] = turn.text
     if turn.key is not None:
         out["key"] = turn.key
+    if turn.interrupt_after_ms is not None:
+        out["interrupt_after_ms"] = turn.interrupt_after_ms
     if turn.audio is not None:
         out["audio"] = _audio_to_wire(turn.audio, turn_idx)
     elif turn.role == "user":
@@ -438,12 +485,16 @@ class TurnMetrics:
     Model TTFT is no longer a per-turn metric — it's an optional per-call
     attribute (``model_usage.ttft_ms``) surfaced on the inspector timeline
     (see spec 0001), not part of this struct.
+
+    ``yield_ms`` is the barge-in "time to yield the floor": how long the turn
+    kept talking after being interrupted. None when no interruption landed.
     """
 
     turn_idx: int
     role: Role
     agent_response_ms: int | None
     interrupted: bool
+    yield_ms: int | None = None
 
 
 @dataclass(frozen=True)

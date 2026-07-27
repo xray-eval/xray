@@ -28,7 +28,7 @@ import importlib
 import logging
 import time
 import wave
-from collections.abc import AsyncGenerator, Iterable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +55,7 @@ from xray.runtime._livekit_types import (
     LkApiModule,
     LkAudioFrame,
     LkAudioSource,
+    LkAudioStream,
     LkParticipant,
     LkRtcModule,
     LkTrack,
@@ -143,6 +144,87 @@ class _TurnSegment:
     started_at: float | None = None
     ended_at: float | None = None
     transcript: str = ""
+
+
+def _pcm_duration_ms(pcm: bytes) -> int:
+    """Duration of a mono int16 PCM buffer at ``SAMPLE_RATE``, in ms."""
+    return (len(pcm) // SAMPLE_WIDTH_BYTES) * 1000 // SAMPLE_RATE
+
+
+def _barge_in_user_turn(agent_turn: Turn, next_turn: Turn | None) -> Turn | None:
+    """The user turn that barges into ``agent_turn``, or None. A barge-in pair
+    is an agent turn immediately followed by a user turn carrying
+    ``interrupt_after_ms`` (the placement Conversation already validated)."""
+    if agent_turn.role != "agent" or next_turn is None:
+        return None
+    if next_turn.role == "user" and next_turn.interrupt_after_ms is not None:
+        return next_turn
+    return None
+
+
+def _agent_response_for(segment: _TurnSegment) -> AgentResponse:
+    duration_ms = (
+        int((segment.ended_at - segment.started_at) * 1000)
+        if segment.started_at is not None and segment.ended_at is not None
+        else None
+    )
+    return AgentResponse(transcript=segment.transcript, duration_ms=duration_ms)
+
+
+async def _cancel_task(task: asyncio.Task[None]) -> None:
+    """Cancel a still-running background task and swallow its cancellation."""
+    if not task.done():
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+class _AgentTranscript:
+    """Accumulates the latest caption text per segment id for one agent turn
+    and flags when a ``final`` segment arrives. Caption streams re-send a
+    segment id with cumulatively growing text, so we keep only the latest text
+    per id (never append) and assemble at the end. Shared by the normal
+    agent-turn capture and the barge-in capture."""
+
+    def __init__(self) -> None:
+        self.latest_by_id: dict[str, str] = {}
+        self.final_seen = asyncio.Event()
+
+    def ingest(self, seg: LkTranscriptionSegment) -> None:
+        self.latest_by_id[seg.id] = seg.text
+        if seg.final:
+            self.final_seen.set()
+
+    def assemble(self) -> str:
+        return _assemble_transcript(self.latest_by_id.values())
+
+
+async def _drain_until_final(
+    transcript: _AgentTranscript,
+    queue: asyncio.Queue[LkTranscriptionSegment],
+) -> None:
+    """Feed the queue into ``transcript`` until a final segment lands."""
+    while not transcript.final_seen.is_set():
+        transcript.ingest(await queue.get())
+
+
+def _drain_pending(
+    transcript: _AgentTranscript,
+    queue: asyncio.Queue[LkTranscriptionSegment],
+) -> None:
+    """Ingest whatever is already queued without blocking — segments can
+    arrive before the drain task gets a turn on the loop (common when a fake
+    stream finishes synchronously in tests)."""
+    while not queue.empty():
+        transcript.ingest(queue.get_nowait())
+
+
+def _discard_pending(queue: asyncio.Queue[LkTranscriptionSegment]) -> None:
+    """Drop any segments left from a prior turn before a new one starts — a
+    stale ``final`` would otherwise satisfy this turn's drain instantly."""
+    while not queue.empty():
+        with contextlib.suppress(asyncio.QueueEmpty):
+            queue.get_nowait()
 
 
 @dataclass
@@ -301,17 +383,50 @@ class LiveKitRuntime(Runtime):
     ) -> tuple[list[_TurnSegment], list[AgentResponse]]:
         segments: list[_TurnSegment] = []
         responses: list[AgentResponse] = []
-        for idx, turn in enumerate(conversation.turns):
+        turns = conversation.turns
+        idx = 0
+        while idx < len(turns):
+            turn = turns[idx]
+            next_turn = turns[idx + 1] if idx + 1 < len(turns) else None
+            barge_in_user = _barge_in_user_turn(turn, next_turn)
+            if barge_in_user is not None:
+                # The next turn is a user turn that cuts into this agent turn.
+                # Play the two together: capture the agent while, part-way
+                # through, publishing the user's interruption over it. If the
+                # agent finishes before the barge-in point there's nothing to
+                # interrupt (`user_seg is None`) and the user turn falls through
+                # to play normally on the next iteration.
+                agent_seg, response, user_seg = await self._play_interrupted_pair(
+                    agent_idx=idx,
+                    agent_turn=turn,
+                    user_idx=idx + 1,
+                    user_turn=barge_in_user,
+                    audio_source=audio_source,
+                    lk_rtc=lk_rtc,
+                    agent_audio_track_holder=agent_audio_track_holder,
+                    agent_track_event=agent_track_event,
+                    transcription_queue=transcription_queue,
+                )
+                segments.append(agent_seg)
+                responses.append(response)
+                if user_seg is not None:
+                    segments.append(user_seg)
+                    responses.append(AgentResponse(transcript=""))
+                    idx += 2
+                    continue
+                idx += 1
+                continue
+
             async with _scoped_turn(idx, key=turn.key):
                 match turn.role:
                     case "user":
-                        user_seg = await self._play_user_turn(
+                        user_only_seg = await self._play_user_turn(
                             idx=idx,
                             turn=turn,
                             audio_source=audio_source,
                             lk_rtc=lk_rtc,
                         )
-                        segments.append(user_seg)
+                        segments.append(user_only_seg)
                         responses.append(AgentResponse(transcript=""))
                     case "agent":
                         agent_seg, response = await self._capture_agent_turn(
@@ -326,6 +441,7 @@ class LiveKitRuntime(Runtime):
                         responses.append(response)
                     case _:
                         assert_never(turn.role)
+            idx += 1
         return segments, responses
 
     async def _play_user_turn(
@@ -381,6 +497,23 @@ class LiveKitRuntime(Runtime):
             await audio_source.capture_frame(frame)
             segment.pcm.extend(chunk)
 
+    async def _await_agent_track(
+        self,
+        *,
+        agent_audio_track_holder: list[LkTrack],
+        agent_track_event: asyncio.Event,
+    ) -> LkTrack:
+        # `agent_track_event` is one-time (track subscription is room-scoped,
+        # not turn-scoped). Only wait on it if we don't yet have a track —
+        # otherwise the wait would return immediately on turn 2+ and the
+        # configured `agent_turn_timeout_s` would silently no-op.
+        if not agent_audio_track_holder:
+            try:
+                await asyncio.wait_for(agent_track_event.wait(), timeout=self.agent_turn_timeout_s)
+            except TimeoutError as e:
+                raise AgentNotJoinedError(self.room, self.agent_turn_timeout_s) from e
+        return agent_audio_track_holder[-1]
+
     async def _capture_agent_turn(
         self,
         *,
@@ -391,43 +524,15 @@ class LiveKitRuntime(Runtime):
         agent_track_event: asyncio.Event,
         transcription_queue: asyncio.Queue[LkTranscriptionSegment],
     ) -> tuple[_TurnSegment, AgentResponse]:
-        # `agent_track_event` is one-time (track subscription is room-scoped,
-        # not turn-scoped). Only wait on it if we don't yet have a track —
-        # otherwise the wait would return immediately on turn 2+ and the
-        # configured `agent_turn_timeout_s` would silently no-op.
-        if not agent_audio_track_holder:
-            try:
-                await asyncio.wait_for(agent_track_event.wait(), timeout=self.agent_turn_timeout_s)
-            except TimeoutError as e:
-                raise AgentNotJoinedError(self.room, self.agent_turn_timeout_s) from e
-        track = agent_audio_track_holder[-1]
+        track = await self._await_agent_track(
+            agent_audio_track_holder=agent_audio_track_holder,
+            agent_track_event=agent_track_event,
+        )
         stream = lk_rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS)
-
-        # A stale `final=True` segment left in the queue from the prior
-        # agent turn would satisfy this turn's `final_seen` on the first
-        # drainer iteration and end the turn before any new audio is
-        # captured. Drop pre-turn segments before installing the drainer.
-        while not transcription_queue.empty():
-            with contextlib.suppress(asyncio.QueueEmpty):
-                transcription_queue.get_nowait()
+        _discard_pending(transcription_queue)
 
         segment = _TurnSegment(role="agent", idx=idx, key=turn.key)
-        # Caption streams (e.g. Gradium's TTS-aligned transcript) re-send
-        # one segment id with cumulatively growing text — keep only the
-        # latest text per id (insertion-ordered), never append, or every
-        # partial repeats the whole prefix in the stored transcript.
-        latest_text_by_segment_id: dict[str, str] = {}
-        final_seen = asyncio.Event()
-
-        def _ingest(seg: LkTranscriptionSegment) -> None:
-            latest_text_by_segment_id[seg.id] = seg.text
-            if seg.final:
-                final_seen.set()
-
-        async def _drain_transcripts() -> None:
-            while not final_seen.is_set():
-                seg = await transcription_queue.get()
-                _ingest(seg)
+        transcript = _AgentTranscript()
 
         # Emit the agent-role ``xray.turn`` span from the driver too.
         # The driver owns turn-idx allocation end-to-end (enumerated
@@ -442,44 +547,167 @@ class LiveKitRuntime(Runtime):
             if turn.key is not None:
                 span.set_attribute("xray.turn.key", turn.key)
             segment.started_at = time.time()
-            transcript_task = asyncio.create_task(_drain_transcripts())
-            deadline = time.time() + self.agent_turn_timeout_s
+            transcript_task = asyncio.create_task(
+                _drain_until_final(transcript, transcription_queue)
+            )
 
             async def _consume_frames() -> None:
                 async for event in stream:
                     segment.pcm.extend(bytes(event.frame.data))
-                    if final_seen.is_set():
+                    if transcript.final_seen.is_set():
                         break
 
-            try:
-                # asyncio.wait_for caps the consume loop so a silent agent
-                # can't hang the iterator forever; the inner `final_seen`
-                # short-circuits as soon as the transcript flips final.
-                remaining = max(0.0, deadline - time.time())
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(_consume_frames(), timeout=remaining)
-            finally:
-                await stream.aclose()
-                # Drain anything in the queue before tearing down the task —
-                # segments may have arrived before the task got a turn on the
-                # loop (common when the stream finishes synchronously, as in
-                # the test mocks).
-                while not transcription_queue.empty():
-                    _ingest(transcription_queue.get_nowait())
-                if not transcript_task.done():
-                    transcript_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await transcript_task
+            await self._run_agent_consume(_consume_frames, stream, transcript, transcription_queue)
+            await _cancel_task(transcript_task)
 
             segment.ended_at = time.time()
-            segment.transcript = _assemble_transcript(latest_text_by_segment_id.values())
+            segment.transcript = transcript.assemble()
             if segment.transcript:
                 span.set_attribute("xray.turn.transcript", segment.transcript)
 
-        return segment, AgentResponse(
-            transcript=segment.transcript,
-            duration_ms=int((segment.ended_at - segment.started_at) * 1000),
+        return segment, _agent_response_for(segment)
+
+    async def _play_interrupted_pair(
+        self,
+        *,
+        agent_idx: int,
+        agent_turn: Turn,
+        user_idx: int,
+        user_turn: Turn,
+        audio_source: LkAudioSource,
+        lk_rtc: LkRtcModule,
+        agent_audio_track_holder: list[LkTrack],
+        agent_track_event: asyncio.Event,
+        transcription_queue: asyncio.Queue[LkTranscriptionSegment],
+    ) -> tuple[_TurnSegment, AgentResponse, _TurnSegment | None]:
+        """Capture the agent turn and, once ``interrupt_after_ms`` of its audio
+        has been received, start publishing the user's turn over it — so the
+        recording carries both speakers at the barge-in point and the server
+        can measure how fast the agent yields.
+
+        The trigger is a count of *received agent audio*, not wall-clock: it
+        lands at the same point in the agent's response run-to-run, immune to
+        network jitter and to the agent's response latency (issue #113 req 2).
+
+        Returns the user segment only if the interruption actually fired. If
+        the agent finished speaking first, there was nothing to interrupt —
+        `user_seg` is None and the caller plays the user turn normally.
+        """
+        # `interrupt_after_ms` is guaranteed set for a barge-in pair; the
+        # fallback keeps the type honest without a bare assert.
+        after_ms = user_turn.interrupt_after_ms or 0
+        user_pcm = self._injected_user_pcm(user_idx)
+
+        track = await self._await_agent_track(
+            agent_audio_track_holder=agent_audio_track_holder,
+            agent_track_event=agent_track_event,
         )
+        stream = lk_rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS)
+        _discard_pending(transcription_queue)
+
+        agent_seg = _TurnSegment(role="agent", idx=agent_idx, key=agent_turn.key)
+        transcript = _AgentTranscript()
+        user_seg: _TurnSegment | None = None
+        user_publish_task: asyncio.Task[None] | None = None
+
+        with _TRACER.start_as_current_span("xray.turn") as agent_span:
+            agent_span.set_attribute("xray.turn.idx", agent_idx)
+            agent_span.set_attribute("xray.turn.role", "agent")
+            if agent_turn.key is not None:
+                agent_span.set_attribute("xray.turn.key", agent_turn.key)
+            agent_seg.started_at = time.time()
+            transcript_task = asyncio.create_task(
+                _drain_until_final(transcript, transcription_queue)
+            )
+            received_ms = 0
+
+            async def _consume_frames() -> None:
+                nonlocal user_seg, user_publish_task, received_ms
+                async for event in stream:
+                    data = bytes(event.frame.data)
+                    agent_seg.pcm.extend(data)
+                    if user_publish_task is None and not transcript.final_seen.is_set():
+                        received_ms += _pcm_duration_ms(data)
+                        if received_ms >= after_ms:
+                            user_seg, user_publish_task = self._begin_interruption(
+                                user_idx=user_idx,
+                                user_turn=user_turn,
+                                user_pcm=user_pcm,
+                                audio_source=audio_source,
+                                lk_rtc=lk_rtc,
+                            )
+                    # Keep capturing after the barge-in: the agent's tail (how
+                    # long it keeps talking) is exactly what the yield metric
+                    # measures. Stop only when the agent signals it's done.
+                    if transcript.final_seen.is_set():
+                        break
+
+            await self._run_agent_consume(_consume_frames, stream, transcript, transcription_queue)
+            await _cancel_task(transcript_task)
+
+            agent_seg.ended_at = time.time()
+            agent_seg.transcript = transcript.assemble()
+            if agent_seg.transcript:
+                agent_span.set_attribute("xray.turn.transcript", agent_seg.transcript)
+
+        if user_publish_task is not None:
+            await user_publish_task
+        if user_seg is not None:
+            user_seg.ended_at = time.time()
+
+        return agent_seg, _agent_response_for(agent_seg), user_seg
+
+    def _begin_interruption(
+        self,
+        *,
+        user_idx: int,
+        user_turn: Turn,
+        user_pcm: bytes,
+        audio_source: LkAudioSource,
+        lk_rtc: LkRtcModule,
+    ) -> tuple[_TurnSegment, asyncio.Task[None]]:
+        """Stamp the user segment's start and kick off publishing its audio
+        concurrently with the ongoing agent capture. The user span is emitted
+        under the user turn's own baggage scope."""
+        user_seg = _TurnSegment(
+            role="user", idx=user_idx, key=user_turn.key, transcript=user_turn.text or ""
+        )
+        user_seg.started_at = time.time()
+
+        async def _publish() -> None:
+            async with _scoped_turn(user_idx, key=user_turn.key):
+                with _TRACER.start_as_current_span("xray.turn") as span:
+                    span.set_attribute("xray.turn.idx", user_idx)
+                    span.set_attribute("xray.turn.role", "user")
+                    if user_seg.transcript:
+                        span.set_attribute("xray.turn.transcript", user_seg.transcript)
+                    if user_turn.key is not None:
+                        span.set_attribute("xray.turn.key", user_turn.key)
+                    await self._publish_pcm(
+                        audio_source=audio_source, lk_rtc=lk_rtc, pcm=user_pcm, segment=user_seg
+                    )
+
+        return user_seg, asyncio.create_task(_publish())
+
+    async def _run_agent_consume(
+        self,
+        consume_frames: Callable[[], Awaitable[None]],
+        stream: LkAudioStream,
+        transcript: _AgentTranscript,
+        transcription_queue: asyncio.Queue[LkTranscriptionSegment],
+    ) -> None:
+        """Run the frame-consume loop under the turn timeout, then tear the
+        stream down and drain any late-arriving transcripts. Shared by the
+        normal and barge-in agent captures."""
+        try:
+            # asyncio.wait_for caps the consume loop so a silent agent can't
+            # hang the iterator forever; the inner `final_seen` short-circuits
+            # as soon as the transcript flips final.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(consume_frames(), timeout=self.agent_turn_timeout_s)
+        finally:
+            await stream.aclose()
+            _drain_pending(transcript, transcription_queue)
 
     def _write_mixdown(self, segments: list[_TurnSegment]) -> tuple[Path | None, float | None]:
         if not segments:

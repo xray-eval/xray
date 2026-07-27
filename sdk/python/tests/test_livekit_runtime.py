@@ -8,6 +8,7 @@ runtime's ``wait_for(agent_joined.wait())`` resolves immediately.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import wave
 from collections.abc import AsyncIterator
@@ -213,6 +214,21 @@ def _make_silence_pcm(ms: int) -> bytes:
     return b"\x00\x00" * sample_count
 
 
+def _make_tone_pcm(ms: int) -> bytes:
+    """A constant loud int16 PCM buffer — distinguishable from silence in the
+    mixdown so a test can assert a channel actually carries audio."""
+    sample_count = SAMPLE_RATE * ms // 1000
+    return b"\xff\x7f" * sample_count  # 0x7FFF, full-scale
+
+
+def _final_segment(text: str) -> Any:
+    seg = MagicMock()
+    seg.id = f"seg-{text}"
+    seg.text = text
+    seg.final = True
+    return seg
+
+
 def _runtime(
     tmp_path: Path,
     lk_rtc: Any,
@@ -405,6 +421,136 @@ def test_runtime_captures_agent_turn_via_transcription(tmp_path: Path):
         # depends on real timing.
         nframes = w.getnframes()
         assert SAMPLE_RATE * 40 // 1000 <= nframes <= SAMPLE_RATE * 80 // 1000
+
+
+def test_barge_in_publishes_user_audio_over_the_agent_and_records_both(tmp_path: Path):
+    """A user turn with ``interrupt_after_ms`` cuts into the preceding agent
+    turn: the runtime keeps capturing the agent while it publishes the user's
+    audio, so the mixdown carries both speakers."""
+    frames = [_make_tone_pcm(20)] * 8  # 160ms of agent audio
+    track_event = _stage_agent_track(frames)
+    track_obj = track_event[1][0]
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join(), track_event])
+
+    # The agent keeps talking past the 60ms barge-in point, going final only
+    # after its 6th frame — that overlap is the agent's "yield tail".
+    final = _stage_transcription_final("okay, Berlin then")
+
+    def _fire_final() -> None:
+        rtc.Room.rooms[0].fire(final[0], *final[1])
+
+    callbacks: list[Any] = [None] * len(frames)
+    callbacks[5] = _fire_final
+    track_obj._xray_after_frame_callbacks = callbacks
+
+    # Track the AudioSource the runtime creates so we can confirm user audio
+    # was actually published onto the wire.
+    created_sources: list[_FakeAudioSource] = []
+
+    def _tracking_source(sample_rate: int, num_channels: int) -> _FakeAudioSource:
+        source = _FakeAudioSource(sample_rate, num_channels)
+        created_sources.append(source)
+        return source
+
+    rtc.AudioSource = _tracking_source
+
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api, user_audio={1: _make_tone_pcm(120)})
+    rt.agent_turn_timeout_s = 2.0
+
+    conv = Conversation(
+        name="user corrects destination mid-answer",
+        turns=[
+            Turn.agent(key="a0"),
+            Turn.user("no, Berlin", key="u1", interrupt_after_ms=60),
+        ],
+    )
+    result = asyncio.run(rt.run(conv))
+
+    # Both the agent turn and the interrupting user turn are recorded.
+    assert len(result.responses) == 2
+    assert created_sources, "runtime never created an audio source"
+    assert len(created_sources[0].captured) > 0
+
+    assert result.full_audio_path is not None
+    with wave.open(result.full_audio_path, "rb") as w:
+        assert w.getnchannels() == 2
+        interleaved = array.array("h")
+        interleaved.frombytes(w.readframes(w.getnframes()))
+    left = interleaved[0::2]  # user channel
+    right = interleaved[1::2]  # agent channel
+    assert any(v != 0 for v in left), "user audio missing from the mixdown"
+    assert any(v != 0 for v in right), "agent audio missing from the mixdown"
+
+
+async def _drive_interrupted_pair(
+    rt: LiveKitRuntime,
+    *,
+    frames: list[bytes],
+    final_after_frame: int,
+    interrupt_after_ms: int,
+) -> tuple[_TurnSegment, _TurnSegment | None]:
+    """Drive ``_play_interrupted_pair`` directly with a staged agent stream.
+    A final transcription is pushed into the queue after ``final_after_frame``.
+    Returns the agent segment and the user segment (None if it never fired)."""
+    track = MagicMock()
+    track.kind = "audio"
+    track._xray_frames = frames
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    callbacks: list[Any] = [None] * len(frames)
+    if final_after_frame < len(frames):
+        callbacks[final_after_frame] = lambda: queue.put_nowait(_final_segment("done"))
+    track._xray_after_frame_callbacks = callbacks
+
+    track_event = asyncio.Event()
+    track_event.set()
+    lk_rtc = rt._lk_rtc
+    assert lk_rtc is not None  # set by _runtime; narrows LkRtcModule | None
+    agent_seg, _response, user_seg = await rt._play_interrupted_pair(
+        agent_idx=0,
+        agent_turn=Turn.agent(key="a0"),
+        user_idx=1,
+        user_turn=Turn.user("no, Berlin", key="u1", interrupt_after_ms=interrupt_after_ms),
+        audio_source=lk_rtc.AudioSource(SAMPLE_RATE, 1),
+        lk_rtc=lk_rtc,
+        agent_audio_track_holder=[track],
+        agent_track_event=track_event,
+        transcription_queue=queue,
+    )
+    return agent_seg, user_seg
+
+
+def test_barge_in_fires_when_agent_audio_reaches_the_threshold(tmp_path: Path):
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    # 8 frames × 20ms; the agent stays final-free until frame 6, so the 60ms
+    # barge-in point (frame 3) lands while it's still talking.
+    agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(
+            rt, frames=[_make_tone_pcm(20)] * 8, final_after_frame=6, interrupt_after_ms=60
+        )
+    )
+    assert user_seg is not None
+    assert len(user_seg.pcm) > 0  # the user's audio was published
+    assert user_seg.started_at is not None and agent_seg.started_at is not None
+    assert user_seg.started_at >= agent_seg.started_at
+
+
+def test_barge_in_degrades_when_the_agent_finishes_first(tmp_path: Path):
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    # Only 60ms of agent audio total, but the barge-in point is 5s in — the
+    # agent finishes long before it, so there's nothing to interrupt.
+    _agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(
+            rt, frames=[_make_tone_pcm(20)] * 3, final_after_frame=0, interrupt_after_ms=5_000
+        )
+    )
+    assert user_seg is None
 
 
 def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):

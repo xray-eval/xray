@@ -148,6 +148,16 @@ def test_assertion_max_latency_ms_carries_integer():
     assert a.to_wire() == {"kind": "max_latency_ms", "max_ms": 2_000}
 
 
+def test_assertion_yielded_within_ms_carries_integer():
+    a = Assertion.yielded_within_ms(500)
+    assert a.to_wire() == {"kind": "yielded_within_ms", "max_ms": 500}
+
+
+def test_assertion_yielded_within_ms_rejects_non_positive():
+    with pytest.raises(ValueError, match="yielded_within_ms"):
+        Assertion.yielded_within_ms(0)
+
+
 def test_turn_assertions_round_trip_into_wire_payload():
     c = Conversation(
         name="x",
@@ -175,6 +185,39 @@ def test_turn_without_assertions_omits_the_key_from_wire_payload():
     payload = c.to_conversation_spec_payload()
     assert "assertions" not in payload["turns"][0]
     assert "assertions" not in payload["turns"][1]
+
+
+def test_interrupt_after_ms_rides_the_wire_only_when_set():
+    c = Conversation(
+        name="barge-in",
+        turns=[
+            Turn.user("book a flight to Paris", key="u0"),
+            Turn.agent(key="a0"),
+            Turn.user("no, Berlin", key="u1", interrupt_after_ms=2_000),
+            Turn.agent(key="a1"),
+        ],
+    )
+    turns = c.to_conversation_spec_payload()["turns"]
+    assert turns[2].get("interrupt_after_ms") == 2_000
+    # Turns that don't barge in omit the key entirely, so their hash is stable.
+    assert "interrupt_after_ms" not in turns[0]
+
+
+def test_interrupt_after_ms_rejects_non_positive_delay():
+    with pytest.raises(ValueError, match="interrupt_after_ms"):
+        Turn.user("no, Berlin", interrupt_after_ms=0)
+
+
+def test_interrupt_after_ms_requires_a_user_turn_following_an_agent_turn():
+    # First turn: nothing to interrupt.
+    with pytest.raises(ValueError, match="interrupt_after_ms"):
+        Conversation(name="x", turns=[Turn.user("hi", interrupt_after_ms=1_000)])
+    # Two user turns in a row: the turn before isn't the agent.
+    with pytest.raises(ValueError, match="interrupt_after_ms"):
+        Conversation(
+            name="x",
+            turns=[Turn.user("hi"), Turn.user("no, Berlin", interrupt_after_ms=1_000)],
+        )
 
 
 def test_judge_text_match_wire_includes_reference_and_default_pass_score():
