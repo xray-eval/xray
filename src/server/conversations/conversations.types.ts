@@ -43,11 +43,10 @@ const TurnLanguageSchema = v.pipe(
 	v.regex(/^[a-z]{2,3}(_[a-z]{2})?$/, 'Must be a lowercase language tag like "de" or "en_us"'),
 );
 
-// Milliseconds into the *preceding agent turn's* speech at which the user
-// starts talking over it (a scripted barge-in). Measured from agent speech
-// onset, not turn start, so a test lands at the same point run-to-run
-// regardless of the agent's response latency. Integer ≥ 1; a 0 ms delay would
-// mean "interrupt before the agent makes a sound", which has nothing to cut in on.
+// Milliseconds into the preceding agent turn's speech at which the user barges
+// in. Measured from agent speech onset (not turn start) so the cut lands at the
+// same point run-to-run regardless of response latency; ≥1 because 0 ms would
+// interrupt before the agent makes a sound.
 const InterruptAfterMsSchema = v.pipe(v.number(), v.integer(), v.minValue(1));
 
 const TtsAudioUploadSchema = v.object({

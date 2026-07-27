@@ -198,27 +198,15 @@ export function makeAnalyzeProcessor(
  * partial transcription would leave the evaluator working on a
  * misleading subset.
  *
- * Each slice reads a single channel (left for user, right for agent) over
- * a per-channel window: it starts at the turn's own voice onset and runs
- * until the next turn ON THE SAME CHANNEL starts speaking (or the end of
- * the recording for the last turn on that channel). Two properties fall
- * out of that, and both matter:
- *
- *   - Overlap (a barge-in): starting at the turn's own `voiceStartMs`
- *     means an interrupting turn is transcribed from its first word, not
- *     from wherever the opposite channel happened to fall silent. Because
- *     the slice is single-channel, the overlapping opposite-channel turn
- *     doesn't fight it for samples.
- *   - Quiet trailing reply: extending to the NEXT same-channel onset (not
- *     stopping at `voiceEndMs`) keeps covering a reply that sits below the
- *     VAD energy threshold and so left no speech segment — the real
- *     deployment bug the regression test below pins down.
- *
- * The cross-channel tiling window (`clampedTurnWindows`) is deliberately
- * NOT used here: it pushed an interrupting turn's slice to start at the
- * previous (opposite-channel) turn's end, clipping the front of the
- * barge-in. That geometry still governs span attribution in the
- * evaluator, where windows must tile and not overlap — a different job.
+ * Each slice is single-channel (left = user, right = agent), from the turn's
+ * own `voiceStartMs` to the next same-channel onset (recording end for the
+ * last one) — deliberately NOT the cross-channel tiling window
+ * (`clampedTurnWindows`). Starting at the turn's own onset transcribes an
+ * interrupting turn from its first word instead of the previous
+ * opposite-channel turn's tail; extending past `voiceEndMs` keeps covering a
+ * quiet trailing reply that fell below the VAD threshold (the deployment bug
+ * the regression test below pins down). Tiling still governs span attribution
+ * in the evaluator, where windows must not overlap — a different job.
  */
 async function runTranscriptionStage(
 	store: Store,

@@ -222,10 +222,9 @@ class Turn:
     audio: AudioRef | None = None
     assertions: tuple[Assertion, ...] = ()
     # Milliseconds into the preceding agent turn's speech at which this user
-    # turn barges in (a scripted interruption). Measured from the agent's
-    # speech onset, not the turn start, so the barge-in lands at the same
-    # point run-to-run regardless of the agent's response latency. None means
-    # the turn waits for the agent to finish (the default).
+    # turn barges in. Measured from the agent's speech onset (not turn start)
+    # so the cut lands at the same point run-to-run regardless of response
+    # latency. None (the default) waits for the agent to finish.
     interrupt_after_ms: int | None = None
 
     @classmethod
