@@ -118,7 +118,8 @@ Construction raises `ValueError` in two cases: an empty `name`, or empty `turns`
 ### `Turn`
 
 ```python
-Turn.user(text: str, *, key=None, audio: AudioRef | None = None, assertions=()) -> Turn
+Turn.user(text: str, *, key=None, audio: AudioRef | None = None, assertions=(),
+          interrupt_after_ms: int | None = None) -> Turn
 Turn.agent(*, key=None, assertions=()) -> Turn
 ```
 
@@ -126,11 +127,13 @@ Note that `Turn.agent` takes **no `text`**. You don't declare what the agent say
 
 A user turn with no `audio` is sent as a server-side TTS marker. TTS means text-to-speech: the server generates the audio. See [Audio references](#audio-references).
 
+`interrupt_after_ms` scripts a **barge-in**: the user starts talking that many milliseconds into the *preceding agent turn's* speech, instead of waiting for it to finish. The delay is measured from the agent's speech onset — not the turn start — so the interruption lands at the same point in the agent's response run-to-run, regardless of the agent's latency. It is only valid on a user turn immediately following an agent turn; anything else raises `ValueError` at construction. Pair it with `Assertion.yielded_within_ms(...)` on the agent turn to assert how fast the agent stops talking. See [Scripting a barge-in](#scripting-a-barge-in).
+
 ### Assertions
 
 An assertion is a single declarative check on one turn.
 
-All nine builders are `Assertion` classmethods. They validate their arguments at construction time, so a bad argument raises `ValueError` right away (fail-fast). All of them run **server-side**, during the `evaluate-replay` stage.
+All ten builders are `Assertion` classmethods. They validate their arguments at construction time, so a bad argument raises `ValueError` right away (fail-fast). All of them run **server-side**, during the `evaluate-replay` stage.
 
 ```python
 Assertion.contains(text, *, case_insensitive=True)
@@ -142,6 +145,7 @@ Assertion.tool_not_called(name)
 Assertion.tool_args_match(name, args)            # args: dict[str, JsonValue]
 Assertion.max_latency_ms(max_ms)                 # max_ms >= 1
 Assertion.max_ttft_ms(max_ms)                    # max_ms >= 1
+Assertion.yielded_within_ms(max_ms)              # max_ms >= 1
 ```
 
 | Kind | Checks |
@@ -153,6 +157,7 @@ Assertion.max_ttft_ms(max_ms)                    # max_ms >= 1
 | `tool_args_match` | A `name` call's arguments match the given subset. |
 | `max_latency_ms` | The agent responded within `max_ms` of the user turn ending. |
 | `max_ttft_ms` | The model's time-to-first-chunk was within `max_ms`. |
+| `yielded_within_ms` | After a barge-in, the agent went silent within `max_ms`. **`errored`** if no interruption landed on the turn — see [Scripting a barge-in](#scripting-a-barge-in). |
 
 The tool assertions and the TTFT assertion need span-to-turn attribution. That is, xray has to map each span onto the audio timeline to know which turn it belongs to. (TTFT means time-to-first-token: how long the model takes to start replying.)
 
@@ -196,6 +201,26 @@ To convert a WAV to the required format, use:
 `ffmpeg -i in.wav -ar 48000 -ac 1 -sample_fmt s16 out.wav`.
 
 xray does not host every voice. For voices it doesn't host (Cartesia, ElevenLabs, Deepgram, and so on), synthesize the audio externally and pass the result as `RecordedAudio`.
+
+### Scripting a barge-in
+
+Real users interrupt voice agents mid-sentence. To test how an agent handles that, mark a user turn with `interrupt_after_ms`: the user starts talking that many milliseconds into the *preceding agent turn's* speech, instead of waiting for it to finish.
+
+```python
+Conversation(
+    name="user corrects destination mid-answer",
+    turns=[
+        Turn.user("Book me a flight to Paris"),
+        Turn.agent(assertions=(Assertion.yielded_within_ms(500),)),  # must stop fast
+        Turn.user("No, wait — Berlin!", interrupt_after_ms=2000),    # cut in 2s in
+        Turn.agent(assertions=(Assertion.contains("Berlin"),)),      # did it recover?
+    ],
+)
+```
+
+The recording captures both speakers overlapping at the barge-in point (`LiveKitRuntime` keeps recording the agent while it publishes the user's audio over it). The server then measures **`yield_ms`** — how long the agent kept talking after the interruption began — and surfaces it on the interrupted turn's `TurnMetrics` and in the inspector.
+
+`Assertion.yielded_within_ms(max_ms)` asserts the agent went silent within `max_ms`. If the interruption never actually landed — the agent finished speaking before the barge-in point, so there was nothing to interrupt — the assertion reports **`errored`**, not failed. The recovery turn is asserted normally (`contains("Berlin")` above).
 
 ---
 
@@ -471,8 +496,10 @@ AssertionOutcome(turn_idx: int, assertion_idx: int, kind: str,
 JudgeOutcome(judge_idx: int, kind: str, status: EvaluationStatus,
              score: int | None, reason: str | None)
 TurnMetrics(turn_idx: int, role: Role, agent_response_ms: int | None,
-            interrupted: bool)
+            interrupted: bool, yield_ms: int | None = None)
 ```
+
+`yield_ms` is the barge-in "time to yield the floor": how long the turn kept talking after being interrupted. It is `None` when no interruption landed on the turn.
 
 `EvaluationStatus` is `"passed" | "failed" | "errored"`. `format_failures(result)` renders just the non-passed assertion and judge outcomes. If there are none, it returns `"all assertions and judges passed"`.
 
