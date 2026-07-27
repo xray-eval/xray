@@ -538,6 +538,31 @@ def test_barge_in_fires_when_agent_audio_reaches_the_threshold(tmp_path: Path):
     assert user_seg.started_at >= agent_seg.started_at
 
 
+def test_barge_in_is_placed_by_agent_content_not_wallclock(tmp_path: Path):
+    """The barge-in is recorded at the agent-audio CONTENT offset it fired on,
+    not wall-clock. The staged stream delivers every frame synchronously — the
+    bursting condition write_live_mixdown warns about — so wall-clock elapsed to
+    receive the frames is ~0 while 100ms of agent content precedes the barge-in.
+    A wall-clock stamp would put the user segment ~0ms after the agent onset (an
+    inflated yield_ms); the content-derived stamp puts it 100ms in."""
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    # 8 frames × 20ms; barge-in fires once 100ms of agent content is received.
+    agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(
+            rt, frames=[_make_tone_pcm(20)] * 8, final_after_frame=6, interrupt_after_ms=100
+        )
+    )
+    assert user_seg is not None
+    assert agent_seg.started_at is not None and user_seg.started_at is not None
+    # ~100ms for the content-derived stamp (float epoch precision loses a
+    # sub-microsecond fraction); the old wall-clock stamp lands near 0.
+    gap_ms = (user_seg.started_at - agent_seg.started_at) * 1000
+    assert gap_ms >= 90, f"barge-in placed by wall-clock ({gap_ms:.1f}ms), not agent content"
+
+
 def test_barge_in_degrades_when_the_agent_finishes_first(tmp_path: Path):
     rt = _runtime(
         tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}

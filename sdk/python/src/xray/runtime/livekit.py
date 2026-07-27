@@ -615,7 +615,8 @@ class LiveKitRuntime(Runtime):
             agent_span.set_attribute("xray.turn.role", "agent")
             if agent_turn.key is not None:
                 agent_span.set_attribute("xray.turn.key", agent_turn.key)
-            agent_seg.started_at = time.time()
+            agent_started_at = time.time()
+            agent_seg.started_at = agent_started_at
             transcript_task = asyncio.create_task(
                 _drain_until_final(transcript, transcription_queue)
             )
@@ -629,10 +630,18 @@ class LiveKitRuntime(Runtime):
                     if user_publish_task is None and not transcript.final_seen.is_set():
                         received_ms += _pcm_duration_ms(data)
                         if received_ms >= after_ms:
+                            # Place the barge-in in the recording at the CONTENT
+                            # point it fired on — agent onset + received_ms of
+                            # agent audio — not wall-clock. AudioStream can
+                            # deliver agent frames in bursts ahead of realtime
+                            # (see write_live_mixdown), so a wall-clock stamp
+                            # would land the interruption early on the timeline
+                            # and inflate the measured yield_ms.
                             user_seg, user_publish_task = self._begin_interruption(
                                 user_idx=user_idx,
                                 user_turn=user_turn,
                                 user_pcm=user_pcm,
+                                started_at=agent_started_at + received_ms / 1000,
                                 audio_source=audio_source,
                                 lk_rtc=lk_rtc,
                             )
@@ -652,8 +661,11 @@ class LiveKitRuntime(Runtime):
 
         if user_publish_task is not None:
             await user_publish_task
-        if user_seg is not None:
-            user_seg.ended_at = time.time()
+        if user_seg is not None and user_seg.started_at is not None:
+            # End the user segment at its own content duration, consistent with
+            # the content-timed start — a wall-clock stamp here could precede
+            # the content-derived start under bursty delivery.
+            user_seg.ended_at = user_seg.started_at + _pcm_duration_ms(bytes(user_seg.pcm)) / 1000
 
         return agent_seg, _agent_response_for(agent_seg), user_seg
 
@@ -663,16 +675,19 @@ class LiveKitRuntime(Runtime):
         user_idx: int,
         user_turn: Turn,
         user_pcm: bytes,
+        started_at: float,
         audio_source: LkAudioSource,
         lk_rtc: LkRtcModule,
     ) -> tuple[_TurnSegment, asyncio.Task[None]]:
-        """Stamp the user segment's start and kick off publishing its audio
-        concurrently with the ongoing agent capture. The user span is emitted
-        under the user turn's own baggage scope."""
+        """Kick off publishing the user's audio concurrently with the ongoing
+        agent capture. ``started_at`` is the CONTENT-derived barge-in time
+        (agent onset + received agent audio), not wall-clock — see the caller
+        for why. The user span is emitted under the user turn's own baggage
+        scope."""
         user_seg = _TurnSegment(
             role="user", idx=user_idx, key=user_turn.key, transcript=user_turn.text or ""
         )
-        user_seg.started_at = time.time()
+        user_seg.started_at = started_at
 
         async def _publish() -> None:
             async with _scoped_turn(user_idx, key=user_turn.key):
