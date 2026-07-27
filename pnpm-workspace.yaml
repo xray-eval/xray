@@ -165,6 +165,19 @@ overrides:
   # declares dompurify ^3.3.1, so ^3.4.11 is compatible. Surgical pin on the
   # mermaid parent. Remove once mermaid bumps dompurify. Added 2026-07-21.
   "mermaid>dompurify": "^3.4.11"
+  # GHSA-r28c-9q8g-f849 — postcss <=8.5.17 has a path-traversal in its
+  # previous-source-map auto-loader (`sourceMappingURL`): a crafted `.css` can
+  # make postcss read an arbitrary `.map` file off disk. Rides in transitively
+  # via the VitePress docs toolchain (vite>postcss and @vue/compiler-sfc>postcss;
+  # 22 paths, all deduped onto a single postcss copy). Dev-only — vitepress is a
+  # devDependency dropped from the `--prod` Docker image — and the docs build
+  # only ever processes CSS WE author, never untrusted input, so practical risk
+  # is nil; but `pnpm audit --audit-level=moderate` blocks merge. Bare (not
+  # parent-scoped) because the single shared copy is reached through several
+  # parents — a per-parent pin would leave a path unbumped and the gate red.
+  # 8.5.18 published 2026-07-12, past the 7-day cooldown. Remove once the
+  # VitePress chain resolves postcss >=8.5.18 on its own. Added 2026-07-27.
+  postcss: "^8.5.18"
 
 # VEX-style "not affected" disposition: GHSA-gv7w-rqvm-qjhr is unreachable in
 # this repo, so the audit gate is told to skip that one advisory. The advisory
