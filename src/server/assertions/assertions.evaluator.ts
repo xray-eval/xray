@@ -136,6 +136,17 @@ export function evaluateAssertion(assertion: Assertion, ctx: AssertionContext): 
 				? passed
 				: failed(`ttft_ms ${ctx.metrics.ttftMs}ms > max ${a.max_ms}ms`);
 		})
+		.with({ kind: "yielded_within_ms" }, (a) => {
+			// No yield time means no interruption landed on this turn — the
+			// barge-in the test scripted never actually overlapped it. That's an
+			// errored assertion (the test couldn't be run), not a fast/slow yield.
+			if (ctx.metrics.yieldMs === null) {
+				return errored("no interruption landed on this turn — nothing to yield");
+			}
+			return ctx.metrics.yieldMs <= a.max_ms
+				? passed
+				: failed(`kept talking ${ctx.metrics.yieldMs}ms after interruption > max ${a.max_ms}ms`);
+		})
 		.exhaustive();
 }
 

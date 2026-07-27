@@ -11,15 +11,14 @@ interface TaggedSegment {
  * Derive turn boundaries from per-channel VAD output. Segments merge into one
  * timeline; adjacent same-role segments form a turn, a role-change closes it.
  * Per turn:
- *   - `turnStartMs` = the moment after the OTHER side's last segment ended
- *     (0 for the very first turn).
+ *   - `turnStartMs` = the moment after the OTHER side's last segment ended,
+ *     clamped to this turn's own voice onset (0 for the very first turn).
  *   - `turnEndMs` = this side's last segment in the turn ended.
  *   - `voiceStartMs` / `voiceEndMs` = first/last speech-segment bounds in the turn.
  *
- * Overlap (both channels voiced at the same offset) is not modeled by v0 — VAD
- * runs per channel independently, assuming strict interleaving. On overlap, the
- * channel that started first owns the turn until it stops; the other side's
- * segments inside that range merge into the next turn at the role-change.
+ * VAD runs per channel, so on a barge-in the two sides' `voice*` extents can
+ * overlap in time; the `turnStartMs` clamp (see `buildTurn`) keeps an
+ * interrupting turn from reporting a start after it was already speaking.
  */
 export function deriveTurns(user: VadSegment[], agent: VadSegment[]): DerivedTurn[] {
 	const all: TaggedSegment[] = [
@@ -67,7 +66,11 @@ function buildTurn(
 	return {
 		idx,
 		role,
-		turnStartMs: prevOtherEndMs,
+		// Clamp to this turn's voice onset so an interrupting turn (voice
+		// starting before the other side stopped) can't report a start later
+		// than its own first word. Without overlap `prevOtherEndMs` is already
+		// ≤ the voice onset, so the `min` is a no-op for the common path.
+		turnStartMs: Math.min(prevOtherEndMs, first.startMs),
 		turnEndMs: last.endMs,
 		voiceStartMs: first.startMs,
 		voiceEndMs: last.endMs,

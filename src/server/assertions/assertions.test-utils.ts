@@ -11,6 +11,7 @@ export interface MakeAssertionContextOverrides {
 	modelUsage?: readonly ModelUsageRow[];
 	agentResponseMs?: number | null;
 	ttftMs?: number | null;
+	yieldMs?: number | null;
 }
 
 export function makeAssertionContext(
@@ -29,6 +30,7 @@ export function makeAssertionContext(
 		metrics: {
 			agentResponseMs: overrides.agentResponseMs ?? null,
 			ttftMs: overrides.ttftMs ?? null,
+			yieldMs: overrides.yieldMs ?? null,
 		},
 	};
 }

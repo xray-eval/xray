@@ -12,6 +12,7 @@ interface TurnMetricLike {
 	readonly agentResponseMs: number | null;
 	readonly interrupted: boolean;
 	readonly interruptionStartMs: number | null;
+	readonly yieldMs: number | null;
 }
 
 /**
@@ -43,6 +44,7 @@ export function projectTurnMetrics(
 				agent_response_ms: m?.agentResponseMs ?? null,
 				interrupted: m?.interrupted ?? false,
 				interruption_start_ms: m?.interruptionStartMs ?? null,
+				yield_ms: m?.yieldMs ?? null,
 			};
 		});
 }

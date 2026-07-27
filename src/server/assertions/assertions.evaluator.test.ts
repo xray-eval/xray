@@ -238,6 +238,26 @@ describe("evaluateAssertion — max_ttft_ms", () => {
 	});
 });
 
+describe("evaluateAssertion — yielded_within_ms", () => {
+	it("passes when the turn yielded within budget", () => {
+		const ctx = makeAssertionContext({ yieldMs: 300 });
+		const outcome = evaluateAssertion({ kind: "yielded_within_ms", max_ms: 500 }, ctx);
+		expect(outcome.status).toBe("passed");
+	});
+
+	it("fails when the turn kept talking past the budget", () => {
+		const ctx = makeAssertionContext({ yieldMs: 900 });
+		const outcome = evaluateAssertion({ kind: "yielded_within_ms", max_ms: 500 }, ctx);
+		expect(outcome.status).toBe("failed");
+	});
+
+	it("errors (not fails) when no interruption landed on the turn", () => {
+		const ctx = makeAssertionContext({ yieldMs: null });
+		const outcome = evaluateAssertion({ kind: "yielded_within_ms", max_ms: 500 }, ctx);
+		expect(outcome.status).toBe("errored");
+	});
+});
+
 describe("evaluateAssertion — no recording anchor", () => {
 	// Without recording_started_at the server can't map span timestamps onto
 	// the audio timeline, so span-attributed assertions can't be evaluated —
@@ -259,16 +279,20 @@ describe("evaluateAssertion — no recording anchor", () => {
 		}
 	});
 
-	it("does NOT error text or latency assertions (timeline-independent)", () => {
+	it("does NOT error text, latency, or yield assertions (timeline-independent)", () => {
 		const ctx = makeAssertionContext({
 			hasRecordingAnchor: false,
 			transcript: "hello world",
 			agentResponseMs: 1200,
+			yieldMs: 300,
 		});
 		expect(
 			evaluateAssertion({ kind: "contains", text: "hello", case_insensitive: true }, ctx).status,
 		).toBe("passed");
 		expect(evaluateAssertion({ kind: "max_latency_ms", max_ms: 2000 }, ctx).status).toBe("passed");
+		expect(evaluateAssertion({ kind: "yielded_within_ms", max_ms: 500 }, ctx).status).toBe(
+			"passed",
+		);
 	});
 });
 

@@ -10,7 +10,6 @@ import { runVadOnChannel } from "@/server/audio/audio.vad.ts";
 import { readStereoWav, resamplePcm } from "@/server/audio/audio.wav.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
 import { findReplay, markReplayFailed } from "@/server/replays/replays.service.ts";
-import { clampedTurnWindows } from "@/server/replays/timeline.ts";
 import { replays, replayTurns, speechSegments, turnTranscripts } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
@@ -199,21 +198,27 @@ export function makeAnalyzeProcessor(
  * partial transcription would leave the evaluator working on a
  * misleading subset.
  *
- * Each slice covers the turn's tiling attribution window
- * (`clampedTurnWindows` over `voiceEndMs` — the same geometry the
- * evaluator and the trace tree attribute spans with — with the last
- * window extended to the recording's end), on the turn's channel. NOT
- * the VAD voiced extent: the energy VAD is calibrated on synthetic
- * fixtures and can mark the wrong stretch of a turn as voiced (quiet
- * real reply below threshold, spurious early segment claiming the
- * extent). A voiced-extent slice then carries only pre-reply audio,
- * `turn_transcripts.text` comes back empty, and judges score against a
- * blank reply even though the speech is in the WAV. In-window silence
- * costs nothing — the provider transcribes it as empty.
+ * Each slice reads a single channel (left for user, right for agent) over
+ * a per-channel window: it starts at the turn's own voice onset and runs
+ * until the next turn ON THE SAME CHANNEL starts speaking (or the end of
+ * the recording for the last turn on that channel). Two properties fall
+ * out of that, and both matter:
  *
- * Interrupted turns collapse to an empty `[c, c)` window — no
- * transcript row is written and the assertion evaluator treats the
- * missing row as a null transcript.
+ *   - Overlap (a barge-in): starting at the turn's own `voiceStartMs`
+ *     means an interrupting turn is transcribed from its first word, not
+ *     from wherever the opposite channel happened to fall silent. Because
+ *     the slice is single-channel, the overlapping opposite-channel turn
+ *     doesn't fight it for samples.
+ *   - Quiet trailing reply: extending to the NEXT same-channel onset (not
+ *     stopping at `voiceEndMs`) keeps covering a reply that sits below the
+ *     VAD energy threshold and so left no speech segment — the real
+ *     deployment bug the regression test below pins down.
+ *
+ * The cross-channel tiling window (`clampedTurnWindows`) is deliberately
+ * NOT used here: it pushed an interrupting turn's slice to start at the
+ * previous (opposite-channel) turn's end, clipping the front of the
+ * barge-in. That geometry still governs span attribution in the
+ * evaluator, where windows must tile and not overlap — a different job.
  */
 async function runTranscriptionStage(
 	store: Store,
@@ -222,12 +227,12 @@ async function runTranscriptionStage(
 	turns: ReadonlyArray<{
 		idx: number;
 		role: "user" | "agent";
+		voiceStartMs: number;
 		voiceEndMs: number;
 	}>,
 	transcription: TranscriptionProvider,
 ): Promise<number> {
 	const recordingEndMs = Math.round((wav.left.length / wav.sampleRate) * 1000);
-	const windows = clampedTurnWindows(turns.map((t) => t.voiceEndMs));
 	// Shared AbortController so one Whisper rejection cancels the other
 	// in-flight siblings. `Promise.all` rejects on first failure but does
 	// NOT cancel the rest — they keep running and burning provider quota
@@ -246,12 +251,16 @@ async function runTranscriptionStage(
 	try {
 		const settled = await Promise.all(
 			turns.map(async (turn, i) => {
-				const window = windows[i];
-				if (window === undefined) return null;
-				const endMs =
-					i === turns.length - 1 ? Math.max(window.turnEndMs, recordingEndMs) : window.turnEndMs;
-				if (endMs <= window.turnStartMs) return null;
-				const pcm = sliceTurnAudio(wav, turn.role, window.turnStartMs, endMs);
+				const startMs = turn.voiceStartMs;
+				// Extend to the next same-channel turn's onset (the recording end
+				// for the last one), but never before this turn's own voiced end.
+				const nextSameChannel = turns.slice(i + 1).find((t) => t.role === turn.role);
+				const endMs = Math.max(
+					turn.voiceEndMs,
+					nextSameChannel !== undefined ? nextSameChannel.voiceStartMs : recordingEndMs,
+				);
+				if (endMs <= startMs) return null;
+				const pcm = sliceTurnAudio(wav, turn.role, startMs, endMs);
 				if (pcm.length === 0) return null;
 				const result = await transcription.transcribe({
 					audio: pcm,

@@ -275,6 +275,9 @@ export const turnTranscripts = sqliteTable(
 // `agent_response_ms` is `voice_start_ms - prior_user_turn.voice_end_ms` for
 // agent turns; null for user turns. `interrupted` is true when an
 // opposite-channel speech segment started while this turn was still active.
+// `yield_ms` is how long this turn kept talking after that interruption began
+// (`voice_end_ms - interruption_start_ms`); null when the turn wasn't
+// interrupted — the barge-in "time to yield the floor".
 //
 // These are the audio-frame metrics — both operands of every value come from
 // VAD on the same recording, so they need no cross-clock correlation. Model
@@ -290,6 +293,7 @@ export const replayMetrics = sqliteTable(
 		agentResponseMs: integer("agent_response_ms"),
 		interrupted: integer("interrupted", { mode: "boolean" }).notNull(),
 		interruptionStartMs: integer("interruption_start_ms"),
+		yieldMs: integer("yield_ms"),
 	},
 	(t) => [primaryKey({ columns: [t.replayId, t.turnIdx], name: "replay_metrics_pk" })],
 );

@@ -64,6 +64,11 @@ const MaxTtftAssertionSchema = v.object({
 	max_ms: v.pipe(v.number(), v.integer(), v.minValue(1)),
 });
 
+const YieldedWithinAssertionSchema = v.object({
+	kind: v.literal("yielded_within_ms"),
+	max_ms: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+
 /**
  * Declarative assertion that the server runs against one turn of a replay.
  * Closed catalog — every variant is dispatched exhaustively in
@@ -81,6 +86,7 @@ export const AssertionSchema = v.variant("kind", [
 	ToolArgsMatchAssertionSchema,
 	MaxLatencyAssertionSchema,
 	MaxTtftAssertionSchema,
+	YieldedWithinAssertionSchema,
 ]);
 export type Assertion = v.InferOutput<typeof AssertionSchema>;
 export type AssertionKind = Assertion["kind"];
@@ -110,6 +116,10 @@ export const AssertionsArraySchema = v.pipe(
  *
  * `metrics.ttftMs` is the earliest in-window model call's
  * `model_usage.ttft_ms` (or null), NOT a per-turn aggregate.
+ *
+ * `metrics.yieldMs` is how long this turn kept talking after being
+ * interrupted (`voice_end_ms - interruption_start_ms`), or null when no
+ * interruption landed on it — `yielded_within_ms` maps the null to `errored`.
  */
 export interface AssertionContext {
 	readonly turnIdx: number;
@@ -121,6 +131,7 @@ export interface AssertionContext {
 	readonly metrics: {
 		readonly agentResponseMs: number | null;
 		readonly ttftMs: number | null;
+		readonly yieldMs: number | null;
 	};
 }
 

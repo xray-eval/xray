@@ -14,12 +14,14 @@ describe("projectTurnMetrics", () => {
 				agentResponseMs: 300,
 				interrupted: true,
 				interruptionStartMs: 1200,
+				yieldMs: 400,
 			},
 			{
 				turnIdx: 0,
 				agentResponseMs: null,
 				interrupted: false,
 				interruptionStartMs: null,
+				yieldMs: null,
 			},
 		]);
 
@@ -30,6 +32,7 @@ describe("projectTurnMetrics", () => {
 			agent_response_ms: 300,
 			interrupted: true,
 			interruption_start_ms: 1200,
+			yield_ms: 400,
 		});
 	});
 
@@ -42,6 +45,7 @@ describe("projectTurnMetrics", () => {
 				agent_response_ms: null,
 				interrupted: false,
 				interruption_start_ms: null,
+				yield_ms: null,
 			},
 		]);
 	});

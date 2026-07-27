@@ -1,0 +1,1 @@
+ALTER TABLE `replay_metrics` ADD `yield_ms` integer;

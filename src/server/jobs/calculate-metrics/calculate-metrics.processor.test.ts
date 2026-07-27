@@ -95,6 +95,38 @@ describe("computeMetrics (pure)", () => {
 		const rows = computeMetrics("r", turns, segments);
 		expect(rows[0]?.interrupted).toBe(false);
 	});
+
+	it("yieldMs = voiceEnd - interruptionStart for an interrupted turn, null otherwise", () => {
+		const turns: ReplayTurnRow[] = [
+			{
+				replayId: "r",
+				idx: 0,
+				role: "agent",
+				turnStartMs: 0,
+				turnEndMs: 2000,
+				voiceStartMs: 500,
+				voiceEndMs: 1800,
+			},
+			{
+				replayId: "r",
+				idx: 1,
+				role: "agent",
+				turnStartMs: 2000,
+				turnEndMs: 3000,
+				voiceStartMs: 2000,
+				voiceEndMs: 3000,
+			},
+		];
+		// User cuts in at 1500; the agent (voiced through 1800) keeps talking 300ms.
+		const segments: SpeechSegmentRow[] = [
+			{ id: 1, replayId: "r", channel: "user", startMs: 1500, endMs: 2200 },
+		];
+		const rows = computeMetrics("r", turns, segments);
+		expect(rows[0]?.yieldMs).toBe(300);
+		// The uninterrupted turn has no yield time.
+		expect(rows[1]?.interrupted).toBe(false);
+		expect(rows[1]?.yieldMs).toBeNull();
+	});
 });
 
 describe("makeCalculateMetricsProcessor", () => {

@@ -43,6 +43,13 @@ const TurnLanguageSchema = v.pipe(
 	v.regex(/^[a-z]{2,3}(_[a-z]{2})?$/, 'Must be a lowercase language tag like "de" or "en_us"'),
 );
 
+// Milliseconds into the *preceding agent turn's* speech at which the user
+// starts talking over it (a scripted barge-in). Measured from agent speech
+// onset, not turn start, so a test lands at the same point run-to-run
+// regardless of the agent's response latency. Integer ≥ 1; a 0 ms delay would
+// mean "interrupt before the agent makes a sound", which has nothing to cut in on.
+const InterruptAfterMsSchema = v.pipe(v.number(), v.integer(), v.minValue(1));
+
 const TtsAudioUploadSchema = v.object({
 	kind: v.literal("tts"),
 	voice_id: v.optional(v.pipe(v.string(), v.maxLength(MAX_AUDIO_VOICE_ID))),
@@ -71,6 +78,7 @@ export const ConversationTurnRequestSchema = v.object({
 	text: v.optional(v.pipe(v.string(), v.maxLength(MAX_TURN_TEXT))),
 	key: v.optional(v.pipe(v.string(), v.nonEmpty(), v.maxLength(MAX_TURN_KEY))),
 	audio: v.optional(TurnAudioUploadSchema),
+	interrupt_after_ms: v.optional(InterruptAfterMsSchema),
 	assertions: v.optional(AssertionsArraySchema, []),
 });
 export type ConversationTurnRequest = v.InferOutput<typeof ConversationTurnRequestSchema>;
@@ -103,8 +111,24 @@ export const CreateConversationRequestSchema = v.pipe(
 		(input) => input.live || input.turns.length >= 1,
 		"A non-live conversation must declare at least one turn",
 	),
+	v.check(
+		(input) => input.turns.every(isInterruptPlacementValid),
+		"interrupt_after_ms is only valid on a user turn that immediately follows an agent turn",
+	),
 );
 export type CreateConversationRequest = v.InferOutput<typeof CreateConversationRequestSchema>;
+
+// A turn only earns an `interrupt_after_ms` if it's a user turn cutting into
+// the agent turn right before it — there's nothing to barge in on otherwise
+// (a first turn, or a turn preceded by another user turn).
+function isInterruptPlacementValid(
+	turn: ConversationTurnRequest,
+	index: number,
+	turns: readonly ConversationTurnRequest[],
+): boolean {
+	if (turn.interrupt_after_ms === undefined) return true;
+	return turn.role === "user" && turns[index - 1]?.role === "agent";
+}
 
 const RecordedAudioRefSchema = v.object({
 	kind: v.literal("recorded"),
@@ -134,6 +158,12 @@ export const ConversationTurnSchema = v.object({
 	text: v.optional(v.pipe(v.string(), v.maxLength(MAX_TURN_TEXT))),
 	key: v.optional(v.pipe(v.string(), v.nonEmpty(), v.maxLength(MAX_TURN_KEY))),
 	audio: v.optional(TurnAudioRefSchema),
+	// Part of the canonical form (and thus the hash) because scripting a
+	// barge-in changes the test: the user now cuts in mid-response instead of
+	// waiting for the agent to finish. Default-less optional so a turn that
+	// doesn't interrupt omits the key entirely, leaving every existing
+	// conversation's hash byte-for-byte unchanged.
+	interrupt_after_ms: v.optional(InterruptAfterMsSchema),
 	assertions: v.optional(AssertionsArraySchema, []),
 });
 export type ConversationTurn = v.InferOutput<typeof ConversationTurnSchema>;

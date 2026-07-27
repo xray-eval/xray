@@ -35,7 +35,7 @@ export type CalculateMetricsProcessor = (payload: JobPayload) => Promise<Calcula
  * transaction (writes an empty `replay_evaluations` row + flips lifecycle
  * to `completed`) and emits `evaluation_complete` directly.
  *
- * Metrics computed (both are audio-frame — every operand comes from VAD on
+ * Metrics computed (all are audio-frame — every operand comes from VAD on
  * the same recording, so no cross-clock correlation is involved):
  * - `agentResponseMs` (agent turns only): gap from the prior user turn's
  *   `voice_end_ms` to this turn's `voice_start_ms`. Null for user turns
@@ -43,6 +43,9 @@ export type CalculateMetricsProcessor = (payload: JobPayload) => Promise<Calcula
  * - `interrupted`: true iff an opposite-channel speech segment started
  *   while this turn was still active.
  * - `interruptionStartMs`: the start of that overlap, when present.
+ * - `yieldMs`: how long this turn kept talking after the interruption
+ *   began (`voice_end_ms - interruption_start_ms`); null when the turn
+ *   wasn't interrupted. This is the barge-in "time to yield the floor".
  *
  * Model TTFT is NOT computed here — it's an optional span attribute on
  * `model_usage.ttft_ms` (see spec 0001), surfaced on the timeline.
@@ -186,17 +189,23 @@ export function computeMetrics(
 	agentResponseMs: number | null;
 	interrupted: boolean;
 	interruptionStartMs: number | null;
+	yieldMs: number | null;
 }> {
 	const sorted = [...turns].sort((a, b) => a.idx - b.idx);
 	return sorted.map((turn, i) => {
 		const agentResponseMs = turn.role === "agent" ? agentResponseFor(turn, sorted, i) : null;
 		const { interrupted, interruptionStartMs } = interruptionFor(turn, segments);
+		// Time to yield the floor: from when the other side cut in to when this
+		// turn's own voice stopped. Only defined when an interruption landed.
+		const yieldMs =
+			interruptionStartMs === null ? null : Math.max(0, turn.voiceEndMs - interruptionStartMs);
 		return {
 			replayId,
 			turnIdx: turn.idx,
 			agentResponseMs,
 			interrupted,
 			interruptionStartMs,
+			yieldMs,
 		};
 	});
 }

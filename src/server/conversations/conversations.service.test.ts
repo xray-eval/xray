@@ -16,7 +16,7 @@ import {
 } from "./conversations.service.ts";
 import { makeTurns } from "./conversations.test-utils.ts";
 import type { ConversationTurn } from "./conversations.types.ts";
-import { CreateConversationRequestSchema } from "./conversations.types.ts";
+import { ConversationTurnSchema, CreateConversationRequestSchema } from "./conversations.types.ts";
 import { describe, expect, it } from "bun:test";
 
 function fakeSynthesizer(): {
@@ -302,6 +302,103 @@ describe("canonicalizeAndHashSpec", () => {
 		expect(() =>
 			canonicalStringify([{ role: "user", text: "hi", key: "u0", flag: true }]),
 		).not.toThrow();
+	});
+});
+
+describe("interrupt_after_ms", () => {
+	it("leaves the hash of a conversation that doesn't use it untouched", async () => {
+		const turns = makeTurns({
+			turns: [
+				{ role: "user", text: "hi", key: "u0" },
+				{ role: "agent", key: "a0" },
+			],
+		});
+		const json = await canonicalize(turns);
+		expect(json).not.toContain("interrupt_after_ms");
+	});
+
+	it("changes the hash when a turn barges in", async () => {
+		const base = makeTurns({
+			turns: [
+				{ role: "agent", key: "a0" },
+				{ role: "user", text: "no, Berlin", key: "u0" },
+			],
+		});
+		const withInterrupt = makeTurns({
+			turns: [
+				{ role: "agent", key: "a0" },
+				{ role: "user", text: "no, Berlin", key: "u0", interrupt_after_ms: 2000 },
+			],
+		});
+		expect(await hashOf(base)).not.toBe(await hashOf(withInterrupt));
+		expect(await canonicalize(withInterrupt)).toContain('"interrupt_after_ms":2000');
+	});
+
+	it("round-trips through the canonical turn schema, absent when unset", () => {
+		const withField = v.parse(ConversationTurnSchema, {
+			role: "user",
+			text: "no, Berlin",
+			interrupt_after_ms: 2000,
+		});
+		expect(withField.interrupt_after_ms).toBe(2000);
+
+		const withoutField = v.parse(ConversationTurnSchema, { role: "user", text: "hi" });
+		expect(withoutField).not.toHaveProperty("interrupt_after_ms");
+	});
+
+	it("accepts a user turn that immediately follows an agent turn", () => {
+		const result = v.safeParse(CreateConversationRequestSchema, {
+			name: "barge-in",
+			turns: [
+				{ role: "user", text: "book a flight to Paris" },
+				{ role: "agent" },
+				{ role: "user", text: "no, Berlin", interrupt_after_ms: 2000 },
+				{ role: "agent" },
+			],
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects it on an agent turn, on a non-following user turn, and on the first turn", () => {
+		const onAgentTurn = v.safeParse(CreateConversationRequestSchema, {
+			name: "bad",
+			turns: [
+				{ role: "user", text: "hi" },
+				{ role: "agent", interrupt_after_ms: 2000 },
+			],
+		});
+		expect(onAgentTurn.success).toBe(false);
+
+		const notFollowingAgent = v.safeParse(CreateConversationRequestSchema, {
+			name: "bad",
+			turns: [
+				{ role: "user", text: "hi" },
+				{ role: "user", text: "no, Berlin", interrupt_after_ms: 2000 },
+			],
+		});
+		expect(notFollowingAgent.success).toBe(false);
+
+		const firstTurn = v.safeParse(CreateConversationRequestSchema, {
+			name: "bad",
+			turns: [{ role: "user", text: "no, Berlin", interrupt_after_ms: 2000 }],
+		});
+		expect(firstTurn.success).toBe(false);
+	});
+
+	it("rejects a zero or fractional delay at the schema", () => {
+		const zero = v.safeParse(ConversationTurnSchema, {
+			role: "user",
+			text: "x",
+			interrupt_after_ms: 0,
+		});
+		expect(zero.success).toBe(false);
+
+		const fractional = v.safeParse(ConversationTurnSchema, {
+			role: "user",
+			text: "x",
+			interrupt_after_ms: 1.5,
+		});
+		expect(fractional.success).toBe(false);
 	});
 });
 

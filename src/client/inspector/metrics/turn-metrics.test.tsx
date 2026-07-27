@@ -15,6 +15,7 @@ function turn(overrides: Partial<TurnMetricsResponse>): TurnMetricsResponse {
 		agent_response_ms: 250,
 		interrupted: false,
 		interruption_start_ms: null,
+		yield_ms: null,
 		...overrides,
 	};
 }
