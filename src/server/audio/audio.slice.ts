@@ -1,15 +1,11 @@
 import type { StereoWav } from "./audio.types.ts";
 
 /**
- * Slice a mono PCM channel out of a stereo recording, bounded by a
- * millisecond range. User turns → left channel, agent turns → right
- * channel — the upload contract for `/v1/replays/:id/audio` is L=user,
- * R=agent (wall-clock aligned).
- *
- * Range is half-open: `[startMs, endMs)`. Returns an empty Int16Array
- * when the range collapses or falls entirely outside the recording —
- * the caller treats an empty slice as a transcription input that the
- * provider will return an empty transcript for.
+ * Slice a mono PCM channel out of the stereo recording. User → left, agent →
+ * right, matching the `/v1/replays/:id/audio` upload contract (L=user, R=agent).
+ * Range is half-open `[startMs, endMs)`; returns an empty Int16Array when the
+ * range collapses or falls outside the recording (fed to the transcription
+ * provider as an empty-transcript input).
  */
 export function sliceTurnAudio(
 	stereo: StereoWav,

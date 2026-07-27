@@ -19,16 +19,11 @@ const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcription
 const DEFAULT_MODEL = "whisper-1";
 const DEFAULT_TIMEOUT_MS = 120_000;
 
-// Whisper `verbose_json` response shape, validated at the provider boundary.
-// Per `.claude/rules/boundary-validation.md`, every byte from an external
-// system passes through Valibot before any other code reads it. We model
-// only the fields we read; unknown keys are dropped (default `v.object`).
-//
-// `text`, `language`, and `duration` are all marked optional because OpenAI
-// has historically returned them missing on edge cases (zero-duration
-// inputs, certain error fall-throughs that still produced a 200). Coerce
-// missing/null values to safe defaults at the call site so the row insert
-// still has the columns it needs.
+// Whisper `verbose_json` response shape; we model only the fields we read.
+// `text`, `language`, and `duration` are optional because OpenAI has
+// historically returned them missing on edge cases (zero-duration inputs,
+// error fall-throughs that still produced a 200); the call site coerces
+// missing/null to safe defaults so the row insert still has its columns.
 const WhisperWordSchema = v.object({
 	word: v.optional(v.string()),
 	start: v.optional(v.number()),
@@ -51,13 +46,9 @@ export interface OpenAIWhisperOptions {
 }
 
 /**
- * OpenAI Whisper transcription provider. Wraps the mono PCM into a wav
- * before sending — Whisper accepts wav/mp3/m4a/etc., wav is the only
- * format we have a built-in encoder for.
- *
- * `verbose_json` response format gives us per-word timings; consumed by
- * the analyze-replay job and stored as `turn_transcripts.words_json` for
- * future inspector use (word-level highlighting in the UI).
+ * OpenAI Whisper transcription provider. Wraps the mono PCM into a wav before
+ * sending — wav is the only format we have a built-in encoder for. Uses
+ * `verbose_json` for per-word timings, stored as `turn_transcripts.words_json`.
  */
 export function createOpenAIWhisperProvider(opts: OpenAIWhisperOptions): TranscriptionProvider {
 	const model = opts.model ?? DEFAULT_MODEL;

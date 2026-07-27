@@ -16,20 +16,17 @@ interface TurnMetricLike {
 
 /**
  * Project per-turn timing into the `TurnMetricsResponse` wire shape: one row
- * per turn, ordered by idx, with the matching `replay_metrics` values joined
- * by turn idx (the defaults fire when the metrics stage hasn't written a row
- * for that turn yet).
+ * per turn, ordered by idx, joined to `replay_metrics` by turn idx (defaults
+ * fire when the metrics stage hasn't written that turn's row yet).
  *
- * The single source of truth for this projection. Every path that hands the
- * SDK or the inspector per-turn metrics calls it — the replay-detail read
- * (`buildTurnMetrics`), the scripted `evaluation_complete` SSE payload
- * (evaluate-replay), and the live-replay `evaluation_complete` SSE payload
- * (calculate-metrics). Keeping one function is what actually keeps those
- * payloads byte-identical; three hand-copied versions drift.
+ * The single source of truth for this projection — the replay-detail read, the
+ * scripted SSE payload, and the live-replay SSE payload all call it. One
+ * function is what keeps those payloads byte-identical; hand-copied versions
+ * drift.
  *
  * Structurally typed over its inputs so both the persisted `ReplayMetricRow`
- * and calculate-metrics' freshly-computed (not-yet-read-back) metric rows
- * satisfy it without a conversion step.
+ * and calculate-metrics' freshly-computed rows satisfy it without a conversion
+ * step.
  */
 export function projectTurnMetrics(
 	turns: readonly TurnLike[],

@@ -146,9 +146,7 @@ export type SpanResponse = v.InferOutput<typeof SpanResponseSchema>;
 /**
  * Per-turn timing — the silence/gap before an agent responds
  * (`agent_response_ms`) and barge-in. Observability data: rides the replay
- * detail (Run details UI) AND the evaluation result (SDK
- * `ReplayResult.metrics`). Model TTFT is no longer a per-turn metric — it's an
- * optional per-call attribute (`model_usage.ttft_ms`, spec 0001).
+ * detail (Run details UI) AND the evaluation result (SDK `ReplayResult.metrics`).
  */
 export const TurnMetricsResponseSchema = v.object({
 	turn_idx: v.number(),
@@ -159,7 +157,6 @@ export const TurnMetricsResponseSchema = v.object({
 });
 export type TurnMetricsResponse = v.InferOutput<typeof TurnMetricsResponseSchema>;
 
-/** Summary fields returned by `GET /v1/conversations/:hash/replays`. */
 export const ReplaySummaryResponseSchema = v.object({
 	id: v.string(),
 	conversation_hash: ConversationHashSchema,
@@ -226,11 +223,10 @@ export type CompareReplaysResponse = v.InferOutput<typeof CompareReplaysResponse
 export const COMPARE_MIN = MIN_COMPARE_REPLAYS;
 export const COMPARE_MAX = MAX_COMPARE_REPLAYS;
 
-// ─── Evaluation result (Spec 0001 §11) ────────────────────────────────
-// Returned by GET /v1/replays/:id/result and shipped as the payload of
-// the `evaluation_complete` SSE event. The SDK projects this into its
-// `ReplayResult` dataclass — the wire shape and the SDK shape are
-// intentionally identical so future-language SDKs need no transformation.
+// Evaluation result (Spec 0001 §11): returned by GET /v1/replays/:id/result and
+// shipped as the payload of the `evaluation_complete` SSE event. The SDK
+// projects this into its `ReplayResult` dataclass — the wire shape and the SDK
+// shape are intentionally identical so future-language SDKs need no transformation.
 
 const EvaluationStatusSchema = v.picklist(["passed", "failed", "errored"]);
 

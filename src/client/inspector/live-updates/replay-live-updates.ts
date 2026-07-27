@@ -5,16 +5,14 @@ import { replayEventsUrl } from "@/client/api/api.ts";
 import type { ReplayLifecycleState } from "@/server/store/types.ts";
 
 /**
- * Stream the replay's server-sent events while it's still progressing and
- * invalidate its cached queries on every transition — so a replay opened
- * mid-analysis advances live (analysis step, verdict, transcripts, metrics)
- * instead of staying frozen until a manual reload.
+ * Stream the replay's SSE while it's still progressing and invalidate its
+ * cached queries on every transition, so a replay opened mid-analysis advances
+ * live instead of staying frozen until a manual reload.
  *
- * This is a legitimate `useEffect`: it synchronizes the React Query cache with
- * an external system (the browser `EventSource`), per the client
- * `no-effect-for-data` rule. Terminal replays never change again, so the stream
- * is opened only while non-terminal, and the effect tears it down the moment
- * the lifecycle flips to completed/failed.
+ * A legitimate `useEffect`: it synchronizes the React Query cache with an
+ * external system (the browser `EventSource`), per the `no-effect-for-data`
+ * rule. The stream is opened only while non-terminal — terminal replays never
+ * change again — and torn down the moment the lifecycle flips.
  */
 export function useReplayLiveUpdates(replayId: string, lifecycleState: ReplayLifecycleState): void {
 	const queryClient = useQueryClient();

@@ -29,7 +29,6 @@ export function makeTurns(opts: MakeTurnsOptions = {}): ConversationTurn[] {
 	];
 }
 
-/** Request-form analogue of `makeTurns` — same shape, different audio union. */
 export function makeRequestTurns(
 	overrides?: Partial<ConversationTurnRequest>[],
 ): ConversationTurnRequest[] {
@@ -60,13 +59,12 @@ export interface SeedConversationOverrides {
 }
 
 /**
- * Insert a conversation row directly into the test store and return the
- * computed content hash. Each call hashes a slightly different set of turns
- * so that successive calls produce distinct hashes without overrides.
+ * Insert a conversation row into the test store and return its content hash.
+ * Each call varies the turns (via a counter) so successive calls produce
+ * distinct hashes without overrides.
  *
- * Idempotent: re-seeding the same canonical spec is a no-op via
- * `ON CONFLICT DO NOTHING`. Callers that need a fresh hash should override
- * `turns` (or `judges`) to vary the canonical input.
+ * Idempotent via `ON CONFLICT DO NOTHING` — re-seeding the same canonical spec
+ * is a no-op. To force a fresh hash, override `turns` (or `judges`).
  */
 export async function seedConversation(
 	store: Store,

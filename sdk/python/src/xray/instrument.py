@@ -90,9 +90,6 @@ _BIND_WAIT_S: Final[float] = 10.0
 _DEFAULT_ENDPOINT_ENV: Final[str] = "XRAY_OTLP_ENDPOINT"
 
 
-# ─── Public types ─────────────────────────────────────────────────────
-
-
 @dataclass(frozen=True)
 class ReplayContext:
     """Parsed xray context for the current run."""
@@ -128,9 +125,6 @@ class _HasAttributes(Protocol):
 
     identity: str
     attributes: dict[str, str]
-
-
-# ─── XraySession ──────────────────────────────────────────────────────
 
 
 class XraySession:
@@ -184,9 +178,6 @@ class XraySession:
                     span.set_attribute("xray.turn.duration_ms", int((time.time() - started) * 1000))
         finally:
             context.detach(token)
-
-
-# ─── xray.attach(ctx, …) — async context manager ──────────────────────
 
 
 @asynccontextmanager
@@ -259,9 +250,6 @@ async def attach(
             context.detach(attach_token)
         if tracer_provider is not None:
             tracer_provider.force_flush(timeout_millis=10_000)
-
-
-# ─── Helpers ──────────────────────────────────────────────────────────
 
 
 async def _wait_for_replay_context(ctx: _HasRoom, timeout_s: float) -> ReplayContext | None:

@@ -27,13 +27,11 @@ export interface SignAwsRequestOptions {
 	readonly url: string;
 	readonly region: string;
 	readonly service: string;
-	/** Exact request body string that will be sent (empty string for none). */
 	readonly body: string;
 	/** Request headers the caller will send (e.g. content-type). Host and
 	 *  x-amz-date are managed by the signer and must not be passed here. */
 	readonly headers?: Readonly<Record<string, string>>;
 	readonly credentials: AwsCredentials;
-	/** Injectable clock for deterministic signing in tests. */
 	readonly now?: Date;
 }
 

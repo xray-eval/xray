@@ -22,13 +22,10 @@ import type {
 } from "./api.types.ts";
 
 /**
- * REST client for xray's HTTP API. All network calls live here so components
- * don't reach for `fetch` directly (per the client `.claude/rules/server-state`
- * + boundary-validation rules). Every response is validated against its
- * server-side schema at the boundary.
- *
- * `signal` is always plumbed from the TanStack Query call so cancellation
- * works on unmount / refetch.
+ * All network calls live here so components don't reach for `fetch` directly
+ * (per the client `server-state` + boundary-validation rules). `signal` is
+ * always plumbed from the TanStack Query call so cancellation works on
+ * unmount / refetch.
  */
 const BASE = ""; // Same-origin: the SPA is served by the same Bun process.
 
@@ -88,10 +85,9 @@ export function getReplay(id: string, signal?: AbortSignal): Promise<ReplayDetai
 }
 
 /**
- * Evaluation verdict + per-assertion / per-judge outcomes + per-turn metrics
- * for a completed replay. The server answers 409 until evaluation has run, so
- * callers gate this on `lifecycle_state === "completed"` (TanStack `skipToken`)
- * rather than letting it fail-and-retry.
+ * The server answers 409 until evaluation has run, so callers gate this on
+ * `lifecycle_state === "completed"` (TanStack `skipToken`) rather than letting
+ * it fail-and-retry.
  */
 export function getReplayResult(id: string, signal?: AbortSignal): Promise<ReplayResult> {
 	return getJson(`/v1/replays/${id}/result`, ReplayResultSchema, signal);
@@ -113,7 +109,6 @@ export function replayAudioUrl(replayId: string): string {
 	return `/v1/replays/${replayId}/audio`;
 }
 
-/** SSE endpoint streaming `state` / `progress` / `evaluation_complete` / `failed` for one replay. */
 export function replayEventsUrl(replayId: string): string {
 	return `/v1/replays/${replayId}/events`;
 }

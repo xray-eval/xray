@@ -17,14 +17,13 @@ import type {
 } from "./transcription.types.ts";
 
 const MISTRAL_CHAT_URL = "https://api.mistral.ai/v1/chat/completions";
-// Voxtral Small (24B) is Mistral's largest audio-capable model — the only
-// one with `capabilities.audio` on the models API, and it is chat-only:
-// the dedicated /v1/audio/transcriptions endpoint rejects it ("Invalid
-// model", verified live 2026-07-18) and serves just the voxtral-mini
-// transcribe family. Quality-over-speed default, so transcription rides
-// chat completions with an `input_audio` block. Pinned dated snapshot —
-// `voxtral-small-latest` is a floating alias and a moving STT model
-// produces transcript drift between runs of the same replay.
+// Voxtral Small (24B) is Mistral's largest audio-capable model — the only one
+// with `capabilities.audio`, and it is chat-only: the dedicated
+// /v1/audio/transcriptions endpoint rejects it ("Invalid model", verified live
+// 2026-07-18) and serves just the voxtral-mini transcribe family. Quality-over-
+// speed default, so transcription rides chat completions with an `input_audio`
+// block. Pinned dated snapshot — `voxtral-small-latest` floats, and a moving
+// STT model produces transcript drift between runs of the same replay.
 const DEFAULT_MODEL = "voxtral-small-2507";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TOKENS = 8_192;
@@ -61,15 +60,10 @@ export interface MistralVoxtralOptions {
 }
 
 /**
- * Mistral Voxtral transcription provider. Wraps the mono PCM into a WAV
- * and sends it inline (base64) as a chat `input_audio` block, with a
- * JSON-mode-forced `{text, language}` reply.
- *
- * Trade-off vs. the previous /v1/audio/transcriptions integration: no
- * signal-aligned word timings — `words` is always null (same tolerated
- * capability gap as the Gemini provider; `turn_transcripts.words_json` is
- * nullable). In exchange the transcript comes from the 24B model instead
- * of the 3B mini, and the reply carries a detected language.
+ * Mistral Voxtral transcription provider. Wraps the mono PCM into a WAV and
+ * sends it inline (base64) as a chat `input_audio` block, with a JSON-mode-
+ * forced `{text, language}` reply. No signal-aligned word timings — `words` is
+ * always null (a tolerated gap; `turn_transcripts.words_json` is nullable).
  */
 export function createMistralVoxtralProvider(opts: MistralVoxtralOptions): TranscriptionProvider {
 	const model = opts.model ?? DEFAULT_MODEL;

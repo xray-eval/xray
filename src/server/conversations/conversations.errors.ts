@@ -46,7 +46,6 @@ const MISSING_SPEC_PART_ISSUES: readonly BaseIssue<unknown>[] = Object.freeze([
 	},
 ]);
 
-/** Multipart `POST /v1/conversations` body had no string `spec` part. */
 export class MissingSpecPartError extends MalformedConversationBodyError {
 	override readonly issues: readonly BaseIssue<unknown>[] = MISSING_SPEC_PART_ISSUES;
 	constructor() {
@@ -64,7 +63,6 @@ export class ConversationBodyTooLargeError extends ConversationError {
 	}
 }
 
-/** Path-param conversation hash failed validation. */
 export class InvalidConversationHashError extends ConversationError {
 	readonly issues: readonly BaseIssue<unknown>[];
 
@@ -75,8 +73,6 @@ export class InvalidConversationHashError extends ConversationError {
 	}
 }
 
-/** Path-param turn index failed validation (non-numeric / out of the
- *  accepted range) on `GET /v1/conversations/:hash/turns/:idx/audio`. */
 export class InvalidTurnIndexError extends ConversationError {
 	readonly issues: readonly BaseIssue<unknown>[];
 
@@ -87,7 +83,6 @@ export class InvalidTurnIndexError extends ConversationError {
 	}
 }
 
-/** `GET /v1/conversations/:hash` looked up a hash that doesn't exist. */
 export class ConversationNotFoundError extends ConversationError {
 	readonly conversationHash: string;
 
@@ -101,14 +96,9 @@ export class ConversationNotFoundError extends ConversationError {
 export type RecordedAudioUploadKeyReason = "missing" | "unreferenced";
 
 /**
- * `POST /v1/replays` multipart body and the `spec` JSON's RecordedAudio
- * upload_keys don't line up.
- *
- * - `missing`: a turn references `upload_key` but no file part with that name.
- * - `unreferenced`: a file part is present but no turn references it.
- *
- * Both are mapped to 400 — silent drops would either lose audio (missing) or
- * ghost-upload orphans (unreferenced).
+ * A RecordedAudio turn's `upload_key` and the multipart file parts don't line
+ * up. Both `missing` and `unreferenced` map to 400 — silent drops would either
+ * lose audio or ghost-upload orphans.
  */
 export class RecordedAudioUploadKeyError extends ConversationError {
 	readonly uploadKey: string;
@@ -125,7 +115,6 @@ export class RecordedAudioUploadKeyError extends ConversationError {
 	}
 }
 
-/** A `{kind: "tts"}` turn arrived without `text` — nothing to synthesize. */
 export class TtsTurnMissingTextError extends ConversationError {
 	readonly turnIdx: number;
 	constructor(turnIdx: number) {
@@ -135,9 +124,8 @@ export class TtsTurnMissingTextError extends ConversationError {
 	}
 }
 
-/** A `{kind: "tts"}` audio ref landed on an agent turn. Agent audio is
- *  observed at runtime, never synthesized — this is a spec authoring bug,
- *  failed fast with the turn index. */
+/** Agent audio is observed at runtime, never synthesized — a tts audio ref on
+ *  an agent turn is a spec authoring bug. */
 export class TtsTurnRoleError extends ConversationError {
 	readonly turnIdx: number;
 	constructor(turnIdx: number) {
@@ -147,8 +135,6 @@ export class TtsTurnRoleError extends ConversationError {
 	}
 }
 
-/** `GET /v1/conversations/:hash/turns/:idx/audio` hit a turn with no audio
- *  (agent turn / out-of-range idx) or a missing audio file. */
 export class TurnAudioNotFoundError extends ConversationError {
 	readonly conversationHash: string;
 	readonly turnIdx: number;

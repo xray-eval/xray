@@ -55,7 +55,6 @@ export interface TurnWindow {
 	readonly turnEndMs: number;
 }
 
-/** True iff `offsetMs` falls in `[turnStartMs, turnEndMs)`. */
 export function offsetInTurnWindow(offsetMs: number, turn: TurnWindow): boolean {
 	return offsetMs >= turn.turnStartMs && offsetMs < turn.turnEndMs;
 }
@@ -92,8 +91,8 @@ export function clampedTurnWindows(turnEndsMs: readonly number[]): TurnWindow[] 
 
 /**
  * The subset of `rows` whose `started_at` maps to an offset inside the turn's
- * window. Used by the assertion evaluator to build a turn's tool/model context
- * at eval time (replacing the deleted stored `turn_idx`).
+ * window — the assertion evaluator's per-turn tool/model context, derived at
+ * eval time.
  *
  * A row with no `started_at`, or when `recordingStartedAtIso` is null, is
  * dropped — it cannot be placed on the timeline. The caller distinguishes

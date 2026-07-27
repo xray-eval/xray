@@ -8,22 +8,18 @@ export const MAX_JUDGES = 8;
 
 const TextMatchJudgeSchema = v.object({
 	kind: v.literal("text_match"),
-	// Natural-language description of the behavior the agent should exhibit
-	// across the full transcript. The LLM judge is prompted to compare the
-	// concatenated transcript against this reference.
+	// Natural-language description of the behavior the agent should exhibit;
+	// the LLM judge compares the concatenated transcript against it.
 	reference: v.pipe(v.string(), v.nonEmpty(), v.maxLength(MAX_JUDGE_REFERENCE)),
 	rubric: v.optional(v.pipe(v.string(), v.maxLength(MAX_JUDGE_RUBRIC))),
-	// Threshold on the 0..100 score the judge returns. Score >= pass_score
-	// → status "passed"; below → "failed". Default 70 — picked as a
-	// reasonable mid-bar; bump per-judge for stricter tests.
+	// Threshold on the 0..100 score the judge returns: score >= pass_score →
+	// "passed", below → "failed". Default 70, a reasonable mid-bar.
 	pass_score: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(100)), 70),
 });
 
 /**
- * Conversation-level judge. Runs once per replay against the full
- * transcript (concatenated `turn_transcripts` rows in order with role
- * prefixes). v1 ships one variant; emotion / safety / custom-prompt
- * judges land as additional variants.
+ * Conversation-level judge. Runs once per replay against the full transcript
+ * (concatenated `turn_transcripts` rows in order with role prefixes).
  */
 export const JudgeSchema = v.variant("kind", [TextMatchJudgeSchema]);
 export type Judge = v.InferOutput<typeof JudgeSchema>;
@@ -31,11 +27,6 @@ export type JudgeKind = Judge["kind"];
 
 export const JudgesArraySchema = v.pipe(v.array(JudgeSchema), v.maxLength(MAX_JUDGES));
 
-/**
- * Inputs to a judge runner. The runner is provider-aware (it calls the
- * LLM) but variant-aware: each judge variant has its own runner that
- * builds the prompt and maps the provider's score back to a status.
- */
 export interface JudgeContext {
 	readonly transcripts: readonly TurnTranscriptRow[];
 }
@@ -49,10 +40,8 @@ export interface JudgeOutcome {
 }
 
 /**
- * The provider-shaped output the judge runner asks for. Independent of
- * any specific judge variant (text_match, future emotion/safety) — every
- * variant builds its own prompt and maps this generic 0..100 score back
- * to a per-variant pass/fail outcome.
+ * The provider-shaped output the judge runner asks for — a generic 0..100
+ * score, variant-independent. Each judge variant maps it to its own pass/fail.
  */
 export interface JudgeProviderResponse {
 	readonly score: number;

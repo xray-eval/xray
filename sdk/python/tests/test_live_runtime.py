@@ -27,8 +27,6 @@ from xray.runtime.livekit import (
 )
 from xray.runtime.livekit_live import LiveKitLiveRuntime
 
-# ─── Fakes ────────────────────────────────────────────────────────────
-
 
 class _FakeRoom:
     def __init__(
@@ -262,9 +260,6 @@ def _runtime(
     )
     rt.bind(replay_id="rep-live-1", conversation_hash="a" * 64)
     return rt
-
-
-# ─── Tests ────────────────────────────────────────────────────────────
 
 
 def test_bind_required_before_run():

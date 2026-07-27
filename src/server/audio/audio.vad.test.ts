@@ -3,7 +3,6 @@ import { describe, expect, it } from "bun:test";
 
 const SAMPLE_RATE = 16_000;
 
-/** Synthesize int16 PCM: alternating silent and loud blocks. */
 function makeAlternating(blocks: { durationMs: number; voiced: boolean }[]): Int16Array {
 	const totalSamples = blocks.reduce(
 		(sum, b) => sum + Math.floor((SAMPLE_RATE * b.durationMs) / 1000),

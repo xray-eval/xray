@@ -22,7 +22,6 @@ export function vocabShortLabel(vocab: SpanVocabulary): string {
 		.exhaustive();
 }
 
-/** Human-readable vocabulary name for headings (the raw value is `gen_ai`). */
 export function vocabLabel(vocab: SpanVocabulary): string {
 	return match(vocab)
 		.with("xray", () => "xray")

@@ -39,14 +39,9 @@ const UPLOAD_ALLOWED_STATES: readonly ReplayLifecycleState[] = [
  * Save a recorded conversation-input audio file under a content-addressed
  * path (`recorded/<sha256>.wav`). Idempotent: same bytes ⇒ same file.
  *
- * Writes to a per-call tmp file then `rename(2)` atomically into place, so
- * a concurrent upload of the same content can never observe a half-written
- * target (the previous `writeFile(flag: "wx")` strategy returned success to
- * the loser while the winner was still streaming bytes — a partial-content
- * window for readers).
- *
- * Returns the relative path under `audioRoot`. The caller is expected to
- * have already computed the sha256 from the bytes.
+ * Writes to a per-call tmp file then `rename(2)` atomically into place, so a
+ * concurrent upload of the same content can never observe a half-written
+ * target. Returns the relative path under `audioRoot`.
  */
 export async function saveRecordedConversationAudio(
 	audioRoot: string,
@@ -88,16 +83,10 @@ async function saveContentAddressedAudio(
 	return relativePath;
 }
 
-/** Relative path of a conversation-input audio file: `recorded/` for
- *  SDK-uploaded WAVs, `tts/` for server-synthesized ones. Both are
- *  content-addressed by the sha256 the conversation's canonical turn
- *  carries. */
 export function conversationAudioRelativePath(kind: "recorded" | "tts", sha256: string): string {
 	return join(kind, `${sha256}.wav`);
 }
 
-/** Stream a conversation turn's input audio (recorded or tts) by its
- *  content sha. Throws `makeNotFoundError()` when the file is absent. */
 export async function readConversationTurnAudio(
 	audioRoot: string,
 	kind: "recorded" | "tts",
@@ -115,7 +104,6 @@ export async function readConversationTurnAudio(
 	};
 }
 
-/** Upload the full-replay stereo WAV mixdown. */
 export async function uploadReplayAudio(
 	store: Store,
 	audioRoot: string,

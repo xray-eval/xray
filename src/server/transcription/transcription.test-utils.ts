@@ -1,11 +1,8 @@
 import type { TranscriptionProvider, TranscriptionResult } from "./transcription.types.ts";
 
 export interface FakeTranscriptionProviderOptions {
-	/** Static text returned for every transcribe() call. */
 	readonly text?: string;
-	/** Optional per-call override — `text` is then used as the fallback. */
 	readonly textFor?: (input: { sampleRate: number; sampleCount: number }) => string;
-	/** Make the provider always throw. */
 	readonly error?: Error;
 }
 

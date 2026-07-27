@@ -22,11 +22,10 @@ const HIGHLIGHT_FILL = "rgba(250, 204, 21, 0.38)";
 const HIGHLIGHT_REGION_ID = "xray-trace-highlight";
 
 /**
- * Hex / rgba color literals live INSIDE the wavesurfer config only — they
- * have to be CSS color strings the canvas renderer can consume, and Tailwind
- * tokens (oklch CSS variables) don't resolve through JS. The complementary
- * legend swatches in JSX use `bg-sky-400` / `bg-orange-400` — the same
- * sky-400 / orange-400 we feed to the wavesurfer canvas below.
+ * Hex / rgba color literals live INSIDE the wavesurfer config only — the
+ * canvas renderer needs CSS color strings, and Tailwind tokens (oklch CSS
+ * variables) don't resolve through JS. The legend swatches in JSX use the
+ * matching `bg-sky-400` / `bg-orange-400`.
  */
 const USER_WAVE = "#38bdf8"; // sky-400
 const AGENT_WAVE = "#fb923c"; // orange-400
@@ -42,9 +41,8 @@ interface StereoTurnPlayerProps {
 
 /**
  * Stereo WAV player with per-turn region overlays. Left channel = user (sky),
- * right channel = agent (orange). Regions are read-only — clicking one seeks
- * to its start and plays. The component owns its wavesurfer instance for the
- * lifetime of the mount; the regions plugin instance is co-lived with it.
+ * right = agent (orange); regions are read-only — clicking one seeks to its
+ * start and plays.
  */
 export function StereoTurnPlayer({ audioUrl, turns, className }: StereoTurnPlayerProps) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
@@ -264,12 +262,9 @@ type WaveState =
 	| { kind: "error"; message: string };
 
 /**
- * Wavesurfer's hook doesn't expose duration or the load-error message, so
- * we subscribe to the "ready" and "error" events ourselves. The shape is a
- * discriminated union so "ready" and "error" can never be true at once.
- *
- * The wavesurfer "error" payload is typed as `unknown` (Event | Error |
- * string) so we surface the human-readable part.
+ * Wavesurfer's hook doesn't expose duration or the load-error message, so we
+ * subscribe to the "ready" and "error" events ourselves. The "error" payload
+ * is typed `unknown` (Event | Error | string), so we surface the readable part.
  */
 function useWaveState(wavesurfer: WaveSurfer | null): WaveState {
 	const [state, setState] = useState<WaveState>({ kind: "idle" });

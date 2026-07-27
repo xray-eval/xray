@@ -16,10 +16,9 @@ export interface CreateReplayTestOverrides {
 }
 
 /**
- * Build the create-replay request shape used by tests. Pure data —
- * doesn't touch the store. If `conversation_hash` is not provided, the
- * helper hashes a deterministic seed turn array; callers pass the hash to
- * `seedConversation` (or `createReplayForTest`) to actually persist the row.
+ * Build the create-replay request shape used by tests. Pure data — doesn't
+ * touch the store; callers persist the row via `seedConversation` /
+ * `createReplayForTest`.
  */
 export function makeCreateReplayRequest(overrides: CreateReplayTestOverrides = {}): {
 	conversation_hash: string;
@@ -39,11 +38,9 @@ export function makeCreateReplayRequest(overrides: CreateReplayTestOverrides = {
 }
 
 /**
- * Seed a conversation row keyed by the canonical turn hash and create a
- * replay against it. Returns the freshly-created replay's detail row.
- * Tests pass a partial request (name/turns/run_config) — the helper
- * hashes the turns, upserts the conversation row, and forwards the hash
- * to `createReplay`.
+ * Seed a conversation row and create a replay against it (the persisting
+ * counterpart to `makeCreateReplayRequest`). Returns the new replay's detail
+ * row.
  */
 export async function createReplayForTest(
 	store: Store,

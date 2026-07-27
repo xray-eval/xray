@@ -8,24 +8,18 @@ interface TaggedSegment {
 }
 
 /**
- * Derive turn boundaries from per-channel VAD output.
- *
- * Algorithm:
- *   1. Merge user + agent segments into a single timeline sorted by start.
- *   2. Walk forward. Adjacent segments of the same role form one turn.
- *      A role-change closes the previous turn and opens the next.
- *   3. For each turn:
- *      - `turnStartMs` = the moment after the OTHER side's last segment ended
- *        (0 for the very first turn).
- *      - `turnEndMs` = this side's last segment in the turn ended.
- *      - `voiceStartMs` = first speech-segment start in this turn.
- *      - `voiceEndMs` = last speech-segment end in this turn.
+ * Derive turn boundaries from per-channel VAD output. Segments merge into one
+ * timeline; adjacent same-role segments form a turn, a role-change closes it.
+ * Per turn:
+ *   - `turnStartMs` = the moment after the OTHER side's last segment ended
+ *     (0 for the very first turn).
+ *   - `turnEndMs` = this side's last segment in the turn ended.
+ *   - `voiceStartMs` / `voiceEndMs` = first/last speech-segment bounds in the turn.
  *
  * Overlap (both channels voiced at the same offset) is not modeled by v0 — VAD
- * is run per channel independently, and the rule above assumes strict
- * interleaving. If both channels overlap, the channel that started speaking
- * first owns the turn until it stops; the other side's segments inside that
- * range are silently merged into the next turn at the role-change.
+ * runs per channel independently, assuming strict interleaving. On overlap, the
+ * channel that started first owns the turn until it stops; the other side's
+ * segments inside that range merge into the next turn at the role-change.
  */
 export function deriveTurns(user: VadSegment[], agent: VadSegment[]): DerivedTurn[] {
 	const all: TaggedSegment[] = [

@@ -4,10 +4,10 @@ import { attributeSpansToTurns, spanStartSeconds } from "./attribution.ts";
 import type { SpanRow, TraceScale, TreeRow, TurnRow, UntimedGroupRow } from "./trace-tree.types.ts";
 
 /**
- * A span's start/end on the recording-t=0 axis (seconds). Start comes from the
- * server-derived `audio_offset_ms` (0 when the span can't be placed — a replay
- * with no anchor renders every span clustered at 0 rather than at a wrong
- * wall-clock origin); end is start + the span's own duration.
+ * A span's start/end on the recording-t=0 axis (seconds). Start comes from
+ * `audio_offset_ms` — 0 when the span can't be placed, so a replay with no
+ * anchor clusters every span at 0 rather than at a wrong wall-clock origin.
+ * End is start + the span's own duration.
  */
 function spanSeconds(span: SpanResponse): { startSec: number; endSec: number } {
 	const startSec = spanStartSeconds(span) ?? 0;
@@ -21,13 +21,11 @@ export type TreeBuildResult = Readonly<{
 }>;
 
 /**
- * Build a flat list of tree rows from turns + spans. Roots are turns (in
- * `idx` order); each turn's attributed spans hang under it as a parent_span
- * tree. Orphans land under a single "Untimed" root at the end. Returned in
- * pre-order so a flat render maps row-index → screen-y in one pass.
- *
- * Time scale spans the union of all turn ranges + span ranges, so the bars
- * always sit inside the visible axis.
+ * Build a flat list of tree rows: turns are roots (in `idx` order) with their
+ * attributed spans as a parent_span subtree, orphans under a single "Untimed"
+ * root last. Returned in pre-order so a flat render maps row-index → screen-y
+ * in one pass. The time scale spans the union of all turn and span ranges, so
+ * bars always sit inside the visible axis.
  */
 export function buildTree(
 	turns: readonly ReplayTurnResponse[],

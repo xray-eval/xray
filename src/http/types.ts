@@ -9,7 +9,6 @@ export interface HttpClientOptions {
 	 * 5xx). Default: 3.
 	 */
 	retry?: number;
-	/** Per-request timeout in milliseconds. Default: 10_000. */
 	timeoutMs?: number;
 }
 

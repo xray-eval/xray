@@ -1,13 +1,10 @@
 import * as v from "valibot";
 
 // Stereo WAV (48 kHz / int16 / L=user / R=agent) is the only format the
-// analyze-replay processor knows how to parse — `readStereoWav` assumes a
-// PCM WAV header, not a compressed container. We previously accepted
-// audio/opus, audio/ogg, audio/webm, and audio/mp3 here too, but the
-// processor only validated WAV format at the start of the analyze stage,
-// which meant the upload succeeded but the chain failed later with
-// `transcription_failed` (the wrong reason). Forcing WAV at the upload
-// boundary surfaces the mismatch as a 415 at the SDK's POST instead.
+// analyze-replay processor can parse — `readStereoWav` assumes a PCM WAV
+// header, not a compressed container. Forcing WAV at the upload boundary
+// surfaces a format mismatch as a 415 at the SDK's POST, rather than a late
+// `transcription_failed` deep in the analyze chain.
 export const CONTENT_TYPE_TO_EXTENSION = {
 	"audio/wav": "wav",
 	"audio/x-wav": "wav",
@@ -71,9 +68,6 @@ export interface AudioStream {
 	readonly contentType: string;
 }
 
-// Audio processing (WAV + VAD + turns). These types are the boundary between
-// `audio.wav.ts`, `audio.vad.ts`, and `audio.turns.ts`.
-
 export interface StereoWav {
 	readonly sampleRate: number;
 	readonly bitsPerSample: 16;
@@ -96,15 +90,10 @@ export interface DerivedTurn {
 }
 
 export interface VadConfig {
-	/** Frame size in milliseconds. 30ms is the conventional default. */
 	frameDurationMs?: number;
-	/** Voiced if mean squared energy per sample is above this. Tuned per fixture. */
 	energyThreshold?: number;
-	/** Merge adjacent voiced runs if their gap is ≤ this many ms. */
 	mergeGapMs?: number;
-	/** Discard voiced runs shorter than this many ms (cough, breath, noise). */
 	minSegmentMs?: number;
-	/** Zero-crossing-rate gate: voiced frames must have ZCR in [min, max]. */
 	zcrMin?: number;
 	zcrMax?: number;
 }

@@ -58,7 +58,6 @@ const MAX_CONVERSATION_MULTIPART_BYTES = 512 * 1024 * 1024;
 
 export interface ConversationsTtsDeps {
 	readonly provider: TtsProvider;
-	/** Operator default voice (XRAY_TTS_VOICE). */
 	readonly voiceOverride?: string;
 }
 

@@ -81,7 +81,6 @@ export class AudioReplayNotFoundError extends AudioError {
 	}
 }
 
-/** Uploaded WAV failed format validation. */
 export class InvalidWavFormatError extends AudioError {
 	readonly reason: string;
 	constructor(reason: string) {
@@ -92,17 +91,10 @@ export class InvalidWavFormatError extends AudioError {
 }
 
 /**
- * Caller tried to upload audio for a replay whose `lifecycle_state` doesn't
- * allow it. Allowed states: `pending`, `running`, `recording_uploaded`. The
- * forbidden states are:
- *   - `analyzing` — a worker is mid-run; a fresh WAV would race the VAD pass
- *     and the worker's transaction.
- *   - `completed` / `failed` — terminal; we don't unwind, and a re-upload
- *     would leave stale `replay_turns` + `speech_segments` (the previous
- *     analysis's output) dangling until somebody invoked /analyze again.
- *
- * Maps to HTTP 409. Mirrors the PATCH-side `ReplayLifecycleTransitionError`
- * guard so both write paths are consistent.
+ * Upload attempted for a replay whose `lifecycle_state` forbids it (allowed:
+ * `pending`, `running`, `recording_uploaded`). `analyzing` races the worker's
+ * VAD pass and transaction; `completed` / `failed` are terminal and a re-upload
+ * would leave stale `replay_turns` + `speech_segments`. Maps to HTTP 409.
  */
 export class ReplayUploadStateError extends AudioError {
 	readonly replayId: string;
@@ -116,11 +108,10 @@ export class ReplayUploadStateError extends AudioError {
 }
 
 /**
- * Stored `audio_path` has an extension that doesn't match any known
- * `AudioExtension`. Caller cannot trigger this on the upload path — the
- * extension is derived server-side from a validated `AudioContentType`. It
- * fires only on the read path when the DB row was hand-edited or written by
- * an older schema. Maps to HTTP 500 alongside `AudioPathOutsideRootError`.
+ * Stored `audio_path` has an extension matching no known `AudioExtension`.
+ * Unreachable on the upload path (the extension is derived server-side from a
+ * validated `AudioContentType`); fires only on read when the DB row was
+ * hand-edited or written by an older schema. Maps to HTTP 500.
  */
 export class InvalidAudioExtensionError extends AudioError {
 	readonly relativePath: string;

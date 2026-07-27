@@ -20,7 +20,6 @@ let conversationCounter = 0;
 let replayCounter = 0;
 let spanCounter = 0;
 
-/** 64-char hex hash used in tests. Counter-based so each call differs. */
 export function fakeHash(seed = 0): string {
 	const n = (seed === 0 ? ++conversationCounter : seed).toString(16).padStart(8, "0");
 	return n.repeat(8).slice(0, 64);

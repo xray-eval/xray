@@ -24,20 +24,17 @@ export interface IngestOtlpResult {
 }
 
 /**
- * Filter, not gate. Walk the spans in the request, project them, route by
- * `xray.replay.id`, run each through the vocabulary registry, persist the
- * extracted rows + the raw span row. Anything we don't recognize (no
- * vocab, no replay_id, unknown replay_id) is dropped silently — that's
- * the design point: a dev drops xray in front of an already-instrumented
- * agent and it lights up.
+ * Filter, not gate. Anything we don't recognize (no vocab, no replay_id,
+ * unknown replay_id) is dropped silently — that's the design point: a dev
+ * drops xray in front of an already-instrumented agent and it lights up.
  *
- * Per-request limits are enforced *before* persistence. Spans that would
- * push a replay past `MAX_SPANS_PER_REPLAY` are counted into the OTLP
- * response's `partialSuccess.rejectedSpans` instead of throwing — that way
- * one runaway turn doesn't roll back the under-cap spans that arrived
- * alongside it in the same batch. The persist + cap-counter increment run
- * in a single transaction so concurrent batches for the same replay can't
- * both read a stale count and silently overshoot the cap.
+ * Per-request limits are enforced *before* persistence. Spans that would push
+ * a replay past `MAX_SPANS_PER_REPLAY` are counted into the OTLP response's
+ * `partialSuccess.rejectedSpans` instead of throwing — that way one runaway
+ * turn doesn't roll back the under-cap spans that arrived alongside it in the
+ * same batch. The persist + cap-counter increment run in a single transaction
+ * so concurrent batches for the same replay can't both read a stale count and
+ * silently overshoot the cap.
  */
 export function ingestOtlpTraces(
 	store: Store,
@@ -241,8 +238,8 @@ function anyValueToPrimitive(v: AnyValue | undefined): FlatAttributes[string] | 
 	if ("doubleValue" in v) return v.doubleValue;
 	if ("boolValue" in v) return v.boolValue;
 	// arrayValue / kvlistValue / bytesValue — not flattenable to a primitive,
-	// so we serialize them as JSON for the attribute bag. Tests don't rely on
-	// inspecting nested arrays today; preserving the shape on disk is enough.
+	// so we serialize them as JSON for the attribute bag; preserving the shape
+	// on disk is enough.
 	if ("arrayValue" in v) return JSON.stringify(v.arrayValue);
 	if ("kvlistValue" in v) return JSON.stringify(v.kvlistValue);
 	if ("bytesValue" in v) return v.bytesValue;

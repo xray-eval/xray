@@ -36,10 +36,6 @@ import type {
 // every POST /v1/conversations — the SDK calls that endpoint at the start
 // of every run, so the timestamp tracks "most recent attempt" without a
 // join back to replays.
-//
-// (Older comments here described `last_run_at` as denormalized from
-// `MAX(replays.started_at)`; that was the design but never the
-// implementation — see `conversations.service.ts`.)
 export const conversations = sqliteTable(
 	"conversations",
 	{

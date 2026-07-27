@@ -19,8 +19,6 @@ import type { ConversationTurn } from "./conversations.types.ts";
 import { CreateConversationRequestSchema } from "./conversations.types.ts";
 import { describe, expect, it } from "bun:test";
 
-/** Deterministic stand-in for the tts synthesizer: sha derived from the
- *  call inputs so tests can assert which (text, voice) was synthesized. */
 function fakeSynthesizer(): {
 	synthesize: (input: {
 		text: string;
@@ -94,7 +92,6 @@ describe("ensureConversation", () => {
 		const row = getConversationByHash(store, hash);
 		expect(row?.name).toBe("Second");
 		expect(row?.lastRunAt).toBe("2026-05-19T12:00:00.000Z");
-		// createdAt is the original; only name + last_run_at update.
 		expect(row?.createdAt).toBe("2026-05-18T12:00:00.000Z");
 		store.close();
 	});
@@ -322,7 +319,6 @@ describe("live conversations", () => {
 		const live = await canonicalizeAndHashSpec([], [], true);
 		const nonLive = await canonicalizeAndHashSpec([], [], false);
 		expect(live.hash).not.toBe(nonLive.hash);
-		// Non-live empty spec carries neither the flag nor the salt.
 		expect(nonLive.json).not.toContain("live");
 	});
 

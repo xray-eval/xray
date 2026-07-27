@@ -30,8 +30,7 @@ export function EvaluationPanel({
 	lifecycleState: ReplayDetailResponse["lifecycle_state"];
 }) {
 	// The server answers 409 until evaluation has run, so gate the fetch on the
-	// completed lifecycle rather than letting it fail. `skipToken` keeps the
-	// hook unconditional while contributing no network call.
+	// completed lifecycle rather than letting it fail.
 	const enabled = lifecycleState === "completed";
 	const query = useQuery({
 		queryKey: ["replays", { id: replayId }, "result"],
@@ -78,9 +77,8 @@ function EvaluationCard({ result }: { result: ReplayResult }) {
 	];
 	const hasJudges = result.judges.length > 0;
 	const hasDetails = result.assertions.length > 0 || hasJudges;
-	// Collapse the per-check breakdown when everything passed — a green run
-	// doesn't need scrutiny; a failure does, so non-passing verdicts expand by
-	// default.
+	// Collapse when everything passed — a green run doesn't need scrutiny; a
+	// failure does, so non-passing verdicts expand by default.
 	const [expanded, setExpanded] = useState(tone !== "passed");
 	return (
 		<Card className="gap-0 overflow-hidden p-0">
@@ -196,7 +194,6 @@ function TallyStat({ label, tally }: { label: string; tally: OutcomeTally }) {
 	);
 }
 
-// One cell per declared check (assertion or judge), color-coded by outcome.
 // Labeled + legended so it reads as "here are your N checks, this many passed"
 // — not as a sequence of steps.
 function OutcomeBar({ segments }: { segments: OutcomeSegment[] }) {

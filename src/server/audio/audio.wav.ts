@@ -11,10 +11,9 @@ const REQUIRED_CHANNELS = 2;
 const REQUIRED_BITS = 16;
 
 /**
- * Parse a 48kHz int16 stereo WAV (RIFF/PCM) from a byte array. Walks chunks,
- * skips unknown ones (LIST/JUNK/INFO from ffmpeg/iOS), respects the RIFF
- * odd-size pad-byte rule. Throws `InvalidWavFormatError` on any deviation
- * from the required format.
+ * Parse a 48kHz int16 stereo WAV (RIFF/PCM). Skips unknown chunks
+ * (LIST/JUNK/INFO from ffmpeg/iOS), respects the RIFF odd-size pad-byte rule.
+ * Throws `InvalidWavFormatError` on any deviation from the required format.
  */
 export function readStereoWav(buf: Uint8Array): StereoWav {
 	const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
@@ -89,10 +88,6 @@ export function readStereoWav(buf: Uint8Array): StereoWav {
 	return { sampleRate, bitsPerSample: 16, left, right };
 }
 
-/**
- * Write a 48kHz int16 stereo WAV. The header is the fixed 44-byte PCM/RIFF
- * shape — ffmpeg and ffprobe read this without warnings (verified by spike).
- */
 export function writeStereoWav(wav: StereoWav): Uint8Array {
 	if (wav.left.length !== wav.right.length) {
 		throw new InvalidWavFormatError("left and right must have identical length");
@@ -122,11 +117,6 @@ export function writeStereoWav(wav: StereoWav): Uint8Array {
 	return out;
 }
 
-/**
- * Write a mono int16 PCM buffer as a WAV file at the given sample rate.
- * Used to wrap per-turn audio slices before handing them to the
- * transcription provider (OpenAI Whisper takes wav uploads).
- */
 export function writeMonoWav(pcm: Int16Array, sampleRate: number): Uint8Array<ArrayBuffer> {
 	const samples = pcm.length;
 	const dataBytes = samples * 2;
@@ -153,12 +143,9 @@ export function writeMonoWav(pcm: Int16Array, sampleRate: number): Uint8Array<Ar
 }
 
 /**
- * Linear-interpolation resample between arbitrary rates, in both
- * directions. Down: brings 48kHz int16 mono into the 16kHz expected by
- * VAD. Up: brings 24kHz TTS provider output to the 48kHz the LiveKit
- * driver publishes. Linear is fine for both — VAD needs only energy +
- * ZCR, and synthesized speech doesn't carry content above 12kHz that an
- * agent's STT would miss.
+ * Linear-interpolation resample between arbitrary rates (48k↔16k for VAD,
+ * 24k→48k for TTS output). Linear is fine — VAD needs only energy + ZCR, and
+ * synthesized speech carries no content above 12kHz an agent's STT would miss.
  */
 export function resamplePcm(pcm: Int16Array, srcRate: number, dstRate: number): Int16Array {
 	if (srcRate === dstRate) return pcm;
@@ -178,10 +165,9 @@ export function resamplePcm(pcm: Int16Array, srcRate: number, dstRate: number): 
 }
 
 /**
- * Parse a mono 16-bit PCM WAV at any sample rate. Counterpart of
- * `writeMonoWav`, used to decode WAV bytes returned by TTS providers
- * (whose rates vary by provider) before resampling to 48kHz. Same
- * chunk-walk and declared-size overrun guard as `readStereoWav`.
+ * Parse a mono 16-bit PCM WAV at any sample rate — decodes TTS provider output
+ * (rates vary by provider) before resampling to 48kHz. Same chunk-walk and
+ * declared-size overrun guard as `readStereoWav`.
  */
 export function readMonoWav(buf: Uint8Array): { pcm: Int16Array; sampleRate: number } {
 	const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);

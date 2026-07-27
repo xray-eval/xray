@@ -58,13 +58,11 @@ export interface DeepgramOptions {
 }
 
 /**
- * Deepgram transcription provider (Nova family). Sends the mono PCM as a
- * WAV body to `/v1/listen` — a purpose-built batch ASR endpoint, so unlike
- * the chat-based providers it returns signal-aligned word timings
- * (`punctuated_word` + start/end seconds, mapped into the same `words`
- * shape the Whisper provider produces). Language: the turn's hint is sent
- * as `language=`; without a hint `detect_language=true` asks Deepgram to
- * detect it (multilingual by default, not English-biased).
+ * Deepgram transcription provider (Nova family). Sends the mono PCM as a WAV
+ * body to `/v1/listen` — a batch ASR endpoint, so unlike the chat-based
+ * providers it returns signal-aligned word timings (mapped into the same
+ * `words` shape as Whisper). The turn's language hint is sent as `language=`;
+ * without one, `detect_language=true` avoids an English bias.
  */
 export function createDeepgramProvider(opts: DeepgramOptions): TranscriptionProvider {
 	const model = opts.model ?? DEFAULT_MODEL;

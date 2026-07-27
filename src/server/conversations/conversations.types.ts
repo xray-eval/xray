@@ -3,10 +3,9 @@ import * as v from "valibot";
 import { AssertionsArraySchema } from "@/server/assertions/assertions.types.ts";
 import { JudgeSchema, JudgesArraySchema } from "@/server/judges/judges.types.ts";
 
-// Caps for the JSON `spec` part of POST /v1/replays — the multipart body's
-// raw audio file parts have their own much larger cap (see MAX_AUDIO_BYTES).
-// A 100-turn script with long text and a few KB of overhead is the worst
-// realistic case; 256 KB covers it with three orders of magnitude of headroom.
+// Cap for the JSON `spec` part — the multipart audio file parts have their own
+// much larger cap (MAX_AUDIO_BYTES). 256 KB covers a 100-turn script with long
+// text and KB of overhead with orders of magnitude of headroom.
 export const MAX_CONVERSATION_BODY_BYTES = 256 * 1024;
 export const MAX_CONVERSATION_NAME = 256;
 export const MAX_TURNS_PER_CONVERSATION = 1024;
@@ -14,9 +13,7 @@ const MAX_TURN_TEXT = 64 * 1024;
 const MAX_TURN_KEY = 128;
 const MAX_AUDIO_VOICE_ID = 1024;
 const MAX_UPLOAD_KEY = 128;
-/** Shared validator: 64-char lowercase hex SHA-256. */
 export const HEX_SHA256_RE = /^[0-9a-f]{64}$/;
-/** Multipart file-part field name referenced from a `RecordedAudio` turn. */
 const UPLOAD_KEY_RE = /^[A-Za-z0-9_.-]+$/;
 
 /**
@@ -46,22 +43,15 @@ const TurnLanguageSchema = v.pipe(
 	v.regex(/^[a-z]{2,3}(_[a-z]{2})?$/, 'Must be a lowercase language tag like "de" or "en_us"'),
 );
 
-/** Request form: the SDK declares "synthesize this turn server-side". */
 const TtsAudioUploadSchema = v.object({
 	kind: v.literal("tts"),
 	voice_id: v.optional(v.pipe(v.string(), v.maxLength(MAX_AUDIO_VOICE_ID))),
 	language: v.optional(TurnLanguageSchema),
 });
 
-// ─── Request-form schemas (what the SDK POSTs in the `spec` part) ─────
-//
-// A `RecordedAudio` turn references a multipart file part by `upload_key`.
-// The server reads the bytes, computes sha256, stores a content-addressed
-// copy under `<audioRoot>/recorded/`, and substitutes the sha256 into the
-// canonical turn before hashing. The local filesystem path the dev pointed
-// at deliberately doesn't ride the wire — it would make the conversation
-// hash machine-local.
-
+// A `RecordedAudio` turn references a multipart file part by `upload_key`, not
+// a filesystem path: the dev's local path deliberately doesn't ride the wire —
+// it would make the conversation hash machine-local.
 const RecordedAudioUploadSchema = v.object({
 	kind: v.literal("recorded"),
 	upload_key: v.pipe(
@@ -74,10 +64,8 @@ const RecordedAudioUploadSchema = v.object({
 
 const TurnAudioUploadSchema = v.variant("kind", [RecordedAudioUploadSchema, TtsAudioUploadSchema]);
 
-/** One step as it arrives in the request body; `RecordedAudio` carries an
- *  `upload_key` pointing at a multipart file part. `assertions` declares
- *  what the server should check against this turn's transcript / tool calls
- *  / metrics after the run completes. */
+/** One turn as it arrives in the request body — audio carries `upload_key`,
+ *  not the canonical `sha256`. */
 export const ConversationTurnRequestSchema = v.object({
 	role: TurnRoleSchema,
 	text: v.optional(v.pipe(v.string(), v.maxLength(MAX_TURN_TEXT))),
@@ -87,35 +75,27 @@ export const ConversationTurnRequestSchema = v.object({
 });
 export type ConversationTurnRequest = v.InferOutput<typeof ConversationTurnRequestSchema>;
 
-// No array-level `minLength` here: a `live` session upserts an empty-turn
-// spec (its turns are observed at runtime, not scripted). The "at least one
-// turn" rule for ordinary scripted conversations is enforced at the
-// request-object level below, gated on `live === false`.
+// No array-level `minLength`: a `live` session upserts an empty-turn spec
+// (turns observed at runtime, not scripted). The "≥1 turn" rule for scripted
+// conversations is enforced at the request-object level below, gated on `live`.
 export const TurnsRequestArraySchema = v.pipe(
 	v.array(ConversationTurnRequestSchema),
 	v.maxLength(MAX_TURNS_PER_CONVERSATION),
 );
 
 /**
- * JSON `spec` part of `POST /v1/conversations` (multipart/form-data).
- * Carries the dev-facing display label + the turn array (in request form);
- * `RecordedAudio` turns reference multipart file parts by `upload_key`.
- * Server reads each audio file part, sha256s the bytes, stores a
- * content-addressed copy, substitutes the sha256 into the canonical form,
- * then hashes the canonical turn JSON to produce the conversation hash.
- *
- * `live`: a live mic session has no script. The server allows an empty
- * `turns` array when `live === true` and salts the hash so each live POST
+ * JSON `spec` part of `POST /v1/conversations` (multipart/form-data): the
+ * display label + request-form turns. `live === true` allows an empty `turns`
+ * array (a mic session has no script) and salts the hash so each live POST
  * mints a fresh conversation row (see canonicalizeAndHashSpec).
  */
 export const CreateConversationRequestSchema = v.pipe(
 	v.object({
 		name: ConversationNameSchema,
 		turns: TurnsRequestArraySchema,
-		// Conversation-level judges. Run once per replay against the full
-		// transcript by the evaluate-replay job. Adding/removing/reordering
-		// judges changes the conversation hash — judges are part of the test
-		// identity, not metadata.
+		// Conversation-level judges, run once per replay against the full
+		// transcript. Part of the test identity: adding/removing/reordering
+		// them changes the conversation hash.
 		judges: v.optional(JudgesArraySchema, []),
 		live: v.optional(v.boolean(), false),
 	}),
@@ -126,19 +106,15 @@ export const CreateConversationRequestSchema = v.pipe(
 );
 export type CreateConversationRequest = v.InferOutput<typeof CreateConversationRequestSchema>;
 
-// ─── Canonical-form schemas (what's hashed, stored, and returned) ─────
-
 const RecordedAudioRefSchema = v.object({
 	kind: v.literal("recorded"),
 	sha256: ConversationHashSchema,
 });
 
-// Canonical form pins the *generated bytes*: the upsert synthesizes the
-// turn, stores the 48kHz WAV content-addressed, and folds its sha256 into
-// the hash — generated audio is part of the test identity exactly like
-// recorded audio. Determinism across re-POSTs comes from the
-// `tts_synth_cache` fingerprint index, not from the (non-deterministic)
-// synthesis itself.
+// Canonical form folds the *generated bytes'* sha256 into the hash — generated
+// audio is part of the test identity, exactly like recorded audio. Determinism
+// across re-POSTs comes from the `tts_synth_cache` fingerprint index, not the
+// (non-deterministic) synthesis itself.
 const TtsAudioRefSchema = v.object({
 	kind: v.literal("tts"),
 	sha256: ConversationHashSchema,
@@ -149,10 +125,10 @@ const TtsAudioRefSchema = v.object({
 const TurnAudioRefSchema = v.variant("kind", [RecordedAudioRefSchema, TtsAudioRefSchema]);
 export type TurnAudioRef = v.InferOutput<typeof TurnAudioRefSchema>;
 
-/** Canonical/stored form of one turn. Lives in `conversations.turns_json` and
- *  is the input to the conversation hash. `assertions` is part of the
- *  canonical form because the test identity must change when its checks
- *  change — same turn structure + different assertions = different test. */
+/** Canonical/stored form of one turn (in `conversations.turns_json`, the input
+ *  to the conversation hash). `assertions` is included because the test
+ *  identity must change when its checks change — same turns + different
+ *  assertions = different test. */
 export const ConversationTurnSchema = v.object({
 	role: TurnRoleSchema,
 	text: v.optional(v.pipe(v.string(), v.maxLength(MAX_TURN_TEXT))),
@@ -171,15 +147,13 @@ export const TurnsArraySchema = v.pipe(
 );
 
 /**
- * Canonical conversation spec stored in `conversations.turns_json`. Wraps
- * the turn array + the conversation-level judges into one object so the
- * single `turns_json` column can carry both. The column name predates
- * judges; the *contents* are the full spec.
+ * Canonical spec stored in `conversations.turns_json` — the turn array +
+ * judges wrapped in one object so the single column carries both. The column
+ * name predates judges; the *contents* are the full spec.
  *
- * `live` marks a mic session; `live_salt` is a server-generated UUID folded
- * into the canonical JSON so two live sessions with identical (empty) turns
- * still hash to distinct conversation rows. Both are absent on ordinary
- * scripted conversations.
+ * `live_salt` (a server-generated UUID) is folded into the canonical JSON so
+ * two live sessions with identical empty turns still hash to distinct rows.
+ * Both `live` and `live_salt` are absent on scripted conversations.
  */
 export const StoredConversationSpecSchema = v.object({
 	turns: TurnsArraySchema,
@@ -189,7 +163,6 @@ export const StoredConversationSpecSchema = v.object({
 });
 export type StoredConversationSpec = v.InferOutput<typeof StoredConversationSpecSchema>;
 
-/** Response of `GET /v1/conversations/:hash`. */
 export const ConversationResponseSchema = v.object({
 	hash: v.string(),
 	name: v.string(),

@@ -7,9 +7,8 @@ import { TtsProviderError } from "./tts.errors.ts";
 import type { TtsProvider, TtsRequest, TtsResult } from "./tts.types.ts";
 
 const OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech";
-// Same model the SDK used before synthesis moved server-side, so existing
-// conversations keep their voice character across the migration. Operators
-// override via XRAY_TTS_MODEL.
+// Matches the model the SDK used before synthesis moved server-side, so
+// existing conversations keep their voice character. Override via XRAY_TTS_MODEL.
 const DEFAULT_MODEL = "gpt-4o-mini-tts";
 const DEFAULT_VOICE = "alloy";
 // `response_format: "pcm"` returns raw little-endian int16 mono at 24kHz —
@@ -24,10 +23,7 @@ export interface OpenAITtsOptions {
 	readonly timeoutMs?: number;
 }
 
-/**
- * OpenAI TTS provider. Requests raw PCM (headerless int16 @ 24kHz) so no
- * container parsing is needed; the synthesis service resamples to 48kHz.
- */
+/** OpenAI TTS provider — requests raw PCM (headerless int16 @ 24kHz), so no container parsing is needed. */
 export function createOpenAITtsProvider(opts: OpenAITtsOptions): TtsProvider {
 	const model = opts.model ?? DEFAULT_MODEL;
 	const fetchImpl = opts.fetchImpl ?? fetch;

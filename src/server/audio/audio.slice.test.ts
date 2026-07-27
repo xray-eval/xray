@@ -14,7 +14,7 @@ function makeStereo(sampleRate: number, samples: number): StereoWav {
 
 describe("sliceTurnAudio", () => {
 	it("returns the user channel for role 'user'", () => {
-		const stereo = makeStereo(1000, 1000); // 1 second @ 1kHz
+		const stereo = makeStereo(1000, 1000);
 		const slice = sliceTurnAudio(stereo, "user", 100, 200);
 		expect(slice.length).toBe(100);
 		expect(slice[0]).toBe(100);

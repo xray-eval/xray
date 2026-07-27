@@ -48,49 +48,41 @@ const SanitizedIssueSchema = v.object({
 	path: v.optional(v.array(IssuePathStepSchema)),
 });
 
-/** 400 — request body or query failed Valibot validation. */
 export const ValidationErrorResponseSchema = v.object({
 	error: v.string(),
 	issues: v.array(SanitizedIssueSchema),
 });
 
-/** 404 — referenced conversation does not exist. */
 export const ConversationNotFoundResponseSchema = v.object({
 	error: v.string(),
 	conversation_hash: v.string(),
 });
 
-/** 404 — replay does not exist. */
 export const ReplayNotFoundResponseSchema = v.object({
 	error: v.string(),
 	replay_id: v.string(),
 });
 
-/** 404 — audio for the replay (or one of its turns) is not on disk. */
 export const AudioNotFoundResponseSchema = v.object({
 	error: v.string(),
 	replay_id: v.string(),
 	turn_idx: v.optional(v.number()),
 });
 
-/** 413 — request body exceeded the per-route byte cap. */
 export const BodyTooLargeResponseSchema = v.object({
 	error: v.string(),
 	max_bytes: v.number(),
 });
 
-/** 500 — store-side data corruption or unexpected internal failure. */
 export const StoreFailureResponseSchema = v.object({
 	error: v.string(),
 });
 
-/** 415 — uploaded payload used a content-type the receiver doesn't accept. */
 export const UnsupportedContentTypeResponseSchema = v.object({
 	error: v.string(),
 	content_type: v.nullable(v.string()),
 });
 
-/** Body of every "ok, nothing else to say" response. */
 export const OkResponseSchema = v.object({
 	ok: v.literal(true),
 });

@@ -14,10 +14,8 @@ import type { TurnMetricsResponse } from "../../api/api.types.ts";
 const METRIC_HEAD = "h-7 text-[10px] uppercase tracking-wider text-muted-foreground/70 font-normal";
 
 /**
- * Per-turn timing for the Run details panel: the silence gap before the agent
- * responds (`agent_response_ms`) and barge-in. Sits with model usage + tool
- * calls — observability data, not a pass/fail verdict. (Model TTFT moved to a
- * per-call attribute on the span detail — spec 0001.)
+ * Per-turn timing (silence gap before the agent responds, barge-in) —
+ * observability data, not a pass/fail verdict.
  */
 export function TurnMetricsSection({ turns }: { turns: TurnMetricsResponse[] }) {
 	if (turns.length === 0) return null;

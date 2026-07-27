@@ -66,15 +66,13 @@ function TraceTreeReady({
 		});
 	};
 
-	// Clicks anywhere in the app that DON'T land on a `data-keep-trace-highlight`
-	// element clear the current waveform highlight. Document-level listener
-	// so clicks in the sidebar / header / breadcrumbs / run-details panel
-	// also count as "moved on from this selection", not just clicks inside
-	// the trace tree. Row seek buttons + the audio player container opt out
-	// via `data-keep-trace-highlight="true"` — those clicks either update
-	// the highlight themselves (row seek) or want to preserve it (play/pause).
-	// Synchronizes external state (DOM events) with React → effect is the
-	// right tool per the rules.
+	// Clicks anywhere that DON'T land on a `data-keep-trace-highlight` element
+	// clear the waveform highlight. Document-level so clicks in the sidebar /
+	// header / run-details also count as "moved on from this selection", not
+	// just clicks inside the trace tree. Row seek buttons + the audio player
+	// opt out via `data-keep-trace-highlight="true"` — they either update the
+	// highlight themselves or want to preserve it. A legit effect: it syncs
+	// external DOM events with React, per the rules.
 	const { clearHighlight } = player;
 	useEffect(() => {
 		const onClick = (event: MouseEvent) => {
@@ -249,9 +247,7 @@ function SpanRowItem({
 	const palette = vocabPalette(row.vocabulary);
 	const isSelected = selectedSpanId === row.span.span_id;
 
-	// One "focus this span" gesture: move the playhead, shade the waveform,
-	// and open the span in the detail panel. Both the name cell and the bar
-	// trigger it, so clicking anywhere on the row inspects the span.
+	// Both the name cell and the bar call this — one gesture seeks, shades the waveform, and opens the span detail.
 	const onActivate = () => {
 		player.seek(row.startedAtSec);
 		player.highlight(row.startedAtSec, row.endedAtSec);
@@ -462,11 +458,10 @@ export function ZoomControls({ zoom, onChange }: { zoom: number; onChange: (z: n
 }
 
 /**
- * Position of `sec` along the trace timeline as a 0..1 fraction, clamped to
- * the visible range and 0 for a degenerate (zero-duration / non-finite) scale.
- * The single source of truth for horizontal placement — `TimeBar` and the
- * playhead cursor both derive from it so a bar and the cursor over it can
- * never drift apart.
+ * Position of `sec` along the trace timeline as a 0..1 fraction, clamped to the
+ * visible range (0 for a degenerate zero-duration / non-finite scale). The
+ * single source of truth for horizontal placement — `TimeBar` and the playhead
+ * cursor both derive from it, so a bar and the cursor over it can't drift apart.
  */
 export function fractionOf(sec: number, scale: TraceScale): number {
 	const raw = (sec - scale.startSec) / scale.durationSec;
@@ -475,11 +470,10 @@ export function fractionOf(sec: number, scale: TraceScale): number {
 }
 
 /**
- * CSS `left` for a 0..1 fraction, placing it within the timeline region
- * [STICKY_LEFT_TOTAL_PX, virtualWidth]. `100%` resolves to the inner
- * container's width (== virtualWidth), so `STICKY_LEFT_TOTAL_PX + f·(100% −
- * STICKY_LEFT_TOTAL_PX)` lands on the exact x a `TimeBar` bar at fraction `f`
- * occupies — at any zoom, since zoom only changes the resolved `100%`.
+ * CSS `left` for a 0..1 fraction within the timeline region. `100%` resolves
+ * to the inner container's width (== virtualWidth), so the result lands on the
+ * exact x a `TimeBar` at fraction `f` occupies — at any zoom, since zoom only
+ * changes the resolved `100%`.
  */
 export function playheadLeft(fraction: number): string {
 	return `calc(${STICKY_LEFT_TOTAL_PX}px + ${fraction} * (100% - ${STICKY_LEFT_TOTAL_PX}px))`;

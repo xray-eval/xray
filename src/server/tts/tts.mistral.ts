@@ -71,13 +71,9 @@ export interface MistralTtsOptions {
 }
 
 /**
- * Mistral Voxtral TTS provider. Decodes the base64 WAV envelope and
- * returns pcm at the WAV's declared rate (24kHz as of voxtral-mini-tts);
- * the synthesis service resamples to 48kHz.
- *
- * Voice defaults are language-aware: preset languages resolve statically,
- * anything else queries the org's voice catalog (cloned voices carry a
- * `languages` tag) — see `resolveDefaultVoice`.
+ * Mistral Voxtral TTS provider. Decodes the base64 WAV envelope and returns
+ * pcm at the WAV's declared rate (24kHz as of voxtral-mini-tts). Voice defaults
+ * are language-aware — see `resolveDefaultVoice`.
  */
 export function createMistralTtsProvider(opts: MistralTtsOptions): TtsProvider {
 	const model = opts.model ?? DEFAULT_MODEL;

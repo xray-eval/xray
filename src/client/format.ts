@@ -1,26 +1,22 @@
 export const HASH_PREFIX_LEN = 12;
 
-/** Truncate a 64-char SHA-256 hex to a UI-friendly prefix. Display only. */
 export function shortHash(hash: string): string {
 	return hash.slice(0, HASH_PREFIX_LEN);
 }
 
 /**
- * Render an ISO 8601 timestamp in the user's locale. `Date#toLocaleString`
- * uses the runtime's tz + locale, so the same string in two browsers may
- * render differently — that's the intended behavior for a self-hosted UI.
+ * `Date#toLocaleString` uses the runtime's tz + locale, so the same string in
+ * two browsers may render differently — intended for a self-hosted UI.
  */
 export function formatAbsolute(iso: string): string {
 	return new Date(iso).toLocaleString();
 }
 
 /**
- * Locale-aware short timestamp with no year. Every UI site pairs this with
- * a "Started"/"Finished"/range label, so the recent-relative reading is
- * what matters. Use `formatAbsolute` when year disambiguation matters.
- *
- * Cached at module scope because `Intl.DateTimeFormat` construction is
- * not cheap and we call this once per row in trace-heavy views.
+ * Short timestamp with no year — use `formatAbsolute` when year
+ * disambiguation matters. Formatter cached at module scope because
+ * `Intl.DateTimeFormat` construction isn't cheap and this runs once per row
+ * in trace-heavy views.
  */
 const TIMESTAMP_FORMATTER = new Intl.DateTimeFormat(undefined, {
 	month: "short",
@@ -36,12 +32,10 @@ export function formatTimestamp(iso: string): string {
 }
 
 /**
- * Render a playback offset (in seconds) as a `M:SS.d` clock, e.g. `0:05.3` /
- * `1:23.7`. Deciseconds are truncated via `floor(sec * 10)` rather than the
- * naive `sec - floor(sec)` subtraction, which underflows on values like 5.3
- * (`5.3 - 5 === 0.2999…` → would show `.2`). Negative / non-finite inputs
- * clamp to `0:00.0`. Shared by the audio clock readout and the trace-tree
- * playhead pill so they always agree.
+ * Render a playback offset (seconds) as `M:SS.d`. Deciseconds truncated via
+ * `floor(sec * 10)`, not the naive `sec - floor(sec)` which underflows on
+ * values like 5.3 (`5.3 - 5 === 0.2999…` → `.2`). Negative / non-finite
+ * clamp to `0:00.0`.
  */
 export function formatClockSeconds(seconds: number): string {
 	const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
@@ -67,9 +61,8 @@ export function formatTimelineTick(seconds: number): string {
 }
 
 /**
- * Render a duration in ms as `123ms` / `42s` / `2m05s`. `null` means the
- * session/turn has no recorded duration yet — "in progress" reads better
- * than an em-dash or empty cell at the list/header sites that use this.
+ * `null` (no recorded duration yet) renders "in progress" — reads better than
+ * an em-dash at the list/header sites that use this.
  */
 export function formatDuration(ms: number | null): string {
 	if (ms === null) return "in progress";
@@ -81,14 +74,7 @@ export function formatDuration(ms: number | null): string {
 	return `${m}m${s.toString().padStart(2, "0")}s`;
 }
 
-/**
- * Render a span/turn duration in ms for trace views: `123ms` below a second,
- * `1.23s` at or above it. Two reasons it's distinct from `formatDuration`:
- * trace latencies cluster in the sub-5-second range where whole-second
- * rounding erases the signal worth reading, and a row with no resolved
- * duration is missing data — so invalid/negative input renders an em-dash,
- * not "in progress".
- */
+// Distinct from formatDuration: sub-second precision for trace latencies; invalid → "—", not "in progress".
 export function formatDurationMs(ms: number): string {
 	if (!Number.isFinite(ms) || ms < 0) return "—";
 	// Round before the cutoff, else [999.5, 1000) rounds to "1000ms".
