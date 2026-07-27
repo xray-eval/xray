@@ -35,7 +35,8 @@ export function TurnMetricsSection({ turns }: { turns: TurnMetricsResponse[] }) 
 						<TableHead className={cn(METRIC_HEAD, "w-10 pl-0")}>turn</TableHead>
 						<TableHead className={METRIC_HEAD}>role</TableHead>
 						<TableHead className={cn(METRIC_HEAD, "text-right")}>resp</TableHead>
-						<TableHead className={cn(METRIC_HEAD, "pr-0 text-right")}>barge-in</TableHead>
+						<TableHead className={cn(METRIC_HEAD, "text-right")}>barge-in</TableHead>
+						<TableHead className={cn(METRIC_HEAD, "pr-0 text-right")}>yield</TableHead>
 					</TableRow>
 				</TableHeader>
 				<TableBody>
@@ -58,7 +59,7 @@ function TurnMetricRow({ turn }: { turn: TurnMetricsResponse }) {
 			<TableCell className="text-right text-foreground/80">
 				{formatMetricMs(turn.agent_response_ms)}
 			</TableCell>
-			<TableCell className="pr-0 text-right">
+			<TableCell className="text-right">
 				{turn.interrupted ? (
 					<span className="text-warning">
 						{turn.interruption_start_ms === null
@@ -67,6 +68,15 @@ function TurnMetricRow({ turn }: { turn: TurnMetricsResponse }) {
 					</span>
 				) : (
 					<span className="text-muted-foreground/40">—</span>
+				)}
+			</TableCell>
+			{/* Time to yield the floor after a barge-in — the headline signal for
+			    an interruption test. Only meaningful on an interrupted turn. */}
+			<TableCell className="pr-0 text-right text-foreground/80">
+				{turn.yield_ms === null ? (
+					<span className="text-muted-foreground/40">—</span>
+				) : (
+					formatDurationMs(turn.yield_ms)
 				)}
 			</TableCell>
 		</TableRow>
