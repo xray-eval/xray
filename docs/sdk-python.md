@@ -424,13 +424,16 @@ LiveKitRuntime(
     identity: str = "xray-driver",
     agent_join_timeout_s: float = 30.0,
     agent_turn_timeout_s: float = 30.0,
+    agent_quiet_period_s: float = 1.0,
     cache_root: Path = ~/.cache/xray-py,
     mixdown_dir: Path | None = None,
     simulated_sip: SimulatedSipCall | None = None,
 )
 ```
 
-This runtime joins the room as a user-side participant. It plays the per-turn user PCM (raw audio), captures the agent's audio and transcripts, and writes a wall-clock-aligned stereo WAV at 48 kHz / 16-bit. In that WAV, the left channel is the user and the right channel is the agent.
+This runtime joins the room as a user-side participant. It plays the per-turn user PCM (raw audio) and records the agent's audio **continuously for the whole run** — not just while it is the agent's turn — so anything the agent says off-turn (while the user is speaking, or a late reply after its transcript already went final) is captured too, instead of being dropped. It also captures the agent's transcripts and writes a wall-clock-aligned stereo WAV at 48 kHz / 16-bit. In that WAV, the left channel is the user and the right channel is the agent.
+
+After the last scripted turn it keeps recording until the agent has stayed silent for `agent_quiet_period_s` (default 1.0s) — "record until the agent is actually done", so a late reply still lands in the recording — bounded by `agent_turn_timeout_s` so a never-silent agent can't hang the run. Set `agent_quiet_period_s=0` to tear down as soon as the turns finish.
 
 It implements `bind`, `inject_user_audio`, `run`, and `aclose`. Calling `run` before `bind` raises `RuntimeBindError`. Use it with `xray.run`.
 

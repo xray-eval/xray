@@ -209,7 +209,7 @@ What `xray.run` does:
 
 1. POST the Conversation. This is an idempotent upsert, meaning calling it twice with the same input is safe. Assertions and judges are part of the canonical spec the server hashes.
 2. POST the Replay row eagerly (`lifecycle_state='pending'`).
-3. Bind the driver, attach replay baggage, and run the driver. This plays the user audio, then captures the agent audio and transcripts.
+3. Bind the driver, attach replay baggage, and run the driver. This plays the user audio and records the agent's audio continuously for the whole run (so off-turn agent speech is captured too), along with its transcripts.
 4. Assemble a 48 kHz int16 **stereo WAV** (L = user, R = agent, wall-clock-aligned) and POST it to `/v1/replays/:id/audio`. Set the `X-Recording-Started-At` header to the wall-clock time (ISO-8601 UTC) of audio sample 0. This anchor is the sole origin for mapping span timestamps onto the audio timeline. The server uses it to work out which turn each tool, model, and span row belongs to. **A custom `Runtime` that produces audio MUST report it.** Return `RuntimeResult.recording_started_at_epoch` (Unix epoch seconds of sample 0), and `xray.run` sends the header for you. If you omit it, span-to-turn attribution is skipped. Then every `tool_called`, `tool_not_called`, `tool_args_match`, and `max_ttft_ms` assertion comes back `errored`.
 5. POST `/v1/replays/:id/analyze`. The server enqueues the three-stage analyze chain (`analyze-replay`, then `calculate-metrics`, then `evaluate-replay`).
 6. Stream SSE on `/v1/replays/:id/events` until `evaluation_complete` (the chain finished) or `failed` (the chain stopped). (SSE is Server-Sent Events, a one-way stream of updates from the server.)

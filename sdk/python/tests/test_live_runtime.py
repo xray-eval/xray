@@ -19,12 +19,7 @@ import pytest
 
 from xray import Conversation, SimulatedSipCall
 from xray.errors import AgentNotJoinedError, RuntimeBindError
-from xray.runtime.livekit import (
-    NUM_CHANNELS,
-    SAMPLE_RATE,
-    SAMPLE_WIDTH_BYTES,
-    write_live_mixdown,
-)
+from xray.runtime.livekit import SAMPLE_RATE
 from xray.runtime.livekit_live import LiveKitLiveRuntime
 
 
@@ -513,50 +508,3 @@ async def test_mic_factory_failure_propagates_and_disconnects(tmp_path: Path):
     with pytest.raises(LiveDependencyError):
         await rt.run(conv)
     assert rtc.Room.rooms[0].disconnect.await_count == 1
-
-
-def test_write_live_mixdown_wall_clock_aligned(tmp_path: Path):
-    # User speaks at t0 for 200ms; agent replies 0.5s in for 500ms.
-    # Total span = max(0.0+0.2, 0.5+0.5) = 1.0s = SAMPLE_RATE frames.
-    # Returns t0 — the recording anchor the orchestrator sends on upload.
-    user = [(10.0, _silence(200))]
-    agent = [(10.5, _silence(500))]
-    out = tmp_path / "live.wav"
-    recording_t0 = write_live_mixdown(user_frames=user, agent_frames=agent, out_path=out)
-    assert recording_t0 == 10.0
-    with wave.open(str(out), "rb") as w:
-        assert w.getnchannels() == 2
-        assert w.getnframes() == SAMPLE_RATE
-
-
-def test_write_live_mixdown_bursts_laid_sequentially(tmp_path: Path):
-    # Three frames sharing one arrival timestamp = a decode burst. The old
-    # arrival-offset placement collapsed them onto the same samples (20ms of
-    # garbled overlap); sequential placement lays them back-to-back (60ms).
-    agent = [(0.0, _silence(20)), (0.0, _silence(20)), (0.0, _silence(20))]
-    out = tmp_path / "burst.wav"
-    write_live_mixdown(user_frames=[], agent_frames=agent, out_path=out)
-    with wave.open(str(out), "rb") as w:
-        assert w.getnframes() == SAMPLE_RATE * 60 // 1000
-
-
-def test_write_live_mixdown_empty(tmp_path: Path):
-    out = tmp_path / "empty.wav"
-    recording_t0 = write_live_mixdown(user_frames=[], agent_frames=[], out_path=out)
-    assert recording_t0 is None
-    with wave.open(str(out), "rb") as w:
-        assert w.getnchannels() == 2
-        assert w.getnframes() == 0
-
-
-def test_write_live_mixdown_gap_preserved(tmp_path: Path):
-    # Two agent frames 1s apart on the right channel; the gap must NOT be
-    # compressed away (this is why live uses per-frame placement, not concat).
-    agent = [(0.0, _silence(20)), (1.0, _silence(20))]
-    out = tmp_path / "gap.wav"
-    write_live_mixdown(user_frames=[], agent_frames=agent, out_path=out)
-    with wave.open(str(out), "rb") as w:
-        # Spans 0.0 → 1.02s ≈ SAMPLE_RATE + 20ms of frames.
-        assert w.getnframes() == SAMPLE_RATE + SAMPLE_RATE * 20 // 1000
-        assert w.getsampwidth() == SAMPLE_WIDTH_BYTES
-        assert w.getnchannels() == NUM_CHANNELS + 1  # stereo
