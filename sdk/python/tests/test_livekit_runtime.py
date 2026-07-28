@@ -578,6 +578,30 @@ def test_barge_in_degrades_when_the_agent_finishes_first(tmp_path: Path):
     assert user_seg is None
 
 
+def test_barge_in_counts_from_agent_speech_onset_not_capture_start(tmp_path: Path):
+    """`interrupt_after_ms` is measured from the agent's speech onset, not from
+    capture start. The captured stream leads with the agent's pre-speech silence
+    (it "thinks" before talking); counting that silence would fire the barge-in
+    early — before the agent speaks — collapsing the turn structure into a
+    spec_vad_mismatch instead of a real overlap. Here 100ms of silence precedes
+    160ms of speech, so a 60ms barge-in must land 160ms into the content (100ms
+    silence + 60ms speech), not 60ms in."""
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    frames = [_make_silence_pcm(20)] * 5 + [_make_tone_pcm(20)] * 8
+    agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(rt, frames=frames, final_after_frame=11, interrupt_after_ms=60)
+    )
+    assert user_seg is not None
+    assert agent_seg.started_at is not None and user_seg.started_at is not None
+    # 100ms silence + 60ms speech = 160ms of content before the barge-in.
+    # Counting the silence would fire at 60ms (near the start, still silent).
+    gap_ms = (user_seg.started_at - agent_seg.started_at) * 1000
+    assert gap_ms >= 150, f"barge-in fired during pre-speech silence ({gap_ms:.1f}ms in)"
+
+
 def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
     """A ``final=True`` transcription segment that arrives between two
     agent turns (e.g. delayed `conversation_item_added` from Gemini Live
@@ -888,6 +912,41 @@ def test_driver_emits_xray_turn_for_user_and_agent(tmp_path: Path, monkeypatch: 
     assert agent_attrs.get("xray.turn.key") == "a0"
     # Distinct idx values rule out the (replay_id, idx) PK collision.
     assert user_attrs.get("xray.turn.idx") != agent_attrs.get("xray.turn.idx")
+
+
+def test_barge_in_turn_spans_are_trace_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Both turn spans on the barge-in path must be trace roots, matching every
+    other turn. The user turn is published via ``asyncio.create_task`` from
+    inside the agent's span scope, and create_task copies the active context —
+    so without an explicit root reset the user span nests UNDER the agent span,
+    shaping the barge-in trace differently from every normal turn."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    import xray.runtime.livekit as livekit_mod
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(livekit_mod, "_TRACER", provider.get_tracer("xray-py-driver", "0.0.1"))
+
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    asyncio.run(
+        _drive_interrupted_pair(
+            rt, frames=[_make_tone_pcm(20)] * 8, final_after_frame=6, interrupt_after_ms=60
+        )
+    )
+
+    turn_spans = [s for s in exporter.get_finished_spans() if s.name == "xray.turn"]
+    assert len(turn_spans) == 2, f"expected 2 xray.turn spans, got {len(turn_spans)}"
+    by_role = {(s.attributes or {}).get("xray.turn.role"): s for s in turn_spans}
+    assert set(by_role) == {"user", "agent"}
+    for role, span in by_role.items():
+        assert span.parent is None, f"{role} turn span nests under another span; expected a root"
 
 
 def test_injected_audio_is_published_verbatim(tmp_path: Path):

@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import importlib
 import logging
+import math
 import time
 import wave
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping
@@ -119,10 +120,13 @@ def _assemble_transcript(parts: Iterable[str]) -> str:
 
 @asynccontextmanager
 async def _scoped_turn(idx: int, key: str | None = None) -> AsyncGenerator[None, None]:
-    """Scope ``xray.turn.idx`` / ``xray.turn.key`` baggage to a block.
-    Used internally by the driver so user turns also carry per-turn
-    attribution on the user-side spans (mostly span-tree breadcrumbs)."""
-    ctx = context.get_current()
+    """Open a turn scope: a fresh trace root plus ``xray.turn.idx`` /
+    ``xray.turn.key`` baggage. The root reset matters because this scope may be
+    entered from inside another turn's span via ``asyncio.create_task`` (the
+    barge-in user turn) — create_task copies the active context, so clearing the
+    span slot keeps every turn span a root instead of nesting it under the
+    agent's, while baggage still flows through."""
+    ctx = trace.set_span_in_context(trace.INVALID_SPAN, context.get_current())
     ctx = baggage.set_baggage("xray.turn.idx", str(idx), context=ctx)
     if key is not None:
         ctx = baggage.set_baggage("xray.turn.key", key, context=ctx)
@@ -149,6 +153,24 @@ class _TurnSegment:
 def _pcm_duration_ms(pcm: bytes) -> int:
     """Duration of a mono int16 PCM buffer at ``SAMPLE_RATE``, in ms."""
     return (len(pcm) // SAMPLE_WIDTH_BYTES) * 1000 // SAMPLE_RATE
+
+
+# int16 RMS separating agent speech from the silence/comfort-noise the
+# AudioStream delivers while the agent is still "thinking" (~-36 dBFS): silence
+# sits far below, TTS speech far above. The gap is decades wide, so the exact
+# value isn't load-bearing.
+_SPEECH_RMS_FLOOR: Final = 500.0
+
+
+def _crosses_speech_floor(pcm: bytes) -> bool:
+    """True once a mono int16 frame carries audio above the speech floor. Used
+    as a one-shot onset latch so the barge-in counter starts at the agent's
+    first word, not at capture start."""
+    samples = array.array("h", pcm)
+    if not samples:
+        return False
+    mean_square = sum(sample * sample for sample in samples) / len(samples)
+    return math.sqrt(mean_square) >= _SPEECH_RMS_FLOOR
 
 
 def _barge_in_user_turn(agent_turn: Turn, next_turn: Turn | None) -> Turn | None:
@@ -610,54 +632,72 @@ class LiveKitRuntime(Runtime):
         user_seg: _TurnSegment | None = None
         user_publish_task: asyncio.Task[None] | None = None
 
-        with _TRACER.start_as_current_span("xray.turn") as agent_span:
-            agent_span.set_attribute("xray.turn.idx", agent_idx)
-            agent_span.set_attribute("xray.turn.role", "agent")
-            if agent_turn.key is not None:
-                agent_span.set_attribute("xray.turn.key", agent_turn.key)
-            agent_started_at = time.time()
-            agent_seg.started_at = agent_started_at
-            transcript_task = asyncio.create_task(
-                _drain_until_final(transcript, transcription_queue)
-            )
-            received_ms = 0
+        # Scope the agent capture like every other turn — without this its
+        # driver spans lose turn baggage, since the barge-in branch runs before
+        # the caller's own _scoped_turn wrapper.
+        async with _scoped_turn(agent_idx, key=agent_turn.key):
+            with _TRACER.start_as_current_span("xray.turn") as agent_span:
+                agent_span.set_attribute("xray.turn.idx", agent_idx)
+                agent_span.set_attribute("xray.turn.role", "agent")
+                if agent_turn.key is not None:
+                    agent_span.set_attribute("xray.turn.key", agent_turn.key)
+                agent_started_at = time.time()
+                agent_seg.started_at = agent_started_at
+                transcript_task = asyncio.create_task(
+                    _drain_until_final(transcript, transcription_queue)
+                )
+                # `received_ms` is total captured content (silence + speech): it
+                # anchors WHERE the barge-in lands in the recording. `voiced_ms`
+                # is the trigger — it accrues only after speech onset, so
+                # `interrupt_after_ms` counts from the agent's first word, not
+                # from capture start (the stream leads with the agent's
+                # "thinking" silence, which must not spend the budget).
+                received_ms = 0
+                voiced_ms = 0
+                speech_seen = False
 
-            async def _consume_frames() -> None:
-                nonlocal user_seg, user_publish_task, received_ms
-                async for event in stream:
-                    data = bytes(event.frame.data)
-                    agent_seg.pcm.extend(data)
-                    if user_publish_task is None and not transcript.final_seen.is_set():
-                        received_ms += _pcm_duration_ms(data)
-                        if received_ms >= after_ms:
-                            # Place the barge-in in the recording at the CONTENT
-                            # point it fired on — agent onset + received_ms of
-                            # agent audio — not wall-clock. AudioStream can
-                            # deliver agent frames in bursts ahead of realtime
-                            # (see write_live_mixdown), so a wall-clock stamp
-                            # would land the interruption early on the timeline
-                            # and inflate the measured yield_ms.
-                            user_seg, user_publish_task = self._begin_interruption(
-                                user_idx=user_idx,
-                                user_turn=user_turn,
-                                user_pcm=user_pcm,
-                                started_at=agent_started_at + received_ms / 1000,
-                                audio_source=audio_source,
-                                lk_rtc=lk_rtc,
-                            )
-                    # Keep capturing after the barge-in: the agent's tail (how
-                    # long it keeps talking) is exactly what the yield metric
-                    # measures. Stop only when the agent signals it's done.
-                    if transcript.final_seen.is_set():
-                        break
+                async def _consume_frames() -> None:
+                    nonlocal user_seg, user_publish_task, received_ms, voiced_ms, speech_seen
+                    async for event in stream:
+                        data = bytes(event.frame.data)
+                        agent_seg.pcm.extend(data)
+                        frame_ms = _pcm_duration_ms(data)
+                        received_ms += frame_ms
+                        if user_publish_task is None and not transcript.final_seen.is_set():
+                            if not speech_seen:
+                                speech_seen = _crosses_speech_floor(data)
+                            if speech_seen:
+                                voiced_ms += frame_ms
+                            if speech_seen and voiced_ms >= after_ms:
+                                # Anchor placement to total received content
+                                # (agent onset + received_ms), NOT wall-clock:
+                                # AudioStream can deliver frames in bursts ahead
+                                # of realtime (see write_live_mixdown), so a
+                                # wall-clock stamp would land the interruption
+                                # early and inflate the measured yield_ms.
+                                user_seg, user_publish_task = self._begin_interruption(
+                                    user_idx=user_idx,
+                                    user_turn=user_turn,
+                                    user_pcm=user_pcm,
+                                    started_at=agent_started_at + received_ms / 1000,
+                                    audio_source=audio_source,
+                                    lk_rtc=lk_rtc,
+                                )
+                        # Keep capturing after the barge-in: the agent's tail
+                        # (how long it keeps talking) is what the yield metric
+                        # measures. Stop only when the agent signals it's done.
+                        if transcript.final_seen.is_set():
+                            break
 
-            await self._run_agent_consume(_consume_frames, stream, transcript, transcription_queue)
-            await _cancel_task(transcript_task)
+                await self._run_agent_consume(
+                    _consume_frames, stream, transcript, transcription_queue
+                )
+                await _cancel_task(transcript_task)
 
-            agent_seg.ended_at = time.time()
-            agent_seg.transcript = transcript.assemble()
-            if agent_seg.transcript:
-                agent_span.set_attribute("xray.turn.transcript", agent_seg.transcript)
+                agent_seg.ended_at = time.time()
+                agent_seg.transcript = transcript.assemble()
+                if agent_seg.transcript:
+                    agent_span.set_attribute("xray.turn.transcript", agent_seg.transcript)
 
         if user_publish_task is not None:
             await user_publish_task
