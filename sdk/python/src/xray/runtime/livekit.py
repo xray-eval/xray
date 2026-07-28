@@ -45,7 +45,7 @@ import logging
 import math
 import time
 import wave
-from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -185,12 +185,15 @@ def _pcm_duration_ms(pcm: bytes) -> int:
 # value isn't load-bearing.
 _SPEECH_RMS_FLOOR: Final = 500.0
 
-# Content-time silence that ends an agent utterance, mirroring the
-# agent_quiet_period_s default. Intra-speech pauses sit well under it, so an
-# utterance stays one unit; a barge-in that credits speech from before its tap
-# stops crediting at this boundary — a stale credit spanning it would spend the
-# head start inside the next utterance's silence prefix, the early fire cac718c
-# fixed. Erring small only degrades to counting from the tap (today's behaviour).
+# Content-time silence that ends an agent UTTERANCE. Deliberately independent of
+# `agent_quiet_period_s`, which ends a TURN: a turn holds however many utterances
+# the agent produces before it yields the floor (narration, then the answer after
+# a tool round-trip), so the utterance boundary has to be the shorter of the two.
+# Intra-speech pauses sit well under it, so an utterance stays one unit; a
+# barge-in that credits speech from before its tap stops crediting at this
+# boundary — a stale credit spanning it would spend the head start inside the
+# next utterance's silence prefix, the early fire cac718c fixed. Erring small
+# only degrades to counting from the tap (today's behaviour).
 _UTTERANCE_GAP_S: Final = 1.0
 
 
@@ -225,6 +228,25 @@ def _agent_response_for(segment: _TurnSegment) -> AgentResponse:
     return AgentResponse(transcript=segment.transcript, duration_ms=duration_ms)
 
 
+def _log_pump_failure(results: Sequence[None | BaseException]) -> None:
+    """Surface a capture pump that died on its own rather than being cancelled.
+
+    The teardown gather swallows exceptions so a failing pump can't mask the
+    run's real outcome, but silence here is expensive: once the pump is dead no
+    further frames arrive, so every remaining agent turn waits out
+    ``agent_turn_timeout_s`` and returns an empty transcript with nothing in the
+    logs to explain it. ``CancelledError`` is the expected teardown path and is
+    not reported."""
+    for result in results:
+        if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+            logger.warning(
+                "agent capture pump died before teardown (%s: %s) — agent audio after that "
+                "point is missing from the recording and later turns will have timed out",
+                type(result).__name__,
+                result,
+            )
+
+
 async def _cancel_task(task: asyncio.Task[None]) -> None:
     """Cancel a still-running background task and swallow its cancellation."""
     if not task.done():
@@ -253,12 +275,17 @@ class _AgentTranscript:
         return _assemble_transcript(self.latest_by_id.values())
 
 
-async def _drain_until_final(
+async def _drain_captions(
     transcript: _AgentTranscript,
     queue: asyncio.Queue[LkTranscriptionSegment],
 ) -> None:
-    """Feed the queue into ``transcript`` until a final segment lands."""
-    while not transcript.final_seen.is_set():
+    """Feed the queue into ``transcript`` until the caller cancels it.
+
+    Runs past the first ``final`` segment on purpose: a caption stream marks
+    *utterance* ends, and one turn can hold several — narration, then the answer
+    after a tool round-trip. Stopping at the first final is what dropped the
+    real answer from the turn's transcript (#117)."""
+    while True:
         transcript.ingest(await queue.get())
 
 
@@ -456,12 +483,17 @@ class LiveKitRuntime(Runtime):
     identity: str = "xray-driver"
     agent_join_timeout_s: float = 30.0
     agent_turn_timeout_s: float = 30.0
-    # After the last scripted turn, keep recording until the agent has stayed
-    # silent this long — "record until the agent is actually done", not a fixed
-    # trailing timer — so a late off-turn reply still lands in the recording.
-    # Capped by agent_turn_timeout_s so a never-silent agent can't hang the run.
-    # 0 tears down as soon as the turns finish.
-    agent_quiet_period_s: float = 1.0
+    # How long the agent must stay silent before xray treats it as done —
+    # applied to each agent turn's boundary and again after the last turn, so a
+    # late off-turn reply still lands in the recording. Capped by
+    # agent_turn_timeout_s so a never-silent agent can't hang the run. 0 ends a
+    # turn as soon as the agent has spoken, and tears down immediately.
+    #
+    # 1.5s because measured intra-response pauses (an agent drawing breath
+    # mid-answer) reach ~0.9s: a shorter window ends the turn mid-sentence and
+    # the next user turn talks over the rest. A turn whose agent calls a slow
+    # tool needs longer still — see Turn.agent(quiet_period_ms=...).
+    agent_quiet_period_s: float = 1.5
     cache_root: Path = field(default_factory=lambda: Path.home() / ".cache" / "xray-py")
     mixdown_dir: Path | None = None
     # When set, the driver joins as ``ParticipantKind.SIP`` and carries the
@@ -592,7 +624,7 @@ class LiveKitRuntime(Runtime):
             await self._await_agent_quiet(capture)
         finally:
             pump_task.cancel()
-            await asyncio.gather(pump_task, return_exceptions=True)
+            _log_pump_failure(await asyncio.gather(pump_task, return_exceptions=True))
             await room.disconnect()
 
         mixdown_path, recording_t0 = self._write_mixdown(segments, capture.frames)
@@ -754,16 +786,13 @@ class LiveKitRuntime(Runtime):
             if turn.key is not None:
                 span.set_attribute("xray.turn.key", turn.key)
             segment.started_at = time.time()
-            transcript_task = asyncio.create_task(
-                _drain_until_final(transcript, transcription_queue)
-            )
-            # Wait for the transcript to go final, capped so a silent agent
-            # can't hang the run — an empty transcript is a valid outcome.
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    transcript.final_seen.wait(), timeout=self.agent_turn_timeout_s
+            transcript_task = asyncio.create_task(_drain_captions(transcript, transcription_queue))
+            try:
+                await self._await_agent_turn_end(
+                    capture, transcript, quiet_period_s=self._quiet_period_s_for(turn)
                 )
-            await _cancel_task(transcript_task)
+            finally:
+                await _cancel_task(transcript_task)
             _drain_pending(transcript, transcription_queue)
 
             segment.ended_at = time.time()
@@ -828,7 +857,11 @@ class LiveKitRuntime(Runtime):
                     # clock as the recording, not wall-clock.
                     if agent_seg.started_at is None:
                         agent_seg.started_at = content_end_epoch - _pcm_duration_ms(pcm) / 1000
-                    if user_publish_task is not None or transcript.final_seen.is_set():
+                    # No `final_seen` guard: one turn can hold several
+                    # utterances, so a final caption doesn't mean the agent is
+                    # done and a barge-in may legitimately land on a later one.
+                    # The turn-end wait clears the tap, which is what stops it.
+                    if user_publish_task is not None:
                         return
                     if trigger.observe(pcm):
                         # started_at is the content cursor after the triggering
@@ -863,16 +896,17 @@ class LiveKitRuntime(Runtime):
                 capture.set_tap(_tap)
                 try:
                     transcript_task = asyncio.create_task(
-                        _drain_until_final(transcript, transcription_queue)
+                        _drain_captions(transcript, transcription_queue)
                     )
-                    # Keep the tap live until the agent signals done — its tail
+                    # Keep the tap live until the agent goes quiet — its tail
                     # (how long it keeps talking past the barge-in) is what the
                     # yield metric measures.
-                    with contextlib.suppress(TimeoutError):
-                        await asyncio.wait_for(
-                            transcript.final_seen.wait(), timeout=self.agent_turn_timeout_s
+                    try:
+                        await self._await_agent_turn_end(
+                            capture, transcript, quiet_period_s=self._quiet_period_s_for(agent_turn)
                         )
-                    await _cancel_task(transcript_task)
+                    finally:
+                        await _cancel_task(transcript_task)
                     _drain_pending(transcript, transcription_queue)
                 finally:
                     # A stale tap must never observe the next pair's frames.
@@ -932,12 +966,98 @@ class LiveKitRuntime(Runtime):
 
         return user_seg, asyncio.create_task(_publish())
 
+    def _quiet_period_s_for(self, turn: Turn) -> float:
+        """The turn's declared quiet period, else the runtime default."""
+        if turn.quiet_period_ms is None:
+            return self.agent_quiet_period_s
+        return turn.quiet_period_ms / 1000
+
+    async def _await_agent_turn_end(
+        self,
+        capture: _ContinuousAgentCapture,
+        transcript: _AgentTranscript,
+        *,
+        quiet_period_s: float,
+    ) -> None:
+        """Hold an agent turn until the agent yields the floor: it has started
+        (speech-level audio, or a caption going final), then produced no
+        speech-level audio for ``quiet_period_s``.
+
+        Silence ends the turn, not the first ``final`` caption. Captions mark
+        *utterance* ends: an agent that narrates before a tool call goes final on
+        the holding sentence while its real answer is still minutes of tool
+        latency away, so ending there both truncates the turn's transcript and
+        makes the driver talk over the answer (#117). Capped by
+        ``agent_turn_timeout_s`` so an agent that never stops can't hang the run.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.agent_turn_timeout_s
+        if not await self._await_agent_onset(capture, transcript, deadline=deadline):
+            return
+        if quiet_period_s <= 0:
+            return
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.warning(
+                    "agent turn hit agent_turn_timeout_s=%.1fs without going quiet for %.2fs — "
+                    "the turn boundary is a timeout, not the agent yielding",
+                    self.agent_turn_timeout_s,
+                    quiet_period_s,
+                )
+                return
+            capture.voiced.clear()
+            try:
+                await asyncio.wait_for(
+                    capture.voiced.wait(), timeout=min(quiet_period_s, remaining)
+                )
+            except TimeoutError:
+                # A full quiet window with no new agent speech → the agent is done.
+                return
+
+    async def _await_agent_onset(
+        self,
+        capture: _ContinuousAgentCapture,
+        transcript: _AgentTranscript,
+        *,
+        deadline: float,
+    ) -> bool:
+        """Wait for this turn's first sign of the agent — a speech-level frame or
+        a final caption. False when neither arrived before ``deadline``: a silent
+        agent, whose turn is empty but still valid.
+
+        ``capture.voiced`` is cleared first so the wait needs a *fresh* frame.
+        The event is level-held and run-long, so a previous turn's speech would
+        otherwise satisfy the onset instantly — and the quiet loop would then end
+        this turn while the agent was merely slow to start (measured: up to 3.1s
+        of pre-speech silence before a tool-backed answer).
+        """
+        if transcript.final_seen.is_set():
+            return True
+        capture.voiced.clear()
+        loop = asyncio.get_running_loop()
+        waiters = [
+            asyncio.ensure_future(capture.voiced.wait()),
+            asyncio.ensure_future(transcript.final_seen.wait()),
+        ]
+        try:
+            done, _pending = await asyncio.wait(
+                waiters,
+                timeout=max(0.0, deadline - loop.time()),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for waiter in waiters:
+                if not waiter.done():
+                    waiter.cancel()
+        return len(done) > 0
+
     async def _await_agent_quiet(self, capture: _ContinuousAgentCapture) -> None:
-        """Hold after the last scripted turn until the agent has produced no
-        speech-level audio for ``agent_quiet_period_s`` — "record until the
-        agent is actually done", so a late off-turn reply still lands in the
-        recording. Capped by ``agent_turn_timeout_s`` so an agent that never
-        stops talking can't hang the run. No-op when the quiet period is 0."""
+        """Hold after the last scripted turn until the agent has been quiet for
+        ``agent_quiet_period_s`` — so a late off-turn reply still lands in the
+        recording instead of being cut off by teardown. Unlike a turn boundary
+        there is no onset to wait for: the conversation is over, we're only
+        draining a tail that may never come."""
         if self.agent_quiet_period_s <= 0:
             return
         loop = asyncio.get_running_loop()
@@ -952,7 +1072,6 @@ class LiveKitRuntime(Runtime):
                     capture.voiced.wait(), timeout=min(self.agent_quiet_period_s, remaining)
                 )
             except TimeoutError:
-                # A full quiet window with no new agent speech → the agent is done.
                 return
 
     def _write_mixdown(

@@ -220,6 +220,45 @@ def test_interrupt_after_ms_requires_a_user_turn_following_an_agent_turn():
         )
 
 
+def test_quiet_period_ms_rides_the_wire_only_when_set():
+    c = Conversation(
+        name="narrate-then-tool",
+        turns=[
+            Turn.user("what year is it?", key="u0"),
+            Turn.agent(key="a0", quiet_period_ms=8_000),
+            Turn.agent(key="a1"),
+        ],
+    )
+    turns = c.to_conversation_spec_payload()["turns"]
+    assert turns[1].get("quiet_period_ms") == 8_000
+    # Turns on the runtime default omit the key entirely, so their hash is stable.
+    assert "quiet_period_ms" not in turns[0]
+    assert "quiet_period_ms" not in turns[2]
+
+
+def test_quiet_period_ms_rejects_non_positive_period():
+    with pytest.raises(ValueError, match="quiet_period_ms"):
+        Turn.agent(quiet_period_ms=0)
+
+
+def test_quiet_period_ms_requires_an_agent_turn():
+    with pytest.raises(ValueError, match="quiet_period_ms"):
+        Conversation(name="x", turns=[Turn(role="user", text="hi", quiet_period_ms=1_000)])
+
+
+def test_direct_turn_construction_still_gets_the_bounds_checked():
+    """`Turn` is a public dataclass, so the classmethods' fail-fast bounds can be
+    bypassed. Conversation re-checks them rather than letting a server 400 be the
+    first sign, which points at nothing the dev wrote."""
+    with pytest.raises(ValueError, match="quiet_period_ms"):
+        Conversation(name="x", turns=[Turn(role="agent", quiet_period_ms=0)])
+    with pytest.raises(ValueError, match="interrupt_after_ms"):
+        Conversation(
+            name="x",
+            turns=[Turn(role="agent"), Turn(role="user", text="hi", interrupt_after_ms=0)],
+        )
+
+
 def test_judge_text_match_wire_includes_reference_and_default_pass_score():
     j = Judge.text_match("agent confirms booking")
     assert j.to_wire() == {

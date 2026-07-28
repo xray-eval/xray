@@ -226,6 +226,12 @@ class Turn:
     # so the cut lands at the same point run-to-run regardless of response
     # latency. None (the default) waits for the agent to finish.
     interrupt_after_ms: int | None = None
+    # How long this agent turn must stay silent before the driver treats it as
+    # over. None (the default) uses the runtime's ``agent_quiet_period_s``.
+    # Raise it on a turn whose agent speaks, calls a slow tool, then answers —
+    # the tool round-trip is silence, and the default window would end the turn
+    # in the middle of it.
+    quiet_period_ms: int | None = None
 
     @classmethod
     def user(
@@ -256,12 +262,23 @@ class Turn:
         *,
         key: str | None = None,
         assertions: tuple[Assertion, ...] = (),
+        quiet_period_ms: int | None = None,
     ) -> Turn:
         """Placeholder for an agent-side turn — agent text/audio is observed
         at runtime, not pre-written. ``assertions`` are evaluated
         server-side against the captured agent response after the run.
+
+        ``quiet_period_ms`` overrides how long the agent must stay silent
+        before this turn is considered over. Set it on a turn that narrates
+        ("one moment, let me look that up"), calls a slow tool, then answers:
+        the tool round-trip is silence, so the window has to outlast it or the
+        turn ends mid-lookup and the next user turn talks over the answer.
         """
-        return cls(role="agent", key=key, assertions=assertions)
+        if quiet_period_ms is not None and quiet_period_ms < 1:
+            raise ValueError(
+                f"Turn.agent: quiet_period_ms must be >= 1 (got {quiet_period_ms})",
+            )
+        return cls(role="agent", key=key, assertions=assertions, quiet_period_ms=quiet_period_ms)
 
 
 @dataclass(frozen=True)
@@ -296,7 +313,24 @@ class Conversation:
         # A barge-in only makes sense on a user turn cutting into the agent
         # turn right before it — the server enforces the same rule, but failing
         # here points at the offending Turn instead of a later server 400.
+        # The bounds are re-checked here, not only in Turn.user / Turn.agent:
+        # `Turn` is a public dataclass, so `Turn(role="agent", quiet_period_ms=0)`
+        # skips the classmethods entirely and would otherwise reach the server as
+        # a 400 pointing at nothing the dev wrote.
         for i, turn in enumerate(self.turns):
+            if turn.quiet_period_ms is not None and turn.role != "agent":
+                raise ValueError(
+                    f"Turn.quiet_period_ms is only valid on an agent turn (turn {i} is a "
+                    f"{turn.role} turn)"
+                )
+            if turn.quiet_period_ms is not None and turn.quiet_period_ms < 1:
+                raise ValueError(
+                    f"Turn.quiet_period_ms must be >= 1 (turn {i} has {turn.quiet_period_ms})"
+                )
+            if turn.interrupt_after_ms is not None and turn.interrupt_after_ms < 1:
+                raise ValueError(
+                    f"Turn.interrupt_after_ms must be >= 1 (turn {i} has {turn.interrupt_after_ms})"
+                )
             if turn.interrupt_after_ms is None:
                 continue
             preceding = self.turns[i - 1] if i > 0 else None
@@ -363,6 +397,7 @@ class TurnWirePayload(TypedDict):
     key: NotRequired[str]
     audio: NotRequired[AudioWirePayload]
     interrupt_after_ms: NotRequired[int]
+    quiet_period_ms: NotRequired[int]
     assertions: NotRequired[list[AssertionWirePayload]]
 
 
@@ -396,6 +431,8 @@ def _turn_to_wire(turn: Turn, turn_idx: int) -> TurnWirePayload:
         out["key"] = turn.key
     if turn.interrupt_after_ms is not None:
         out["interrupt_after_ms"] = turn.interrupt_after_ms
+    if turn.quiet_period_ms is not None:
+        out["quiet_period_ms"] = turn.quiet_period_ms
     if turn.audio is not None:
         out["audio"] = _audio_to_wire(turn.audio, turn_idx)
     elif turn.role == "user":

@@ -120,12 +120,14 @@ Construction raises `ValueError` in two cases: an empty `name`, or empty `turns`
 ```python
 Turn.user(text: str, *, key=None, audio: AudioRef | None = None, assertions=(),
           interrupt_after_ms: int | None = None) -> Turn
-Turn.agent(*, key=None, assertions=()) -> Turn
+Turn.agent(*, key=None, assertions=(), quiet_period_ms: int | None = None) -> Turn
 ```
 
 Note that `Turn.agent` takes **no `text`**. You don't declare what the agent says. The agent's text is observed at runtime and transcribed server-side.
 
 A user turn with no `audio` is sent as a server-side TTS marker. TTS means text-to-speech: the server generates the audio. See [Audio references](#audio-references).
+
+`quiet_period_ms` overrides how long *this* agent turn must stay silent before the driver considers it over, instead of the runtime's `agent_quiet_period_s`. Raise it on a turn whose agent narrates ("one moment, let me look that up"), calls a slow tool, then answers: the tool round-trip is silence, so a window shorter than the round-trip ends the turn mid-lookup and the next user turn talks over the answer. Only valid on an agent turn; anything else raises `ValueError` at construction. It is part of the conversation hash — it changes what the run records, so it changes the test. See [Agent turn boundaries](#agent-turn-boundaries).
 
 `interrupt_after_ms` scripts a **barge-in**: the user starts talking that many milliseconds into the *preceding agent turn's* speech, instead of waiting for it to finish. The delay is measured from the agent's speech onset — not the turn start — so the interruption lands at the same point in the agent's response run-to-run, regardless of the agent's latency. It is only valid on a user turn immediately following an agent turn; anything else raises `ValueError` at construction. Pair it with `Assertion.yielded_within_ms(...)` on the agent turn to assert how fast the agent stops talking. See [Scripting a barge-in](#scripting-a-barge-in).
 
@@ -424,7 +426,7 @@ LiveKitRuntime(
     identity: str = "xray-driver",
     agent_join_timeout_s: float = 30.0,
     agent_turn_timeout_s: float = 30.0,
-    agent_quiet_period_s: float = 1.0,
+    agent_quiet_period_s: float = 1.5,
     cache_root: Path = ~/.cache/xray-py,
     mixdown_dir: Path | None = None,
     simulated_sip: SimulatedSipCall | None = None,
@@ -433,7 +435,15 @@ LiveKitRuntime(
 
 This runtime joins the room as a user-side participant. It plays the per-turn user PCM (raw audio) and records the agent's audio **continuously for the whole run** — not just while it is the agent's turn — so anything the agent says off-turn (while the user is speaking, or a late reply after its transcript already went final) is captured too, instead of being dropped. It also captures the agent's transcripts and writes a wall-clock-aligned stereo WAV at 48 kHz / 16-bit. In that WAV, the left channel is the user and the right channel is the agent.
 
-After the last scripted turn it keeps recording until the agent has stayed silent for `agent_quiet_period_s` (default 1.0s) — "record until the agent is actually done", so a late reply still lands in the recording — bounded by `agent_turn_timeout_s` so a never-silent agent can't hang the run. Set `agent_quiet_period_s=0` to tear down as soon as the turns finish.
+#### Agent turn boundaries
+
+An agent turn ends when the agent **goes quiet** — it has started (speech-level audio, or a caption going final) and then produced no speech-level audio for `agent_quiet_period_s` — bounded by `agent_turn_timeout_s` so an agent that never stops can't hang the run.
+
+Silence is the boundary, not the first `final` caption. A caption stream marks the end of an *utterance*, and one turn can hold several: an agent that says "one moment, let me look that up", calls a tool, then answers goes final on the holding sentence while the real answer is still a tool round-trip away. Ending the turn there truncated the turn's transcript to the holding sentence and started the next user turn on top of the answer.
+
+The same quiet period applies after the last scripted turn, so a late reply still lands in the recording. Set `agent_quiet_period_s=0` to end each turn as soon as the agent has spoken and tear down immediately.
+
+The default is 1.5s because an agent pausing mid-answer can go quiet for close to a second. A tool round-trip is longer than any pause and no single default covers both — declare the longer window on the turn that needs it with `Turn.agent(quiet_period_ms=...)`.
 
 It implements `bind`, `inject_user_audio`, `run`, and `aclose`. Calling `run` before `bind` raises `RuntimeBindError`. Use it with `xray.run`.
 
