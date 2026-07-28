@@ -230,11 +230,16 @@ function interruptionFor(
 	segments: readonly SpeechSegmentRow[],
 ): { interrupted: boolean; interruptionStartMs: number | null } {
 	const opposite = turn.role === "user" ? "agent" : "user";
+	// Earliest overlap, not first-iterated: yieldMs runs from when the floor was
+	// first contested, and `segments` carries no ordering guarantee.
+	let earliest: number | null = null;
 	for (const seg of segments) {
 		if (seg.channel !== opposite) continue;
 		if (seg.startMs >= turn.voiceStartMs && seg.startMs < turn.voiceEndMs) {
-			return { interrupted: true, interruptionStartMs: seg.startMs };
+			earliest = earliest === null ? seg.startMs : Math.min(earliest, seg.startMs);
 		}
 	}
-	return { interrupted: false, interruptionStartMs: null };
+	return earliest === null
+		? { interrupted: false, interruptionStartMs: null }
+		: { interrupted: true, interruptionStartMs: earliest };
 }
