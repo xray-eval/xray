@@ -185,6 +185,14 @@ def _pcm_duration_ms(pcm: bytes) -> int:
 # value isn't load-bearing.
 _SPEECH_RMS_FLOOR: Final = 500.0
 
+# Content-time silence that ends an agent utterance, mirroring the
+# agent_quiet_period_s default. Intra-speech pauses sit well under it, so an
+# utterance stays one unit; a barge-in that credits speech from before its tap
+# stops crediting at this boundary — a stale credit spanning it would spend the
+# head start inside the next utterance's silence prefix, the early fire cac718c
+# fixed. Erring small only degrades to counting from the tap (today's behaviour).
+_UTTERANCE_GAP_S: Final = 1.0
+
 
 def _crosses_speech_floor(pcm: bytes) -> bool:
     """True once a mono int16 frame carries audio above the speech floor. Used
@@ -301,6 +309,20 @@ class _BargeInTrigger:
             return True
         return False
 
+    def seed(self, voiced_ms: int) -> None:
+        """Credit voiced agent speech the trigger never observed live — speech
+        that began before its tap was installed (the pump captures the agent
+        continuously; the tap starts only at the barge-in pair). Latches the
+        onset too: crediting ``_voiced_ms`` alone would sit inert until a fresh
+        post-tap onset, losing the head start when the agent is mid-utterance.
+        A credit already past ``after_ms`` still fires on the next observed
+        frame, not here — that frame carries the content cursor the interruption
+        anchors to."""
+        if voiced_ms <= 0:
+            return
+        self._speech_seen = True
+        self._voiced_ms = voiced_ms
+
 
 @dataclass
 class _ContinuousAgentCapture:
@@ -324,6 +346,11 @@ class _ContinuousAgentCapture:
     track_event: asyncio.Event
     frames: list[TimedFrame] = field(default_factory=list[TimedFrame])
     content_end_epoch: float | None = None
+    # Onset + last-voiced-end of the utterance in progress, in content-epoch
+    # coordinates. A barge-in pair reaching capture mid-utterance reads these to
+    # credit agent speech that preceded its tap (see current_utterance_ms).
+    utterance_onset_epoch: float | None = None
+    last_voiced_end_epoch: float | None = None
     # Set on every speech-level frame; the teardown quiet-wait clears it and
     # waits, so no wakeup is lost between clear and wait (Event is level-held).
     voiced: asyncio.Event = field(default_factory=asyncio.Event)
@@ -376,9 +403,39 @@ class _ContinuousAgentCapture:
         start = arrival if self.content_end_epoch is None else max(self.content_end_epoch, arrival)
         self.content_end_epoch = start + _pcm_duration_ms(pcm) / 1000
         if _crosses_speech_floor(pcm):
+            # A >= _UTTERANCE_GAP_S content gap since the last voiced frame
+            # (comfort noise or a frameless arrival gap, both surfaced by
+            # ``start``) begins a new utterance; otherwise this frame extends it.
+            if (
+                self.last_voiced_end_epoch is None
+                or start - self.last_voiced_end_epoch >= _UTTERANCE_GAP_S
+            ):
+                self.utterance_onset_epoch = start
+            self.last_voiced_end_epoch = self.content_end_epoch
             self.voiced.set()
         if self._tap is not None:
             self._tap(pcm, self.content_end_epoch)
+
+    def current_utterance_ms(self, *, now: float) -> int:
+        """Voiced-plus-intra-pause ms of the utterance in progress, mirroring
+        :meth:`_BargeInTrigger.observe`'s post-onset accounting so a seeded
+        barge-in lands at the same content offset it would have live. Returns 0
+        when the agent hasn't spoken, when the last speech was >= _UTTERANCE_GAP_S
+        ago in content time (the utterance ended in trailing silence), or when
+        ``now`` is >= _UTTERANCE_GAP_S past the last received frame (a DTX track
+        gone frameless — without this a stale credit fires the trigger on the
+        next utterance's first frame)."""
+        if (
+            self.utterance_onset_epoch is None
+            or self.content_end_epoch is None
+            or self.last_voiced_end_epoch is None
+        ):
+            return 0
+        if self.content_end_epoch - self.last_voiced_end_epoch >= _UTTERANCE_GAP_S:
+            return 0
+        if self.frames and now - self.frames[-1][0] >= _UTTERANCE_GAP_S:
+            return 0
+        return int((self.content_end_epoch - self.utterance_onset_epoch) * 1000)
 
 
 @dataclass
@@ -787,6 +844,21 @@ class LiveKitRuntime(Runtime):
                             audio_source=audio_source,
                             lk_rtc=lk_rtc,
                         )
+
+                # The pump has recorded the agent since its track appeared, but
+                # the tap sees frames only from here. Credit speech that began
+                # before the pair so interrupt_after_ms counts from the agent's
+                # first word, not its first word after the tap — a full-duplex
+                # agent replies during the prior turn, and the docs promise a
+                # barge-in point stable "regardless of the agent's latency".
+                head_start_ms = capture.current_utterance_ms(now=time.time())
+                onset = capture.utterance_onset_epoch
+                if head_start_ms > 0 and onset is not None:
+                    trigger.seed(head_start_ms)
+                    # Backdate the agent start to the true onset — the tap's own
+                    # is-None anchor then no-ops — so the recorded turn start and
+                    # AgentResponse.duration_ms include the pre-tap speech.
+                    agent_seg.started_at = onset
 
                 capture.set_tap(_tap)
                 try:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import array
 import asyncio
+import time
 import wave
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ import pytest
 from xray import Conversation, SimulatedSipCall, Turn
 from xray.errors import AgentNotJoinedError, AudioMissingError, RuntimeBindError
 from xray.runtime.livekit import (
+    _UTTERANCE_GAP_S,
     SAMPLE_RATE,
     SAMPLE_WIDTH_BYTES,
     LiveKitRuntime,
@@ -518,11 +520,15 @@ async def _drive_interrupted_pair(
     frames: list[bytes],
     final_after_frame: int,
     interrupt_after_ms: int,
+    pre_pair_frames: list[bytes] | None = None,
 ) -> tuple[_TurnSegment, _TurnSegment | None]:
     """Drive ``_play_interrupted_pair`` directly, feeding agent frames into the
     continuous capture at a fixed arrival stamp (a synchronous burst — the
     condition write_stereo_mixdown warns about) so placement is content-timed
     and deterministic. A final transcription is pushed after ``final_after_frame``.
+    ``pre_pair_frames`` are fed BEFORE the pair task starts — modelling agent
+    speech the pump captured while an earlier turn was still running, the
+    off-turn speech the pair's tap arrives too late to observe.
     Returns the agent segment and the user segment (None if it never fired)."""
     track = MagicMock()
     track.kind = "audio"
@@ -533,6 +539,14 @@ async def _drive_interrupted_pair(
     )
     capture.track_event.set()
     queue: asyncio.Queue[Any] = asyncio.Queue()
+
+    # A real (near-now) stamp, not a synthetic constant: the pair's head-start
+    # computation treats a frameless wall-clock gap as the utterance having
+    # ended, so pre-pair frames must look freshly arrived. One stamp for every
+    # frame keeps the burst synchronous → placement stays content-timed.
+    arrival = time.time()
+    for frame in pre_pair_frames or []:
+        capture.on_frame(arrival, frame)
 
     task = asyncio.create_task(
         rt._play_interrupted_pair(
@@ -547,7 +561,6 @@ async def _drive_interrupted_pair(
         )
     )
     await asyncio.sleep(0)  # let the pair install its tap and reach the final wait
-    arrival = 1000.0  # constant stamp = synchronous burst → cursor is content-timed
     for i, frame in enumerate(frames):
         capture.on_frame(arrival, frame)
         await asyncio.sleep(0)
@@ -638,6 +651,39 @@ def test_barge_in_counts_from_agent_speech_onset_not_capture_start(tmp_path: Pat
     # Counting the silence would fire at 60ms (near the start, still silent).
     gap_ms = (user_seg.started_at - agent_seg.started_at) * 1000
     assert gap_ms >= 150, f"barge-in fired during pre-speech silence ({gap_ms:.1f}ms in)"
+
+
+def test_barge_in_counts_agent_speech_that_began_before_the_pair(tmp_path: Path):
+    """Full-duplex agents start replying while the previous user turn is still
+    playing, so the pump captures agent speech before the barge-in pair is
+    reached and its tap installed. That head start must count toward
+    ``interrupt_after_ms`` — the delay is measured from the agent's first word,
+    not its first word after the tap (docs/sdk-python.md: the barge-in lands at
+    the same point "regardless of the agent's latency").
+
+    100ms of agent speech precedes the pair; a 60ms barge-in is therefore
+    already overdue and fires on the first tapped frame, landing 120ms into the
+    agent's speech (100ms pre-tap + the 20ms frame that trips it), measured from
+    the true onset. Without the fix it fires 60ms in (pre-tap speech uncounted);
+    a seed-only fix lands at 20ms and a backdate-only fix at 160ms — the window
+    below rejects all three."""
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(
+            rt,
+            frames=[_make_tone_pcm(20)] * 8,
+            final_after_frame=6,
+            interrupt_after_ms=60,
+            pre_pair_frames=[_make_tone_pcm(20)] * 5,
+        )
+    )
+    assert user_seg is not None
+    assert agent_seg.started_at is not None and user_seg.started_at is not None
+    gap_ms = (user_seg.started_at - agent_seg.started_at) * 1000
+    assert 110 <= gap_ms <= 130, f"expected ~120ms from the agent's onset, got {gap_ms:.1f}ms"
 
 
 def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
@@ -1013,6 +1059,25 @@ def test_barge_in_trigger_counts_from_speech_onset():
     assert trigger.observe(_make_tone_pcm(20)) is True  # 40ms voiced → fires
 
 
+def test_barge_in_trigger_seed_credits_pre_tap_speech():
+    """Speech the trigger never observed live — it began before the tap was
+    installed — is credited via seed(), which latches the onset too, so the
+    first frame observed after the tap can fire the barge-in."""
+    trigger = _BargeInTrigger(after_ms=100)
+    trigger.seed(80)
+    assert trigger.observe(_make_tone_pcm(20)) is True  # 80 seeded + 20 = 100 → fires
+
+
+def test_barge_in_trigger_seed_zero_credits_nothing():
+    """A non-positive seed is a no-op — no phantom onset, no phantom budget — so
+    the trigger still counts from a real speech onset."""
+    trigger = _BargeInTrigger(after_ms=40)
+    trigger.seed(0)
+    assert trigger.observe(_make_silence_pcm(100)) is False  # seed latched no onset
+    assert trigger.observe(_make_tone_pcm(20)) is False  # 20ms voiced
+    assert trigger.observe(_make_tone_pcm(20)) is True  # 40ms voiced → fires
+
+
 def test_capture_cursor_matches_place_frames():
     """The capture's incremental content cursor must land where _place_frames
     puts the end of the same frames — the invariant that makes a barge-in's
@@ -1034,6 +1099,53 @@ def test_capture_cursor_matches_place_frames():
     # Float-epoch cursor vs _place_frames' per-frame int() truncation may differ
     # by <1 sample — negligible against 30ms VAD frames.
     assert abs(cursor_samples - total_samples) <= 1
+
+
+def _capture() -> _ContinuousAgentCapture:
+    return _ContinuousAgentCapture(lk_rtc=MagicMock(), track_holder=[], track_event=asyncio.Event())
+
+
+def test_continuous_capture_tracks_current_utterance():
+    """current_utterance_ms reconstructs the voiced-plus-intra-pause ms of the
+    utterance in progress — the head start a barge-in pair credits when its tap
+    arrives mid-utterance. It counts from speech onset (leading silence
+    excluded) and treats a frameless wall-clock gap as the utterance ended."""
+    capture = _capture()
+    assert capture.current_utterance_ms(now=0.0) == 0  # nothing captured yet
+
+    for _ in range(5):
+        capture.on_frame(0.0, _make_silence_pcm(20))  # 100ms leading silence
+    for _ in range(3):
+        capture.on_frame(0.0, _make_tone_pcm(20))  # 60ms speech
+    assert capture.current_utterance_ms(now=0.0) == 60  # onset-relative, silence excluded
+    # A pair reached a full gap later in wall-clock (DTX track went frameless):
+    # the utterance is treated as ended, so no stale credit leaks out.
+    assert capture.current_utterance_ms(now=_UTTERANCE_GAP_S) == 0
+
+
+def test_continuous_capture_utterance_ends_after_trailing_silence():
+    """Speech then >= _UTTERANCE_GAP_S of trailing content-silence is a finished
+    utterance: current_utterance_ms returns 0 so a later barge-in counts fresh
+    from the next utterance, not the stale one (the early fire cac718c fixed)."""
+    capture = _capture()
+    for _ in range(3):
+        capture.on_frame(0.0, _make_tone_pcm(20))  # 60ms speech
+    for _ in range(50):
+        capture.on_frame(0.0, _make_silence_pcm(20))  # 1000ms trailing comfort-noise
+    assert capture.current_utterance_ms(now=0.0) == 0
+
+
+def test_continuous_capture_new_utterance_resets_onset():
+    """After a >= gap silence, fresh speech is a NEW utterance — onset moves to
+    it, so only the latest utterance counts (a greeting before the real reply
+    must not inflate the head start)."""
+    capture = _capture()
+    capture.on_frame(0.0, _make_tone_pcm(20))  # greeting: 20ms
+    for _ in range(50):
+        capture.on_frame(0.0, _make_silence_pcm(20))  # 1000ms gap
+    capture.on_frame(0.0, _make_tone_pcm(20))  # real reply onset
+    capture.on_frame(0.0, _make_tone_pcm(20))  # + 20ms
+    assert capture.current_utterance_ms(now=0.0) == 40  # only the real reply counts
 
 
 @pytest.mark.asyncio
