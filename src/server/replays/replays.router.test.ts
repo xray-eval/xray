@@ -7,7 +7,7 @@ import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import { makeReplayEvents } from "./replays.events.ts";
-import { createReplaysRouter } from "./replays.router.ts";
+import { createReplaysRouter, SSE_HEARTBEAT_MS, SSE_IDLE_TIMEOUT_S } from "./replays.router.ts";
 import { seedReplay } from "./replays.test-utils.ts";
 import { describe, expect, it } from "bun:test";
 
@@ -127,6 +127,19 @@ describe("GET /v1/replays/:id", () => {
 		const { app } = makeApp();
 		const res = await app.request("/v1/replays/00000000-0000-0000-0000-000000000099");
 		expect(res.status).toBe(404);
+	});
+});
+
+describe("SSE keep-alive budget", () => {
+	// Bun's default idleTimeout (10s) is shorter than the heartbeat, so an idle
+	// stream died at ~12s before its first heartbeat and `xray.run` raised
+	// RemoteProtocolError on a replay that had completed (#78). `main.ts` sets
+	// idleTimeout from SSE_IDLE_TIMEOUT_S; this pins the ordering so a future
+	// edit to either number can't silently re-create the race.
+	it("gives the connection room for more than one missed heartbeat", () => {
+		expect(SSE_IDLE_TIMEOUT_S * 1000).toBeGreaterThan(SSE_HEARTBEAT_MS * 2);
+		// Bun rejects an idleTimeout above 255s.
+		expect(SSE_IDLE_TIMEOUT_S).toBeLessThanOrEqual(255);
 	});
 });
 

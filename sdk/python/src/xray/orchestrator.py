@@ -538,13 +538,106 @@ class _SseFailedData(BaseModel):
     reason: str
 
 
+# Transport failures that mean "the connection died", as opposed to the server
+# deliberately closing the stream. Each is recoverable: the analyze chain runs
+# server-side, so the verdict outlives our socket.
+_SSE_TRANSPORT_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    httpx.ReadTimeout,
+    httpx.ConnectError,
+)
+# Re-subscribes before giving up and reading the verdict off /result. Each
+# attempt re-enters a blocking wait (the server replays the terminal event to a
+# late subscriber), so there's no hot loop to back off from.
+_SSE_ATTEMPTS = 3
+
+
 async def _wait_for_evaluation(
     client: httpx.AsyncClient,
     replay_id: str,
     *,
     timeout_s: float = 600.0,
 ) -> _EvalOutcome:
-    """Stream `/v1/replays/:id/events` and return either the parsed
+    """Wait for the replay's verdict, surviving a dropped event stream.
+
+    The happy path streams `/v1/replays/:id/events`. A dropped connection is
+    NOT a failed run — the chain is server-side and the verdict is already
+    durable — so we re-subscribe, and if that keeps failing we read the same
+    payload off `GET /result` before declaring the run broken (#78).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    transport_error: Exception | None = None
+    for attempt in range(_SSE_ATTEMPTS):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        try:
+            return await _stream_evaluation(client, replay_id, timeout_s=remaining)
+        except _SSE_TRANSPORT_ERRORS as e:
+            transport_error = e
+            logger.warning(
+                "replay %s: event stream dropped (%s), attempt %d/%d",
+                replay_id,
+                type(e).__name__,
+                attempt + 1,
+                _SSE_ATTEMPTS,
+            )
+    outcome = await _fetch_evaluation_outcome(client, replay_id)
+    if outcome is not None:
+        return outcome
+    raise ReplayEvaluationError(replay_id, "evaluation_failed") from transport_error
+
+
+async def _fetch_evaluation_outcome(
+    client: httpx.AsyncClient, replay_id: str
+) -> _EvalOutcome | None:
+    """The verdict over a plain GET, or None when the server says it isn't
+    evaluated yet (409), the response is unreadable, or the request itself fails.
+
+    None means the dropped stream really did cost us the run, and the caller
+    turns it into a ``ReplayEvaluationError``. The request failing is a normal
+    case, not an exceptional one: the stream usually drops because the server
+    restarted, so this GET can easily hit a server that hasn't finished coming
+    back up. Letting that httpx error escape would break the run's error
+    contract — every other failure here is an ``XrayError`` subclass, so
+    ``except ReplayEvaluationError`` would miss it and the dev would get a raw
+    transport traceback instead of the failure we meant to give them.
+
+    The explicit timeout keeps this off the stream's much longer budget: waiting
+    600s on a one-shot GET to a server that may be down is not a useful wait."""
+    try:
+        response = await client.get(f"/v1/replays/{replay_id}/result", timeout=30.0)
+    except _SSE_TRANSPORT_ERRORS as e:
+        logger.warning(
+            "replay %s: /result also unreachable after the event stream dropped (%s)",
+            replay_id,
+            type(e).__name__,
+        )
+        return None
+    if response.status_code != 200:
+        logger.warning(
+            "replay %s: /result returned %d after the event stream dropped",
+            replay_id,
+            response.status_code,
+        )
+        return None
+    try:
+        payload = _ReplayResultPayload.model_validate_json(response.content)
+    except ValidationError:
+        logger.warning("replay %s: /result payload failed validation", replay_id)
+        return None
+    return _EvalCompleted(kind="completed", payload=payload)
+
+
+async def _stream_evaluation(
+    client: httpx.AsyncClient,
+    replay_id: str,
+    *,
+    timeout_s: float,
+) -> _EvalOutcome:
+    """One subscription to `/v1/replays/:id/events`, returning either the parsed
     `evaluation_complete` payload or the failure reason.
 
     Pure-stdlib SSE parser: ``event: <type>`` followed by ``data:
