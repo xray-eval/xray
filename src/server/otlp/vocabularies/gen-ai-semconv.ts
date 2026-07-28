@@ -24,7 +24,8 @@ import type {
  *   gen_ai.response.model, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens.
  * - `execute_tool <tool>` — tool call. Extract tool_calls.
  *   Attributes: gen_ai.operation.name='execute_tool', gen_ai.tool.name,
- *   gen_ai.tool.arguments?, gen_ai.tool.result?
+ *   plus tool I/O under any of the key pairs in TOOL_ARGS_KEYS /
+ *   TOOL_RESULT_KEYS.
  *
  * A span whose `gen_ai.operation.name` is set but isn't `chat`,
  * `text_completion`, or `execute_tool` is persisted as a raw `gen_ai` span
@@ -40,6 +41,10 @@ export const genAiSemconvVocabulary: SpanVocabularyMatcher = (
 	if (!looksLikeGenAi) return null;
 
 	const narrowed: FlatAttributes = pickPrefixed(a, "gen_ai.");
+	for (const k of UNPREFIXED_TOOL_IO_KEYS) {
+		const v = a[k];
+		if (v !== undefined) narrowed[k] = v;
+	}
 	const out: VocabularyExtraction = { vocabulary: "gen_ai", attributes: narrowed };
 
 	const startedAt = span.startedAt;
@@ -49,8 +54,8 @@ export const genAiSemconvVocabulary: SpanVocabularyMatcher = (
 	if (op === "execute_tool" || /^execute_tool\b/.test(span.name)) {
 		const name = asString(a["gen_ai.tool.name"]) ?? span.name.replace(/^execute_tool\s*/, "");
 		if (name.length > 0) {
-			const args = asString(a["gen_ai.tool.arguments"]);
-			const result = asString(a["gen_ai.tool.result"]);
+			const args = firstString(a, TOOL_ARGS_KEYS);
+			const result = firstString(a, TOOL_RESULT_KEYS);
 			const tc: ExtractedToolCall = {
 				name,
 				argsJson: args === null ? null : safeJsonString(args),
@@ -85,6 +90,38 @@ export const genAiSemconvVocabulary: SpanVocabularyMatcher = (
 
 	return out;
 };
+
+/**
+ * Tool I/O has no single settled key. Instrumentations in the wild use, in the
+ * order we probe them: `gen_ai.tool.arguments` (what xray recognized first, and
+ * what its own SDK emits), the semconv content keys `gen_ai.tool.call.*`
+ * (pydantic-ai instrumentation v3+), and pydantic-ai's pre-v3 `tool_arguments`
+ * / `tool_response` (span named `running tool`, but still
+ * `gen_ai.operation.name='execute_tool'`). First non-null wins so an agent
+ * emitting several of them keeps the most specific value.
+ */
+const TOOL_ARGS_KEYS = [
+	"gen_ai.tool.arguments",
+	"gen_ai.tool.call.arguments",
+	"tool_arguments",
+] as const;
+
+const TOOL_RESULT_KEYS = [
+	"gen_ai.tool.result",
+	"gen_ai.tool.call.result",
+	"tool_response",
+] as const;
+
+/** Read above, so they survive the `gen_ai.`-prefix narrowing into `spans.attributes`. */
+const UNPREFIXED_TOOL_IO_KEYS = ["tool_arguments", "tool_response"] as const;
+
+function firstString(a: FlatAttributes, keys: readonly string[]): string | null {
+	for (const k of keys) {
+		const v = asString(a[k]);
+		if (v !== null) return v;
+	}
+	return null;
+}
 
 function hasGenAiAttribute(a: FlatAttributes): boolean {
 	for (const k of Object.keys(a)) if (k.startsWith("gen_ai.")) return true;

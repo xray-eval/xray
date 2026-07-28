@@ -137,9 +137,18 @@ also counts as GenAI if any of these is true: an attribute key starts with
 | Field | From |
 |---|---|
 | `name` | `gen_ai.tool.name` (fallback: span name minus the `execute_tool ` prefix) |
-| `args_json` | `gen_ai.tool.arguments` |
-| `result_json` | `gen_ai.tool.result` |
+| `args_json` | `gen_ai.tool.arguments`, else `gen_ai.tool.call.arguments`, else `tool_arguments` |
+| `result_json` | `gen_ai.tool.result`, else `gen_ai.tool.call.result`, else `tool_response` |
 | `latency_ms` | span `end − start` |
+
+The tool-I/O fallbacks exist because instrumentations disagree on the key.
+pydantic-ai emits `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result` on
+instrumentation v3+ and `tool_arguments` / `tool_response` before that (span
+named `running tool`, still `gen_ai.operation.name='execute_tool'`). Content is
+only present when the instrumentation is configured to capture it — for
+pydantic-ai, `InstrumentationSettings(include_content=True)`. The first
+non-null key wins; the two unprefixed keys are also kept on the stored span
+attributes, which are otherwise narrowed to `gen_ai.*`.
 
 **`chat` or `text_completion` → `model_usage` row:**
 
