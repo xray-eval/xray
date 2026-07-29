@@ -155,8 +155,9 @@ export type RunConfigReplayRef = v.InferOutput<typeof RunConfigReplayRefSchema>;
 export const RunConfigConversationRowSchema = v.object({
 	conversation_hash: ConversationHashSchema,
 	conversation_name: v.string(),
-	// The replay these numbers were measured from — the drill-down's link
-	// target, so an outlier can be listened to in the inspector.
+	// The newest included replay — the drill-down's link target, so a run can be
+	// listened to in the inspector. Not "the replay these numbers came from":
+	// under `all` selection the metrics below span every entry in `replays`.
 	replay_id: v.string(),
 	// Every included replay for this (conversation, config), newest first. One
 	// entry under `latest` selection; the whole run history under `all`.

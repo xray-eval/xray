@@ -264,7 +264,7 @@ volumes:
 
 xray ships as a single Docker image. Two SQLite files share the mounted volume:
 
-- `/data/xray.db`. This holds conversations, replays, replay_turns, speech_segments, spans, tool_calls, model_usage, turn_transcripts, replay_metrics, assertion_results, judge_results, replay_evaluations, and tts_synth_cache (13 tables; see [`architecture.md`](./architecture.md)).
+- `/data/xray.db`. This holds conversations, replays, run_configs, replay_turns, speech_segments, spans, tool_calls, model_usage, turn_transcripts, replay_metrics, assertion_results, judge_results, replay_evaluations, and tts_synth_cache (14 tables; see [`architecture.md`](./architecture.md)).
 - `/data/bunqueue.db`. This holds bunqueue's job queue and DLQ. (DLQ means dead-letter queue, where failed jobs go.) The `analyze-replay` worker runs embedded in the same Bun process.
 
 The inspector UI is at `http://localhost:8080`.

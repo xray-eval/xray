@@ -172,9 +172,10 @@ function DetailBody({
 /**
  * One conversation this config ran. The whole point of the row is the link to
  * the inspector: an aggregate tells you *that* something is slow, the recording
- * tells you *why*. So the primary target is the specific replay these numbers
- * were measured from — not a generic conversation page, which would lose the
- * config context. The conversation spec is reachable too, but secondary.
+ * tells you *why*. So the primary target is the newest replay for this
+ * conversation — not a generic conversation page, which would lose the config
+ * context. Earlier runs stay individually reachable below; the conversation spec
+ * is reachable too, but secondary.
  */
 function ConversationRow({ row }: { row: RunConfigConversationRow }) {
 	const extraReplays = row.replays.slice(1);

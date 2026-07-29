@@ -131,7 +131,7 @@ export function createRunConfigsRouter(store: Store): Hono {
 			tags: ["Run configs"],
 			summary: "One run-config group across its conversations",
 			description:
-				"The drill-down: every conversation this config ran, with per-conversation metrics. Each row carries `replay_id` — the replay those numbers were measured from — so the UI can link straight to the inspector and the outlier can be listened to. Under `replay_selection=all`, `replays[]` holds the full run history for that conversation, newest first.",
+				"The drill-down: every conversation this config ran, with per-conversation metrics. Each row carries `replay_id` — the newest included replay — so the UI can link straight to the inspector and the run can be listened to. Under `replay_selection=all` the row's `metrics` are aggregated over every entry in `replays[]` (the full run history for that conversation, newest first), so they span more runs than `replay_id` alone; under `latest`, `replays[]` holds that one replay and the metrics are its own.",
 			parameters: [
 				{
 					in: "path",

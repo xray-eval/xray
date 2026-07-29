@@ -395,8 +395,9 @@ export function compareRunConfigs(
 
 /**
  * One group across all the conversations it ran — the drill-down. Each
- * conversation row carries the replay its numbers came from so the UI can link
- * straight to the inspector and the outlier can be listened to.
+ * conversation row carries its newest included replay so the UI can link
+ * straight to the inspector and the run can be listened to. Under `all`
+ * selection the row's metrics span every replay in `replays`, not just that one.
  *
  * Throws `RunConfigNotFoundError` on an unknown hash.
  */
