@@ -150,7 +150,7 @@ flowchart TB
         CP3["POST /v1/replays/:id/audio<br/><i>stereo WAV → XRAY_AUDIO_ROOT<br/>X-Recording-Started-At → replays.recording_started_at<br/>lifecycle_state='recording_uploaded'</i>"]
         CP4["POST /v1/replays/:id/analyze<br/><i>enqueue bunqueue job<br/>lifecycle_state='analyzing'<br/>analysis_step='vad'</i>"]
         CP5["PATCH /v1/replays/:id<br/><i>lifecycle_state / failure_reason / finished_at</i>"]
-        CP6["analyze-chain workers<br/><i>analyze-replay: VAD + Whisper → speech_segments + replay_turns + turn_transcripts<br/>calculate-metrics: agent_response_ms + interrupted → replay_metrics<br/>evaluate-replay: assertions + judges → assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed' on chain success</i>"]
+        CP6["analyze-chain workers<br/><i>analyze-replay: VAD + Whisper → speech_segments + replay_turns + turn_transcripts<br/>calculate-metrics: agent_response_ms + interrupted + yield_ms → replay_metrics<br/>evaluate-replay: assertions + judges → assertion_results + judge_results + replay_evaluations<br/>lifecycle_state='completed' on chain success</i>"]
       end
       subgraph RX["OTLP receiver - filters, not gates"]
         RX1["POST /v1/otlp/v1/traces<br/>JSON or protobuf<br/><br/>Routes by xray.replay.id resource attr.<br/>Unknown replay_id → silent drop.<br/>Unknown vocabulary → silent drop.<br/><br/>Vocabularies in src/server/otlp/vocabularies/:<br/>• xray.ts (xray.* recognized, raw spans only)<br/>• gen-ai-semconv.ts (gen_ai.* per OTel)<br/>• langfuse.ts (Langfuse-flavoured GenAI)"]
@@ -318,7 +318,7 @@ sequenceDiagram
     W->>W: slice each turn's attribution window,<br/>call the STT provider<br/>(Promise.all over turns)
     W->>X: insert turn_transcripts<br/>enqueue calculate-metrics
     X->>W: bunqueue enqueue calculate-metrics
-    W->>W: compute agent_response_ms<br/>+ interrupted per turn
+    W->>W: compute agent_response_ms<br/>+ interrupted + yield_ms per turn
     W->>X: insert replay_metrics<br/>analysis_step='evaluate'<br/>enqueue evaluate-replay
     X->>W: bunqueue enqueue evaluate-replay
     W->>W: run each declared Assertion<br/>(pure ts-pattern dispatch)<br/>+ each declared Judge<br/>(LLM via configured provider:<br/>OpenAI / Google Gemini / Mistral / AWS Bedrock)

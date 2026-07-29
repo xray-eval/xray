@@ -457,6 +457,7 @@ class _TurnMetricsPayload(BaseModel):
     role: Role
     agent_response_ms: int | None = None
     interrupted: bool
+    yield_ms: int | None = None
 
 
 class _ReplayResultMetricsPayload(BaseModel):
@@ -511,6 +512,7 @@ def _result_from_payload(payload: _ReplayResultPayload, *, replay_id: str) -> Re
                 role=m.role,
                 agent_response_ms=m.agent_response_ms,
                 interrupted=m.interrupted,
+                yield_ms=m.yield_ms,
             )
             for m in payload.metrics.turns
         ),

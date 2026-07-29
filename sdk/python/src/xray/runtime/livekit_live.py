@@ -54,16 +54,14 @@ from xray.runtime.livekit import (
     SAMPLE_RATE,
     SAMPLE_WIDTH_BYTES,
     SAMPLES_PER_FRAME,
+    TimedFrame,
     load_livekit_modules,
     mint_user_token,
-    write_live_mixdown,
+    write_stereo_mixdown,
 )
 from xray.runtime.sip import SimulatedSipCall
 
 logger = logging.getLogger(__name__)
-
-# A captured PCM frame tagged with the wall-clock second it arrived.
-TimedFrame = tuple[float, bytes]
 
 
 @dataclass
@@ -349,7 +347,7 @@ class LiveKitLiveRuntime(Runtime):
         mixdown_root.mkdir(parents=True, exist_ok=True)
         out_path = mixdown_root / f"{self.replay_id}.wav"
         try:
-            recording_t0 = write_live_mixdown(
+            recording_t0 = write_stereo_mixdown(
                 user_frames=user_frames, agent_frames=agent_frames, out_path=out_path
             )
         except OSError as e:

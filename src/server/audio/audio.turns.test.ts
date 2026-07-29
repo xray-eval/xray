@@ -53,4 +53,30 @@ describe("deriveTurns", () => {
 		);
 		expect(turns.map((t) => t.idx)).toEqual([0, 1, 2, 3, 4]);
 	});
+
+	it("keeps turnStartMs at the other side's tail when speech doesn't overlap", () => {
+		// Non-overlap guard: agent turn starts exactly where the user stopped.
+		const turns = deriveTurns([seg(0, 1000)], [seg(1000, 2500)]);
+		expect(turns[1]?.turnStartMs).toBe(1000);
+		expect(turns[1]?.voiceStartMs).toBe(1000);
+	});
+
+	it("clamps an interrupting user turn's start to its own voice onset", () => {
+		// User barges in at 4000ms, 300ms before the agent (right) stops at 4300.
+		const turns = deriveTurns([seg(0, 1500), seg(4000, 5200)], [seg(2000, 4300), seg(5700, 7500)]);
+		expect(turns.map((t) => t.role)).toEqual(["user", "agent", "user", "agent"]);
+		expect(turns[1]?.voiceEndMs).toBe(4300);
+		// Without the clamp turnStartMs would be 4300 (the agent's tail), landing
+		// after the user's 4000 onset. The interrupting turn owns from 4000.
+		expect(turns[2]?.turnStartMs).toBe(4000);
+		expect(turns[2]?.voiceStartMs).toBe(4000);
+	});
+
+	it("clamps an agent interjection that talks over the user", () => {
+		// Agent cuts into the user's single 0..3000 utterance at 1500..2500.
+		const turns = deriveTurns([seg(0, 3000)], [seg(1500, 2500)]);
+		expect(turns[1]?.role).toBe("agent");
+		expect(turns[1]?.turnStartMs).toBe(1500);
+		expect(turns[1]?.voiceStartMs).toBe(1500);
+	});
 });

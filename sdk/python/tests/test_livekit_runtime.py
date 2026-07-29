@@ -8,7 +8,9 @@ runtime's ``wait_for(agent_joined.wait())`` resolves immediately.
 
 from __future__ import annotations
 
+import array
 import asyncio
+import time
 import wave
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -21,9 +23,13 @@ import pytest
 from xray import Conversation, SimulatedSipCall, Turn
 from xray.errors import AgentNotJoinedError, AudioMissingError, RuntimeBindError
 from xray.runtime.livekit import (
+    _UTTERANCE_GAP_S,
     SAMPLE_RATE,
     SAMPLE_WIDTH_BYTES,
     LiveKitRuntime,
+    _BargeInTrigger,
+    _ContinuousAgentCapture,
+    _place_frames,
     _TurnSegment,
     write_stereo_mixdown,
 )
@@ -113,35 +119,52 @@ class _FakeLocalAudioTrack:
 
 
 class _FakeAudioStream:
-    """Async-iterable that yields one event per frame attached to the
-    given track via the ``_xray_frames`` attribute.
-
-    Tests may also attach ``_xray_after_frame_callbacks`` — a list (same
-    length as ``_xray_frames``) of optional zero-arg callables. After each
-    frame is yielded, the corresponding callback (if any) fires. This
-    lets a test fire a ``transcription_received`` room event DURING an
-    agent turn rather than during the (pre-turn) connect step — which is
-    what really happens in production and what the SDK's queue-draining
-    logic correctly expects."""
+    """Async-iterable yielding one event per frame attached to the track via
+    ``_xray_frames``. Drained by the runtime's continuous agent pump (which
+    subscribes at connect), so the frames land in the recording regardless of
+    which turn is playing."""
 
     def __init__(self, track: Any, **_: Any) -> None:
         self.frames: list[bytes] = list(getattr(track, "_xray_frames", []))
-        self.after_frame_callbacks: list[Any] = list(
-            getattr(track, "_xray_after_frame_callbacks", [])
-        )
         self.aclose = AsyncMock(return_value=None)
 
     def __aiter__(self) -> AsyncIterator[Any]:
         async def _gen() -> AsyncIterator[Any]:
-            for i, f in enumerate(self.frames):
+            for f in self.frames:
                 event = MagicMock()
                 event.frame = MagicMock()
                 event.frame.data = f
                 yield event
-                if i < len(self.after_frame_callbacks):
-                    cb = self.after_frame_callbacks[i]
-                    if cb is not None:
-                        cb()
+
+        return _gen()
+
+
+class _ScriptedAgentStream:
+    """Queue-driven agent ``AudioStream``: yields frames fed via ``feed()``,
+    blocking when empty until ``end()`` (mirrors the live suite's mic stream).
+    Lets a test deliver agent audio at a controlled moment — e.g. after the
+    last turn, to exercise the never-stop teardown."""
+
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self.aclose = AsyncMock(return_value=None)
+
+    def feed(self, frame: bytes) -> None:
+        self._queue.put_nowait(frame)
+
+    def end(self) -> None:
+        self._queue.put_nowait(None)
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def _gen() -> AsyncIterator[Any]:
+            while True:
+                frame = await self._queue.get()
+                if frame is None:
+                    return
+                event = MagicMock()
+                event.frame = MagicMock()
+                event.frame.data = frame
+                yield event
 
         return _gen()
 
@@ -213,6 +236,21 @@ def _make_silence_pcm(ms: int) -> bytes:
     return b"\x00\x00" * sample_count
 
 
+def _make_tone_pcm(ms: int) -> bytes:
+    """A constant loud int16 PCM buffer — distinguishable from silence in the
+    mixdown so a test can assert a channel actually carries audio."""
+    sample_count = SAMPLE_RATE * ms // 1000
+    return b"\xff\x7f" * sample_count  # 0x7FFF, full-scale
+
+
+def _final_segment(text: str) -> Any:
+    seg = MagicMock()
+    seg.id = f"seg-{text}"
+    seg.text = text
+    seg.final = True
+    return seg
+
+
 def _runtime(
     tmp_path: Path,
     lk_rtc: Any,
@@ -226,12 +264,36 @@ def _runtime(
         room="room-1",
         cache_root=tmp_path / "cache",
         mixdown_dir=tmp_path / "mix",
+        # Tear down as soon as the turns finish — the never-stop teardown has
+        # its own dedicated test; other tests don't want its wait.
+        agent_quiet_period_s=0.0,
         _lk_rtc=lk_rtc,
         _lk_api=lk_api,
     )
     rt.bind(replay_id="rep-1", conversation_hash="a" * 64)
     rt.inject_user_audio(user_audio if user_audio is not None else {0: _make_silence_pcm(40)})
     return rt
+
+
+def _fire_agent_transcripts(
+    rt: LiveKitRuntime,
+    rtc: Any,
+    events_by_idx: dict[int, list[tuple[str, tuple[Any, ...]]]],
+) -> None:
+    """Fire each agent turn's staged transcription events just after that turn
+    starts waiting for its final. With continuous capture the agent's audio no
+    longer paces its transcript, so tests drive the transcript from the turn
+    itself (call_soon lands the events after ``_capture_agent_turn`` has run its
+    stale-queue drain and is awaiting ``final_seen``)."""
+    original = rt._capture_agent_turn
+
+    async def _wrapped(*, idx: int, **kw: Any) -> Any:
+        loop = asyncio.get_running_loop()
+        for name, args in events_by_idx.get(idx, []):
+            loop.call_soon(rtc.Room.rooms[0].fire, name, *args)
+        return await original(idx=idx, **kw)
+
+    rt._capture_agent_turn = _wrapped
 
 
 def test_bind_required_before_run():
@@ -289,10 +351,8 @@ def test_missing_injected_audio_raises_audio_missing(tmp_path: Path):
 
 
 def test_write_stereo_mixdown_round_trips(tmp_path: Path):
-    seg = _TurnSegment(role="user", idx=0, key="u0", started_at=0.0)
-    seg.pcm.extend(_make_silence_pcm(40))
     out = tmp_path / "out.wav"
-    write_stereo_mixdown(segments=[seg], out_path=out)
+    write_stereo_mixdown(user_frames=[(0.0, _make_silence_pcm(40))], agent_frames=[], out_path=out)
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2
         assert w.getframerate() == SAMPLE_RATE
@@ -300,16 +360,14 @@ def test_write_stereo_mixdown_round_trips(tmp_path: Path):
 
 
 def test_write_stereo_mixdown_wall_clock_aligned(tmp_path: Path):
-    """Segments placed at their wall-clock offsets, with silence padding
-    between. Agent starts 0.5s after t0; total span = 1s (agent 0.5–1.0s).
+    """Frames placed at their arrival offsets from t0, silence padding
+    between. User at t0 for 200ms; agent 0.5s in for 500ms; span = 1.0s.
     Returns t0 — the recording anchor the orchestrator sends on upload."""
-    user = _TurnSegment(role="user", idx=0, key="u0", started_at=10.0)
-    user.pcm.extend(_make_silence_pcm(200))  # 200ms
-    agent = _TurnSegment(role="agent", idx=1, key="a0", started_at=10.5)
-    agent.pcm.extend(_make_silence_pcm(500))  # 500ms
+    user = [(10.0, _make_silence_pcm(200))]
+    agent = [(10.5, _make_silence_pcm(500))]
 
     out = tmp_path / "wall_clock.wav"
-    recording_t0 = write_stereo_mixdown(segments=[user, agent], out_path=out)
+    recording_t0 = write_stereo_mixdown(user_frames=user, agent_frames=agent, out_path=out)
 
     assert recording_t0 == 10.0
     with wave.open(str(out), "rb") as w:
@@ -318,11 +376,49 @@ def test_write_stereo_mixdown_wall_clock_aligned(tmp_path: Path):
         assert w.getnframes() == SAMPLE_RATE
 
 
-def test_write_stereo_mixdown_handles_empty_segments(tmp_path: Path):
-    """All-silent input: produces a valid empty stereo WAV (header only),
-    and no anchor — there is no sample 0 to timestamp."""
+def test_write_stereo_mixdown_bursts_laid_sequentially(tmp_path: Path):
+    """Three agent frames sharing one arrival stamp = a decode burst. Raw
+    arrival-offset placement would collapse them onto the same 20ms; sequential
+    placement lays them back-to-back (60ms)."""
+    burst = [(0.0, _make_silence_pcm(20))] * 3
+    out = tmp_path / "burst.wav"
+    write_stereo_mixdown(user_frames=[], agent_frames=burst, out_path=out)
+    with wave.open(str(out), "rb") as w:
+        assert w.getnframes() == SAMPLE_RATE * 60 // 1000
+
+
+def test_write_stereo_mixdown_gap_preserved(tmp_path: Path):
+    """A genuine arrival gap between two agent frames is NOT compressed away —
+    per-frame placement keeps cross-channel who-spoke-when intact."""
+    agent = [(0.0, _make_silence_pcm(20)), (1.0, _make_silence_pcm(20))]
+    out = tmp_path / "gap.wav"
+    write_stereo_mixdown(user_frames=[], agent_frames=agent, out_path=out)
+    with wave.open(str(out), "rb") as w:
+        # Spans 0.0 → 1.02s ≈ SAMPLE_RATE + 20ms of frames.
+        assert w.getnframes() == SAMPLE_RATE + SAMPLE_RATE * 20 // 1000
+
+
+def test_write_stereo_mixdown_overlap_carries_both_channels(tmp_path: Path):
+    """When user and agent audio overlap in time (a barge-in), each channel
+    carries its own PCM verbatim — genuinely stereo, not summed into one."""
+    user = [(0.5, _make_tone_pcm(100))]
+    agent = [(0.0, _make_tone_pcm(1000))]
+    out = tmp_path / "overlap.wav"
+    write_stereo_mixdown(user_frames=user, agent_frames=agent, out_path=out)
+    with wave.open(str(out), "rb") as w:
+        interleaved = array.array("h")
+        interleaved.frombytes(w.readframes(w.getnframes()))
+    left = interleaved[0::2]  # user channel
+    right = interleaved[1::2]  # agent channel
+    assert any(v != 0 for v in left), "user channel empty"
+    assert any(v != 0 for v in right), "agent channel empty"
+
+
+def test_write_stereo_mixdown_handles_empty_input(tmp_path: Path):
+    """No frames: a valid empty stereo WAV (header only), and no anchor —
+    there is no sample 0 to timestamp."""
     out = tmp_path / "empty.wav"
-    recording_t0 = write_stereo_mixdown(segments=[], out_path=out)
+    recording_t0 = write_stereo_mixdown(user_frames=[], agent_frames=[], out_path=out)
     assert recording_t0 is None
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2
@@ -356,30 +452,18 @@ def test_runtime_publishes_injected_user_turn_and_produces_mixdown(tmp_path: Pat
 
 
 def test_runtime_captures_agent_turn_via_transcription(tmp_path: Path):
-    track_event = _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)])
-    track_obj = track_event[1][0]
-    transcription_event = _stage_transcription_final("confirmed at 7pm")
     rtc = _build_fake_lk_rtc(
         staged_events=[
             _stage_agent_join(),
-            track_event,
+            _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)]),
         ]
     )
-
-    # Fire the transcription_received event AFTER the first audio frame is
-    # yielded (during the agent turn), not at connect-time. This mirrors
-    # real Gemini Live behavior: transcripts arrive while the agent emits
-    # audio, not before. The SDK now drains stale queue entries at the
-    # start of each agent turn (regression: a final segment that arrived
-    # between turns would satisfy the next turn's `final_seen` event in
-    # microseconds).
-    def _fire_transcription() -> None:
-        rtc.Room.rooms[0].fire(transcription_event[0], *transcription_event[1])
-
-    track_obj._xray_after_frame_callbacks = [_fire_transcription, None]
     api = _build_fake_lk_api()
     rt = _runtime(tmp_path, rtc, api)
     rt.agent_turn_timeout_s = 2.0
+    # The agent turn (idx 1) goes final once its transcript arrives — fired from
+    # the turn, since the continuous pump no longer paces transcripts by audio.
+    _fire_agent_transcripts(rt, rtc, {1: [_stage_transcription_final("confirmed at 7pm")]})
 
     conv = Conversation(
         name="c",
@@ -396,15 +480,210 @@ def test_runtime_captures_agent_turn_via_transcription(tmp_path: Path):
     out = Path(result.full_audio_path)
     with wave.open(str(out), "rb") as w:
         assert w.getnchannels() == 2
-        # Wall-clock-aligned mixdown: file spans from t0 (earliest segment
-        # `started_at`) to the latest `started_at + duration`. In this test
-        # the turns run back-to-back at ~test-machine speed, so the file
-        # length is at least the agent turn (40ms = 1920 frames at 48kHz)
-        # and at most user+agent (80ms = 3840 frames). The legacy
-        # turn-sequential layout was always exactly 80ms; the new layout
-        # depends on real timing.
-        nframes = w.getnframes()
-        assert SAMPLE_RATE * 40 // 1000 <= nframes <= SAMPLE_RATE * 80 // 1000
+        # Continuous capture records the agent's 40ms; the wall-clock-aligned
+        # file spans at least that (plus the gap to the user turn).
+        assert w.getnframes() >= SAMPLE_RATE * 40 // 1000
+
+
+@pytest.mark.asyncio
+async def test_continuous_capture_records_frames_regardless_of_turn():
+    """The pump records every agent frame from track-appearance to teardown —
+    the basis for capturing off-turn agent speech (during a user turn, or after
+    a turn's transcript goes final) that the old per-turn capture never saw."""
+    stream = _ScriptedAgentStream()
+    rtc = _build_fake_lk_rtc()
+
+    def _audio_stream(_track: Any, **_kw: Any) -> _ScriptedAgentStream:
+        return stream
+
+    rtc.AudioStream = _audio_stream
+    track = MagicMock()
+    track.kind = "audio"
+    capture = _ContinuousAgentCapture(lk_rtc=rtc, track_holder=[track], track_event=asyncio.Event())
+    capture.track_event.set()
+
+    pump = asyncio.create_task(capture.pump())
+    await asyncio.sleep(0)  # let the pump attach and block awaiting frames
+    stream.feed(_make_tone_pcm(20))
+    stream.feed(_make_tone_pcm(20))
+    await asyncio.sleep(0)  # let it drain what was fed
+    stream.end()
+    await asyncio.wait_for(pump, timeout=2.0)
+
+    assert len(capture.frames) == 2
+    assert all(pcm == _make_tone_pcm(20) for _arrival, pcm in capture.frames)
+
+
+async def _drive_interrupted_pair(
+    rt: LiveKitRuntime,
+    *,
+    frames: list[bytes],
+    final_after_frame: int,
+    interrupt_after_ms: int,
+    pre_pair_frames: list[bytes] | None = None,
+) -> tuple[_TurnSegment, _TurnSegment | None]:
+    """Drive ``_play_interrupted_pair`` directly, feeding agent frames into the
+    continuous capture at a fixed arrival stamp (a synchronous burst — the
+    condition write_stereo_mixdown warns about) so placement is content-timed
+    and deterministic. A final transcription is pushed after ``final_after_frame``.
+    ``pre_pair_frames`` are fed BEFORE the pair task starts — modelling agent
+    speech the pump captured while an earlier turn was still running, the
+    off-turn speech the pair's tap arrives too late to observe.
+    Returns the agent segment and the user segment (None if it never fired)."""
+    track = MagicMock()
+    track.kind = "audio"
+    lk_rtc = rt._lk_rtc
+    assert lk_rtc is not None  # set by _runtime; narrows LkRtcModule | None
+    capture = _ContinuousAgentCapture(
+        lk_rtc=lk_rtc, track_holder=[track], track_event=asyncio.Event()
+    )
+    capture.track_event.set()
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+
+    # A real (near-now) stamp, not a synthetic constant: the pair's head-start
+    # computation treats a frameless wall-clock gap as the utterance having
+    # ended, so pre-pair frames must look freshly arrived. One stamp for every
+    # frame keeps the burst synchronous → placement stays content-timed.
+    arrival = time.time()
+    for frame in pre_pair_frames or []:
+        capture.on_frame(arrival, frame)
+
+    task = asyncio.create_task(
+        rt._play_interrupted_pair(
+            agent_idx=0,
+            agent_turn=Turn.agent(key="a0"),
+            user_idx=1,
+            user_turn=Turn.user("no, Berlin", key="u1", interrupt_after_ms=interrupt_after_ms),
+            audio_source=lk_rtc.AudioSource(SAMPLE_RATE, 1),
+            lk_rtc=lk_rtc,
+            capture=capture,
+            transcription_queue=queue,
+        )
+    )
+    await asyncio.sleep(0)  # let the pair install its tap and reach the final wait
+    for i, frame in enumerate(frames):
+        capture.on_frame(arrival, frame)
+        await asyncio.sleep(0)
+        if i == final_after_frame:
+            queue.put_nowait(_final_segment("done"))
+            await asyncio.sleep(0)
+    agent_seg, _response, user_seg = await asyncio.wait_for(task, timeout=2.0)
+    return agent_seg, user_seg
+
+
+def test_barge_in_fires_when_agent_audio_reaches_the_threshold(tmp_path: Path):
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    # 8 frames × 20ms; the agent stays final-free until frame 6, so the 60ms
+    # barge-in point (frame 3) lands while it's still talking.
+    agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(
+            rt, frames=[_make_tone_pcm(20)] * 8, final_after_frame=6, interrupt_after_ms=60
+        )
+    )
+    assert user_seg is not None
+    assert len(user_seg.pcm) > 0  # the user's audio was published
+    assert user_seg.started_at is not None and agent_seg.started_at is not None
+    assert user_seg.started_at >= agent_seg.started_at
+
+
+def test_barge_in_is_placed_by_agent_content_not_wallclock(tmp_path: Path):
+    """The barge-in is recorded at the agent-audio CONTENT offset it fired on,
+    not wall-clock. Frames are fed at one constant arrival stamp — the bursting
+    condition write_stereo_mixdown warns about — so wall-clock elapsed to receive
+    them is ~0 while 100ms of agent content precedes the barge-in. A wall-clock
+    stamp would put the user segment ~0ms after the agent onset (an inflated
+    yield_ms); the content-derived stamp puts it 100ms in."""
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    # 8 frames × 20ms; barge-in fires once 100ms of agent content is received.
+    agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(
+            rt, frames=[_make_tone_pcm(20)] * 8, final_after_frame=6, interrupt_after_ms=100
+        )
+    )
+    assert user_seg is not None
+    assert agent_seg.started_at is not None and user_seg.started_at is not None
+    # ~100ms for the content-derived stamp (float epoch precision loses a
+    # sub-microsecond fraction); the old wall-clock stamp lands near 0.
+    gap_ms = (user_seg.started_at - agent_seg.started_at) * 1000
+    assert gap_ms >= 90, f"barge-in placed by wall-clock ({gap_ms:.1f}ms), not agent content"
+
+
+def test_barge_in_degrades_when_the_agent_finishes_first(tmp_path: Path):
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    # Only 60ms of agent audio total, but the barge-in point is 5s in — the
+    # agent finishes long before it, so there's nothing to interrupt.
+    _agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(
+            rt, frames=[_make_tone_pcm(20)] * 3, final_after_frame=0, interrupt_after_ms=5_000
+        )
+    )
+    assert user_seg is None
+
+
+def test_barge_in_counts_from_agent_speech_onset_not_capture_start(tmp_path: Path):
+    """`interrupt_after_ms` is measured from the agent's speech onset, not from
+    capture start. The captured stream leads with the agent's pre-speech silence
+    (it "thinks" before talking); counting that silence would fire the barge-in
+    early — before the agent speaks — collapsing the turn structure into a
+    spec_vad_mismatch instead of a real overlap. Here 100ms of silence precedes
+    160ms of speech, so a 60ms barge-in must land 160ms into the content (100ms
+    silence + 60ms speech), not 60ms in."""
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    frames = [_make_silence_pcm(20)] * 5 + [_make_tone_pcm(20)] * 8
+    agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(rt, frames=frames, final_after_frame=11, interrupt_after_ms=60)
+    )
+    assert user_seg is not None
+    assert agent_seg.started_at is not None and user_seg.started_at is not None
+    # 100ms silence + 60ms speech = 160ms of content before the barge-in.
+    # Counting the silence would fire at 60ms (near the start, still silent).
+    gap_ms = (user_seg.started_at - agent_seg.started_at) * 1000
+    assert gap_ms >= 150, f"barge-in fired during pre-speech silence ({gap_ms:.1f}ms in)"
+
+
+def test_barge_in_counts_agent_speech_that_began_before_the_pair(tmp_path: Path):
+    """Full-duplex agents start replying while the previous user turn is still
+    playing, so the pump captures agent speech before the barge-in pair is
+    reached and its tap installed. That head start must count toward
+    ``interrupt_after_ms`` — the delay is measured from the agent's first word,
+    not its first word after the tap (docs/sdk-python.md: the barge-in lands at
+    the same point "regardless of the agent's latency").
+
+    100ms of agent speech precedes the pair; a 60ms barge-in is therefore
+    already overdue and fires on the first tapped frame, landing 120ms into the
+    agent's speech (100ms pre-tap + the 20ms frame that trips it), measured from
+    the true onset. Without the fix it fires 60ms in (pre-tap speech uncounted);
+    a seed-only fix lands at 20ms and a backdate-only fix at 160ms — the window
+    below rejects all three."""
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    agent_seg, user_seg = asyncio.run(
+        _drive_interrupted_pair(
+            rt,
+            frames=[_make_tone_pcm(20)] * 8,
+            final_after_frame=6,
+            interrupt_after_ms=60,
+            pre_pair_frames=[_make_tone_pcm(20)] * 5,
+        )
+    )
+    assert user_seg is not None
+    assert agent_seg.started_at is not None and user_seg.started_at is not None
+    gap_ms = (user_seg.started_at - agent_seg.started_at) * 1000
+    assert 110 <= gap_ms <= 130, f"expected ~120ms from the agent's onset, got {gap_ms:.1f}ms"
 
 
 def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
@@ -419,12 +698,11 @@ def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
     output for a 3-turn conversation)."""
 
     track_event = _stage_agent_track([_make_silence_pcm(20)])
-    track_obj = track_event[1][0]
-    # Fire a final segment for the FIRST agent turn during its frame play.
+    # Agent turn 0 goes final on "first"; agent turn 2 gets nothing, so it must
+    # time out empty rather than inherit the stale segment.
     first_final = _stage_transcription_final("first")
-    # The stale segment for the user turn — fires during user playback
-    # (between agent turn 0 and agent turn 2). Without the fix, agent
-    # turn 2 picks this up as its own and ends instantly.
+    # The stale segment fires during user playback (between agent turns 0 and 2).
+    # Without the queue-drain on entry, agent turn 2 ends on it instantly.
     stale = _stage_transcription_final("stale")
 
     rtc = _build_fake_lk_rtc(
@@ -434,18 +712,14 @@ def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
         ]
     )
 
-    def _fire_first() -> None:
-        rtc.Room.rooms[0].fire(first_final[0], *first_final[1])
-
-    track_obj._xray_after_frame_callbacks = [_fire_first]
-
     api = _build_fake_lk_api()
     rt = _runtime(tmp_path, rtc, api, user_audio={1: _make_silence_pcm(40)})
     rt.agent_turn_timeout_s = 0.3
+    _fire_agent_transcripts(rt, rtc, {0: [first_final]})
 
-    # Wrap _play_user_turn to fire the stale event AFTER the user turn
-    # plays — between agent turns 0 and 2 — matching the real-world
-    # window when Gemini Live's delayed `conversation_item_added` fires.
+    # Wrap _play_user_turn to fire the stale event AFTER the user turn plays —
+    # between agent turns 0 and 2 — matching the real-world window when Gemini
+    # Live's delayed `conversation_item_added` fires.
     original_play_user_turn = rt._play_user_turn
 
     async def _wrapped_play_user_turn(**kw: Any) -> Any:
@@ -476,20 +750,18 @@ def test_runtime_drains_stale_transcripts_between_agent_turns(tmp_path: Path):
 def _run_agent_turn_with_caption_events(
     tmp_path: Path, events: list[tuple[str, tuple[Any, ...]]]
 ) -> str:
-    """Drive one user + one agent turn; fire the given caption events after
-    the agent turn's first audio frame; return the agent transcript."""
-    track_event = _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)])
-    track_obj = track_event[1][0]
-    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join(), track_event])
-
-    def _fire_captions() -> None:
-        for name, args in events:
-            rtc.Room.rooms[0].fire(name, *args)
-
-    track_obj._xray_after_frame_callbacks = [_fire_captions, None]
+    """Drive one user + one agent turn; fire the given caption events during
+    the agent turn (idx 1); return the agent transcript."""
+    rtc = _build_fake_lk_rtc(
+        staged_events=[
+            _stage_agent_join(),
+            _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)]),
+        ]
+    )
     api = _build_fake_lk_api()
     rt = _runtime(tmp_path, rtc, api)
     rt.agent_turn_timeout_s = 2.0
+    _fire_agent_transcripts(rt, rtc, {1: events})
 
     conv = Conversation(name="c", turns=[Turn.user("hello", key="u0"), Turn.agent(key="a0")])
     result = asyncio.run(rt.run(conv))
@@ -637,12 +909,11 @@ def test_user_turn_emits_xray_turn_span(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 def test_driver_emits_xray_turn_for_user_and_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """The driver is the sole emitter of ``replay_turns`` rows. For a
-    user+agent conversation it must emit one ``xray.turn`` span per
-    turn — role=user for the played audio, role=agent for the captured
-    response — with monotonically increasing idx values, so the server
-    PK ``(replay_id, idx)`` doesn't collide with anything an agent
-    worker might emit on its own.
+    """The driver emits one ``xray.turn`` span per turn — role=user for the
+    played audio, role=agent for the captured response — with monotonically
+    increasing idx values (these spans drive the inspector's turn timeline).
+    Distinct idx values keep the server PK ``(replay_id, idx)`` from colliding
+    with anything an agent worker might emit on its own.
     """
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -655,26 +926,18 @@ def test_driver_emits_xray_turn_for_user_and_agent(tmp_path: Path, monkeypatch: 
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     monkeypatch.setattr(livekit_mod, "_TRACER", provider.get_tracer("xray-py-driver", "0.0.1"))
 
-    track_event = _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)])
-    track_obj = track_event[1][0]
-    transcription_event = _stage_transcription_final("confirmed at 7pm")
     rtc = _build_fake_lk_rtc(
         staged_events=[
             _stage_agent_join(),
-            track_event,
+            _stage_agent_track([_make_silence_pcm(20), _make_silence_pcm(20)]),
         ]
     )
-
-    # Fire the transcription during the agent turn (after the first frame
-    # is yielded). Pre-turn fire would be drained by the stale-queue
-    # guard in `_capture_agent_turn`.
-    def _fire_transcription() -> None:
-        rtc.Room.rooms[0].fire(transcription_event[0], *transcription_event[1])
-
-    track_obj._xray_after_frame_callbacks = [_fire_transcription, None]
     api = _build_fake_lk_api()
     rt = _runtime(tmp_path, rtc, api)
     rt.agent_turn_timeout_s = 2.0
+    # Fire the agent transcription during the agent turn (idx 1) — the
+    # continuous pump no longer paces transcripts by audio frames.
+    _fire_agent_transcripts(rt, rtc, {1: [_stage_transcription_final("confirmed at 7pm")]})
 
     conv = Conversation(
         name="c",
@@ -719,6 +982,41 @@ def test_driver_emits_xray_turn_for_user_and_agent(tmp_path: Path, monkeypatch: 
     assert user_attrs.get("xray.turn.idx") != agent_attrs.get("xray.turn.idx")
 
 
+def test_barge_in_turn_spans_are_trace_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Both turn spans on the barge-in path must be trace roots, matching every
+    other turn. The user turn is published via ``asyncio.create_task`` from
+    inside the agent's span scope, and create_task copies the active context —
+    so without an explicit root reset the user span nests UNDER the agent span,
+    shaping the barge-in trace differently from every normal turn."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    import xray.runtime.livekit as livekit_mod
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(livekit_mod, "_TRACER", provider.get_tracer("xray-py-driver", "0.0.1"))
+
+    rt = _runtime(
+        tmp_path, _build_fake_lk_rtc(), _build_fake_lk_api(), user_audio={1: _make_tone_pcm(80)}
+    )
+    rt.agent_turn_timeout_s = 2.0
+    asyncio.run(
+        _drive_interrupted_pair(
+            rt, frames=[_make_tone_pcm(20)] * 8, final_after_frame=6, interrupt_after_ms=60
+        )
+    )
+
+    turn_spans = [s for s in exporter.get_finished_spans() if s.name == "xray.turn"]
+    assert len(turn_spans) == 2, f"expected 2 xray.turn spans, got {len(turn_spans)}"
+    by_role = {(s.attributes or {}).get("xray.turn.role"): s for s in turn_spans}
+    assert set(by_role) == {"user", "agent"}
+    for role, span in by_role.items():
+        assert span.parent is None, f"{role} turn span nests under another span; expected a root"
+
+
 def test_injected_audio_is_published_verbatim(tmp_path: Path):
     """The runtime publishes exactly the injected PCM — no resampling, no
     local synthesis, no filesystem reads. Frame count over the audio
@@ -736,3 +1034,150 @@ def test_injected_audio_is_published_verbatim(tmp_path: Path):
     published = b"".join(bytes(f.data) for f in track.source.captured)
     assert published == pcm
     assert result.full_audio_path is not None
+
+
+def test_barge_in_trigger_ignores_silence():
+    """Silence never crosses the speech onset, so no voiced time accrues and the
+    trigger stays dormant — the agent's pre-speech 'thinking' must not fire it."""
+    trigger = _BargeInTrigger(after_ms=40)
+    assert trigger.observe(_make_silence_pcm(200)) is False
+
+
+def test_barge_in_trigger_fires_once_at_threshold():
+    trigger = _BargeInTrigger(after_ms=40)
+    assert trigger.observe(_make_tone_pcm(20)) is False  # 20ms voiced
+    assert trigger.observe(_make_tone_pcm(20)) is True  # 40ms → fires
+    assert trigger.observe(_make_tone_pcm(20)) is False  # already fired, never twice
+
+
+def test_barge_in_trigger_counts_from_speech_onset():
+    """Leading silence doesn't spend the budget — voiced time accrues only after
+    the first speech frame."""
+    trigger = _BargeInTrigger(after_ms=40)
+    assert trigger.observe(_make_silence_pcm(100)) is False  # silence: no accrual
+    assert trigger.observe(_make_tone_pcm(20)) is False  # 20ms voiced
+    assert trigger.observe(_make_tone_pcm(20)) is True  # 40ms voiced → fires
+
+
+def test_barge_in_trigger_seed_credits_pre_tap_speech():
+    """Speech the trigger never observed live — it began before the tap was
+    installed — is credited via seed(), which latches the onset too, so the
+    first frame observed after the tap can fire the barge-in."""
+    trigger = _BargeInTrigger(after_ms=100)
+    trigger.seed(80)
+    assert trigger.observe(_make_tone_pcm(20)) is True  # 80 seeded + 20 = 100 → fires
+
+
+def test_barge_in_trigger_seed_zero_credits_nothing():
+    """A non-positive seed is a no-op — no phantom onset, no phantom budget — so
+    the trigger still counts from a real speech onset."""
+    trigger = _BargeInTrigger(after_ms=40)
+    trigger.seed(0)
+    assert trigger.observe(_make_silence_pcm(100)) is False  # seed latched no onset
+    assert trigger.observe(_make_tone_pcm(20)) is False  # 20ms voiced
+    assert trigger.observe(_make_tone_pcm(20)) is True  # 40ms voiced → fires
+
+
+def test_capture_cursor_matches_place_frames():
+    """The capture's incremental content cursor must land where _place_frames
+    puts the end of the same frames — the invariant that makes a barge-in's
+    content-anchored placement match the mixdown layout, across bursts and gaps."""
+    frames = [
+        (0.0, _make_tone_pcm(20)),  # onset
+        (0.0, _make_tone_pcm(20)),  # burst (same arrival)
+        (0.5, _make_tone_pcm(20)),  # genuine gap
+    ]
+    capture = _ContinuousAgentCapture(
+        lk_rtc=MagicMock(), track_holder=[], track_event=asyncio.Event()
+    )
+    for arrival, pcm in frames:
+        capture.on_frame(arrival, pcm)
+
+    _placed, total_samples = _place_frames(frames, t0=0.0)
+    assert capture.content_end_epoch is not None
+    cursor_samples = round(capture.content_end_epoch * SAMPLE_RATE)
+    # Float-epoch cursor vs _place_frames' per-frame int() truncation may differ
+    # by <1 sample — negligible against 30ms VAD frames.
+    assert abs(cursor_samples - total_samples) <= 1
+
+
+def _capture() -> _ContinuousAgentCapture:
+    return _ContinuousAgentCapture(lk_rtc=MagicMock(), track_holder=[], track_event=asyncio.Event())
+
+
+def test_continuous_capture_tracks_current_utterance():
+    """current_utterance_ms reconstructs the voiced-plus-intra-pause ms of the
+    utterance in progress — the head start a barge-in pair credits when its tap
+    arrives mid-utterance. It counts from speech onset (leading silence
+    excluded) and treats a frameless wall-clock gap as the utterance ended."""
+    capture = _capture()
+    assert capture.current_utterance_ms(now=0.0) == 0  # nothing captured yet
+
+    for _ in range(5):
+        capture.on_frame(0.0, _make_silence_pcm(20))  # 100ms leading silence
+    for _ in range(3):
+        capture.on_frame(0.0, _make_tone_pcm(20))  # 60ms speech
+    assert capture.current_utterance_ms(now=0.0) == 60  # onset-relative, silence excluded
+    # A pair reached a full gap later in wall-clock (DTX track went frameless):
+    # the utterance is treated as ended, so no stale credit leaks out.
+    assert capture.current_utterance_ms(now=_UTTERANCE_GAP_S) == 0
+
+
+def test_continuous_capture_utterance_ends_after_trailing_silence():
+    """Speech then >= _UTTERANCE_GAP_S of trailing content-silence is a finished
+    utterance: current_utterance_ms returns 0 so a later barge-in counts fresh
+    from the next utterance, not the stale one (the early fire cac718c fixed)."""
+    capture = _capture()
+    for _ in range(3):
+        capture.on_frame(0.0, _make_tone_pcm(20))  # 60ms speech
+    for _ in range(50):
+        capture.on_frame(0.0, _make_silence_pcm(20))  # 1000ms trailing comfort-noise
+    assert capture.current_utterance_ms(now=0.0) == 0
+
+
+def test_continuous_capture_new_utterance_resets_onset():
+    """After a >= gap silence, fresh speech is a NEW utterance — onset moves to
+    it, so only the latest utterance counts (a greeting before the real reply
+    must not inflate the head start)."""
+    capture = _capture()
+    capture.on_frame(0.0, _make_tone_pcm(20))  # greeting: 20ms
+    for _ in range(50):
+        capture.on_frame(0.0, _make_silence_pcm(20))  # 1000ms gap
+    capture.on_frame(0.0, _make_tone_pcm(20))  # real reply onset
+    capture.on_frame(0.0, _make_tone_pcm(20))  # + 20ms
+    assert capture.current_utterance_ms(now=0.0) == 40  # only the real reply counts
+
+
+@pytest.mark.asyncio
+async def test_agent_speech_after_last_turn_is_recorded(tmp_path: Path):
+    """Never-stop teardown: after the last scripted turn, xray keeps recording
+    until the agent goes quiet — a late 'double answer' that lands after the
+    conversation was 'done' is still captured."""
+    stream = _ScriptedAgentStream()
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join(), _stage_agent_track([])])
+
+    def _audio_stream(_track: Any, **_kw: Any) -> _ScriptedAgentStream:
+        return stream  # always the scripted feed, ignoring the track's own frames
+
+    rtc.AudioStream = _audio_stream
+    api = _build_fake_lk_api()
+    rt = _runtime(tmp_path, rtc, api, user_audio={0: _make_silence_pcm(40)})
+    rt.agent_quiet_period_s = 0.2  # short, but non-zero: wait for the tail
+    rt.agent_turn_timeout_s = 2.0
+
+    conv = Conversation(name="c", turns=[Turn.user("hi", key="u0")])
+    task = asyncio.create_task(rt.run(conv))
+    # Let the run play the user turn and reach the quiet-wait, then the agent
+    # speaks late — after the conversation was "done".
+    await asyncio.sleep(0.05)
+    stream.feed(_make_tone_pcm(20))
+    await asyncio.sleep(0.05)
+    stream.end()
+    result = await asyncio.wait_for(task, timeout=3.0)
+
+    assert result.full_audio_path is not None
+    with wave.open(result.full_audio_path, "rb") as w:
+        interleaved = array.array("h")
+        interleaved.frombytes(w.readframes(w.getnframes()))
+    right = interleaved[1::2]  # agent channel
+    assert any(v != 0 for v in right), "late agent reply was not recorded"

@@ -22,6 +22,13 @@
       "when": 1781126983039,
       "tag": "0002_slim_master_chief",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785146178515,
+      "tag": "0003_daffy_beyonder",
+      "breakpoints": true
     }
   ]
 }

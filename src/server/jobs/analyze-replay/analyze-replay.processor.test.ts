@@ -150,19 +150,19 @@ describe("analyze-replay processor", () => {
 		expect(runner.enqueued).toEqual([{ name: "calculate-metrics", payload: { replayId } }]);
 	});
 
-	it("slices each turn's full attribution window, not just the VAD voiced extent", async () => {
+	it("extends a turn's slice past its voiced end to catch a quiet trailing reply", async () => {
 		// Regression from a real deployment: the agent's actual reply sat
-		// inside the turn's window but the slice handed to the transcription
-		// provider was pinned to the VAD voiced extent, so it carried only
-		// pre-reply audio, `turn_transcripts.text` came back "", and the
-		// judge scored a perfect answer as "offers no help at all".
+		// inside the turn but after its last speech segment, so a slice pinned
+		// to the VAD voiced extent carried only pre-reply audio,
+		// `turn_transcripts.text` came back "", and the judge scored a perfect
+		// answer as "offers no help at all".
 		//
 		// Model that here: the agent turn's detected voice is a short loud
 		// blip at 1.5s, and the actual reply is a quiet 2s tone at 4.0–6.0s —
 		// below the VAD energy threshold (amplitude 2_500 ⇒ mean energy
 		// ≈3.1e6 < 5e6), so no speech segment marks it. The slice must still
-		// cover it: each turn owns its tiling attribution window, with the
-		// last window extended to the end of the recording.
+		// cover it: the agent turn is the last turn on its channel, so its
+		// window runs from its own voice onset to the end of the recording.
 		const { replayId } = await seedReplayForAudio(store);
 		const wav = makeStereo({
 			userBlocks: [
@@ -193,23 +193,83 @@ describe("analyze-replay processor", () => {
 		expect(result.ok).toBe(true);
 		expect(result.turnsWritten).toBe(2);
 
-		// The agent turn's slice must reach past the quiet reply's end (6.0s).
-		// Its window starts at the user turn's voiced end (~1.0s), so covering
-		// the reply needs at least the 1.5s→6.0s span.
-		const longest = transcription.calls.reduce((a, b) => (b.sampleCount > a.sampleCount ? b : a));
-		expect(longest.sampleCount).toBeGreaterThanOrEqual((SAMPLE_RATE * (6000 - 1500)) / 1000);
+		// The agent turn's slice — its window starts at the agent's own voice
+		// onset (~1.5s) and, being the last turn on its channel, extends to the
+		// recording end — must contain the quiet reply. Detect it by a sustained
+		// run of sub-threshold-amplitude samples: a 2s sine at amplitude 2_500
+		// puts ~59% of its 96_000 samples in [1_500, 3_500]; the loud 300ms blip
+		// only sweeps that band briefly (~1_300 samples) and the user channel is
+		// silent after 1.0s, so a 40_000 floor cleanly picks out the one slice
+		// that actually covered the reply.
+		const coveredQuietReply = transcription.calls.some((call) => {
+			let quietBandSamples = 0;
+			for (const v of call.audio) {
+				const mag = Math.abs(v);
+				if (mag >= 1_500 && mag <= 3_500) quietBandSamples++;
+			}
+			return quietBandSamples >= 40_000;
+		});
+		expect(coveredQuietReply).toBe(true);
+	});
 
-		// And the slice actually contains the quiet reply: a sustained run of
-		// sub-threshold-amplitude samples. A 2s sine at amplitude 2_500 puts
-		// ~59% of its 96_000 samples in [1_500, 3_500]; the loud 300ms blip
-		// only sweeps through that band briefly (~1_300 samples). A 40_000
-		// floor cleanly separates "covered the reply" from "only saw the blip".
-		let quietBandSamples = 0;
-		for (const v of longest.audio) {
-			const mag = Math.abs(v);
-			if (mag >= 1_500 && mag <= 3_500) quietBandSamples++;
-		}
-		expect(quietBandSamples).toBeGreaterThanOrEqual(40_000);
+	it("transcribes an interrupting turn from its own onset, not the interrupted turn's tail", async () => {
+		// Barge-in: the user speaks 0–1.5s, then cuts back in at 4.0s while the
+		// agent (2.0–4.3s) is still finishing. Both channels are voiced across
+		// 4.0–4.3s. The interrupting user turn must be transcribed from its own
+		// 4.0s onset — the previous cross-channel window pushed its slice to the
+		// agent's 4.3s tail, clipping the front of the barge-in.
+		const { replayId } = await seedReplayForAudio(store);
+		const wav = makeStereo({
+			userBlocks: [
+				{ durationMs: 1500, voiced: true },
+				{ durationMs: 2500, voiced: false },
+				{ durationMs: 1200, voiced: true },
+			],
+			agentBlocks: [
+				{ durationMs: 2000, voiced: false },
+				{ durationMs: 2300, voiced: true },
+				{ durationMs: 1400, voiced: false },
+				{ durationMs: 1800, voiced: true },
+			],
+		});
+		const wavBytes = writeStereoWav(wav);
+		const relPath = `${replayId}/replay.wav`;
+		const absPath = join(audio.path, relPath);
+		await mkdir(dirname(absPath), { recursive: true });
+		await writeFile(absPath, wavBytes);
+		store.db
+			.update(replays)
+			.set({ audioPath: relPath, lifecycleState: "analyzing", analysisStep: "vad" })
+			.where(eq(replays.id, replayId))
+			.run();
+
+		const { processor } = makeProcessor();
+		const result = await processor({ replayId });
+		expect(result.ok).toBe(true);
+
+		const turns = store.db
+			.select()
+			.from(replayTurns)
+			.where(eq(replayTurns.replayId, replayId))
+			.orderBy(replayTurns.idx)
+			.all();
+		expect(turns.map((t) => t.role)).toEqual(["user", "agent", "user", "agent"]);
+		// The interrupting user turn's boundary is clamped back to its own onset
+		// (~4.0s), not the agent's 4.3s tail.
+		const interruptingTurn = turns[2];
+		expect(interruptingTurn?.turnStartMs).toBe(interruptingTurn?.voiceStartMs);
+		expect(interruptingTurn?.voiceStartMs).toBeLessThan(4300);
+
+		// Its transcript covers the full interruption (4.0–5.2s), not the ~0.9s
+		// left after clipping to the agent's tail.
+		const transcript = store.db
+			.select()
+			.from(turnTranscripts)
+			.where(eq(turnTranscripts.replayId, replayId))
+			.all();
+		expect(transcript).toHaveLength(4);
+		const interruptingTranscript = transcript.find((t) => t.turnIdx === 2);
+		expect(interruptingTranscript?.durationMs).toBeGreaterThanOrEqual(1200);
 	});
 
 	it("stamps failed + failure_reason='transcription_failed' when the provider errors", async () => {

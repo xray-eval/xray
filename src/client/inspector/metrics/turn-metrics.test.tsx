@@ -15,6 +15,7 @@ function turn(overrides: Partial<TurnMetricsResponse>): TurnMetricsResponse {
 		agent_response_ms: 250,
 		interrupted: false,
 		interruption_start_ms: null,
+		yield_ms: null,
 		...overrides,
 	};
 }
@@ -42,6 +43,22 @@ describe("TurnMetricsSection", () => {
 			/>,
 		);
 		expect(screen.getByText("0:04.2")).toBeTruthy();
+	});
+
+	it("renders the yield time for an interrupted turn", () => {
+		render(
+			<TurnMetricsSection
+				turns={[
+					turn({
+						turn_idx: 1,
+						interrupted: true,
+						interruption_start_ms: 4200,
+						yield_ms: 320,
+					}),
+				]}
+			/>,
+		);
+		expect(screen.getByText("320ms")).toBeTruthy();
 	});
 
 	it("renders nothing when there are no turns", () => {

@@ -28,6 +28,7 @@
 		"docker:smoke": "bash scripts/docker-smoke.sh",
 		"db:generate": "drizzle-kit generate",
 		"db:studio": "drizzle-kit studio",
+		"seed:snapshot": "bun run scripts/seed-snapshot.ts",
 		"test": "bun test --isolate",
 		"test:watch": "bun test --isolate --watch",
 		"test:coverage": "bun test --isolate --coverage"

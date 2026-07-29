@@ -228,6 +228,16 @@ async def test_full_chain_returns_replay_result_with_passed_true(tmp_path: Path)
                                         "reason": "agent confirms the booking",
                                     }
                                 ],
+                                turns=[
+                                    {
+                                        "turn_idx": 1,
+                                        "role": "agent",
+                                        "agent_response_ms": 300,
+                                        "interrupted": True,
+                                        "interruption_start_ms": 1_200,
+                                        "yield_ms": 400,
+                                    }
+                                ],
                             ),
                         },
                     )
@@ -256,6 +266,10 @@ async def test_full_chain_returns_replay_result_with_passed_true(tmp_path: Path)
     assert result.assertions[0].kind == "contains"
     assert len(result.judges) == 1
     assert result.judges[0].score == 92
+    # Per-turn barge-in metric rides the SSE result through to ReplayResult.
+    assert len(result.metrics) == 1
+    assert result.metrics[0].interrupted is True
+    assert result.metrics[0].yield_ms == 400
     assert post_conv.called
     assert post_replay.called
     assert post_audio.called

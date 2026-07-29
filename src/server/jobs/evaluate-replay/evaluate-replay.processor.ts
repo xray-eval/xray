@@ -369,6 +369,7 @@ function buildAssertionContext(
 		metrics: {
 			agentResponseMs: metric?.agentResponseMs ?? null,
 			ttftMs: earliestTtftMs(usageInWindow, recordingStartedAt),
+			yieldMs: metric?.yieldMs ?? null,
 		},
 	};
 }

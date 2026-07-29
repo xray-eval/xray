@@ -95,6 +95,62 @@ describe("computeMetrics (pure)", () => {
 		const rows = computeMetrics("r", turns, segments);
 		expect(rows[0]?.interrupted).toBe(false);
 	});
+
+	it("yieldMs = voiceEnd - interruptionStart for an interrupted turn, null otherwise", () => {
+		const turns: ReplayTurnRow[] = [
+			{
+				replayId: "r",
+				idx: 0,
+				role: "agent",
+				turnStartMs: 0,
+				turnEndMs: 2000,
+				voiceStartMs: 500,
+				voiceEndMs: 1800,
+			},
+			{
+				replayId: "r",
+				idx: 1,
+				role: "agent",
+				turnStartMs: 2000,
+				turnEndMs: 3000,
+				voiceStartMs: 2000,
+				voiceEndMs: 3000,
+			},
+		];
+		// User cuts in at 1500; the agent (voiced through 1800) keeps talking 300ms.
+		const segments: SpeechSegmentRow[] = [
+			{ id: 1, replayId: "r", channel: "user", startMs: 1500, endMs: 2200 },
+		];
+		const rows = computeMetrics("r", turns, segments);
+		expect(rows[0]?.yieldMs).toBe(300);
+		// The uninterrupted turn has no yield time.
+		expect(rows[1]?.interrupted).toBe(false);
+		expect(rows[1]?.yieldMs).toBeNull();
+	});
+
+	it("uses the EARLIEST opposite-channel overlap, not whichever row iterates first", () => {
+		const turns: ReplayTurnRow[] = [
+			{
+				replayId: "r",
+				idx: 0,
+				role: "agent",
+				turnStartMs: 0,
+				turnEndMs: 2000,
+				voiceStartMs: 500,
+				voiceEndMs: 1800,
+			},
+		];
+		// Two user segments overlap the agent turn; the LATER cut-in is first in
+		// the array. yieldMs must run from the earliest overlap (1200), not from
+		// whatever order the segments happen to be stored in.
+		const segments: SpeechSegmentRow[] = [
+			{ id: 2, replayId: "r", channel: "user", startMs: 1500, endMs: 1700 },
+			{ id: 1, replayId: "r", channel: "user", startMs: 1200, endMs: 1400 },
+		];
+		const rows = computeMetrics("r", turns, segments);
+		expect(rows[0]?.interruptionStartMs).toBe(1200);
+		expect(rows[0]?.yieldMs).toBe(600); // 1800 - 1200
+	});
 });
 
 describe("makeCalculateMetricsProcessor", () => {

@@ -154,6 +154,9 @@ export const TurnMetricsResponseSchema = v.object({
 	agent_response_ms: v.nullable(v.number()),
 	interrupted: v.boolean(),
 	interruption_start_ms: v.nullable(v.number()),
+	// Time to yield the floor after a barge-in, in ms; null when the turn
+	// wasn't interrupted.
+	yield_ms: v.nullable(v.number()),
 });
 export type TurnMetricsResponse = v.InferOutput<typeof TurnMetricsResponseSchema>;
 
