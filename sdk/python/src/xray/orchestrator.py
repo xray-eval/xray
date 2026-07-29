@@ -176,7 +176,11 @@ async def run(
         create_body: ReplayCreateBody = {"conversation_hash": conversation_hash}
         if run_config is not None:
             create_body["run_config"] = run_config.to_wire()
-            if run_config.name is not None:
+            # Truthiness, not `is not None`: the server's `run_config_name`
+            # rejects the empty string, so `RunConfig(name="")` would 400 the
+            # whole run over a cosmetic field. Unset and blank both mean
+            # "unnamed" — which is how the UI reads them too.
+            if run_config.name:
                 create_body["run_config_name"] = run_config.name
         r = await client.post("/v1/replays", json=create_body)
         _raise_for_status_typed(r, "POST /v1/replays")
@@ -246,7 +250,7 @@ async def run_live(
         create_body: ReplayCreateBody = {"conversation_hash": conversation_hash}
         if run_config is not None:
             create_body["run_config"] = run_config.to_wire()
-            if run_config.name is not None:
+            if run_config.name:
                 create_body["run_config_name"] = run_config.name
         r = await client.post("/v1/replays", json=create_body)
         _raise_for_status_typed(r, "POST /v1/replays")

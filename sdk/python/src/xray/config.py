@@ -48,7 +48,8 @@ class RunConfig:
     #: computes, so renaming relabels the existing group instead of forking
     #: a new one (last-write-wins, like ``Conversation.name``). Every replay
     #: with the same content lands in the same group whether it was named
-    #: or not.
+    #: or not. ``None`` and ``""`` both mean unnamed — the group then shows
+    #: a summary of its config keys.
     #:
     #: Declared last, after ``extra``, so that adding it didn't shift any
     #: existing positional argument — ``RunConfig("gpt-4o", 0.5, {...})``

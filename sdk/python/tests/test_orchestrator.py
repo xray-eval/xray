@@ -934,3 +934,14 @@ async def test_replay_post_omits_both_when_no_run_config_is_given(tmp_path: Path
     body = _replay_request_body(route)
     assert "run_config" not in body
     assert "run_config_name" not in body
+
+
+@pytest.mark.asyncio
+async def test_replay_post_treats_an_empty_name_as_unnamed(tmp_path: Path):
+    """`RunConfig(name="")` is a label the dev didn't fill in, not a label of
+    zero characters. The server's `run_config_name` rejects the empty string,
+    so sending it would 400 the whole run over a cosmetic field."""
+    route = await _run_with_config(tmp_path=tmp_path, run_config=RunConfig(name="", model="gpt-4o"))
+    body = _replay_request_body(route)
+    assert body["run_config"] == {"model": "gpt-4o"}
+    assert "run_config_name" not in body
