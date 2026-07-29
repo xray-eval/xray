@@ -9,23 +9,27 @@ minimumReleaseAgeStrict: true
 
 # Default-deny lifecycle scripts. Audit before adding entries here.
 allowBuilds:
-  # lefthook (Evil Martians) — postinstall fetches the prebuilt Go binary from
-  # the lefthook GitHub release matching the package version. Required for the
-  # git hooks to function. Audited 2026-05-16 against npm pkg @ v2.1.6.
+  # lefthook (Evil Martians) — postinstall resolves the prebuilt Go binary out of
+  # the platform-specific optional dep (`lefthook-<os>-<arch>`, pinned to the
+  # exact parent version and resolved by pnpm under the same cooldown + registry
+  # rules) and runs `lefthook install`. No network access of its own: the whole
+  # package contains zero fetch/download code. Required for the git hooks to
+  # function. Audited 2026-07-29 against `postinstall.js` + `get-exe.js` @ v2.1.9.
   lefthook: true
   # msw — postinstall is a no-op unless `msw.workerDirectory` is set in our
   # package.json (it isn't; we're Node-only, no browser service worker). The
-  # script wraps its body in `.catch(() => void 0)`. Audited 2026-05-16 against
-  # `node_modules/msw/config/scripts/postinstall.js` @ v2.14.5.
+  # script wraps its body in `.catch(() => void 0)`. Audited 2026-07-29 against
+  # `node_modules/msw/config/scripts/postinstall.js` @ v2.14.6.
   msw: true
-  # esbuild — pulled in transitively by `drizzle-kit` (dev-dep for migration
-  # generation). The postinstall script selects the platform-specific binary
-  # subpackage (e.g. @esbuild/linux-x64) — a regular npm package pnpm has
-  # already resolved with cooldown rules — and falls back to downloading the
-  # tarball from registry.npmjs.org over HTTPS if the optional dep was skipped.
-  # Both paths source from the same registry pnpm already trusts. esbuild has
-  # provenance attestation + Sigstore signature. Audited 2026-05-16 against
-  # `node_modules/esbuild/install.js` @ v0.27.7.
+  # esbuild — pulled in transitively by the dev build tooling (`drizzle-kit` for
+  # migration generation, and `tsx` under both drizzle-kit and the VitePress
+  # vite). The postinstall script selects the platform-specific binary subpackage
+  # (e.g. @esbuild/linux-x64) — a regular npm package pnpm has already resolved
+  # with cooldown rules — and falls back to downloading the tarball from
+  # registry.npmjs.org over HTTPS, SHA-256-checking the bytes before exec, if the
+  # optional dep was skipped. Both paths source from the same registry pnpm
+  # already trusts. esbuild has provenance attestation + Sigstore signature.
+  # Audited 2026-07-29 against `node_modules/.pnpm/esbuild@0.28.1/node_modules/esbuild/install.js`.
   esbuild: true
   # bun — pulled in as a peer of `bun-plugin-tailwind` (the Tailwind v4
   # plugin for Bun's HTML bundler). The npm `bun` package is *only* installed
@@ -60,206 +64,50 @@ blockExoticSubdeps: true
 # Fail install if a newer release has weaker publish-time trust than the prior one.
 trustPolicy: no-downgrade
 
-# Trust-policy exceptions — same bar as `overrides` / `auditConfig.ignoreGhsas`
-# below: each entry needs a date + reason. trustPolicy STAYS no-downgrade; these
-# are surgical per-package exemptions, not a relaxation of the policy.
-#
-# vite — VitePress's build engine. Dev-only: it powers `pnpm docs:build` and the
-# `docs` dev server, and is never shipped in the Docker image (the prod stage
-# installs `--prod`, which drops devDependencies). Trips no-downgrade because
-# earlier vite releases carried npm "trusted publisher" evidence while current
-# 5.4.x carry Sigstore "provenance attestation" only; pnpm ranks trusted-publisher
-# above provenance and flags the transition as a downgrade. This is a benign
-# ecosystem-wide shift in npm's attestation story (provenance is itself a strong
-# signal, published by the vitejs org), not a takeover — verified 2026-06-19 that
-# vite 5.4.0..5.4.21 all carry provenance attestation. Excluded by bare name (not
-# version-pinned) because the shift is structural: every current vite trips it, so
-# a version pin would only churn on each patch bump. Re-evaluate if vite ever
-# regains trusted-publisher evidence. Added 2026-06-19.
-trustPolicyExclude:
-  - vite
-
 # Re-verify node_modules matches the lockfile before any script runs.
 verifyDepsBeforeRun: install
 
 # Transitive-dep overrides. Each entry needs a date + reason — same bar as
 # `allowBuilds` above. Keep the path as specific as possible so the override
-# disappears the moment drizzle-kit (or the upstream chain) is fixed.
+# disappears the moment the upstream chain is fixed.
 overrides:
   # GHSA-67mh-4wv8-2f99 — esbuild <=0.24.2 lets any website hit the dev server
   # via permissive CORS. drizzle-kit ships the deprecated `@esbuild-kit/*`
-  # packages which pin esbuild 0.18.20. We only invoke drizzle-kit for
+  # packages which hard-pin esbuild ~0.18.20. We only invoke drizzle-kit for
   # `db:generate` / `db:studio` (no dev-server exposure), so the practical risk
   # is nil — but `pnpm audit --audit-level=moderate` (supply-chain CI job)
-  # rejects it. Pinning ^0.25.0 lines up with the already-resolved esbuild
-  # 0.25.12 elsewhere in the tree, so this adds zero new versions. Remove this
-  # entry once drizzle-kit drops `@esbuild-kit/*` for `tsx`. Added 2026-05-16.
-  # (The newer GHSA-gv7w-rqvm-qjhr, esbuild <0.28.1, is handled via auditConfig
-  # below rather than bumping this pin — see that note for why.)
+  # rejects it. ^0.25.0 dedupes onto the esbuild 0.25.x that drizzle-kit itself
+  # already declares (`esbuild ^0.25.4`), so this adds zero new versions —
+  # pinning ^0.28.1 here would instead add a third copy for no audit gain, since
+  # 0.25.x carries no open advisory. Remove once drizzle-kit drops
+  # `@esbuild-kit/*`. Added 2026-05-16, re-verified 2026-07-29.
   "@esbuild-kit/core-utils>esbuild": "^0.25.0"
-  # GHSA-96hv-2xvq-fx4p — ws >=8.0.0 <8.21.0 has a memory-exhaustion DoS: a
-  # peer sending many tiny fragments / data chunks forces unbounded buffering.
-  # (Supersedes GHSA-58qx-3vcg-4xpx, the uninitialized-memory disclosure that
-  # first prompted this pin — that one needed <8.20.1, this one needs <8.21.0.)
-  # happy-dom@20.9.0 still depends on a vulnerable ws. ws is dev-only here
-  # (happy-dom provides the DOM for client-side tests; we don't ship it in the
-  # Docker image), but `pnpm audit --audit-level=moderate` blocks the merge
-  # until the transitive is bumped. Pinning `happy-dom>ws` keeps the override
-  # surgical — if any other transitive ever depends on ws, it keeps its own
-  # resolution and we re-evaluate then. ws@8.21.0 was published 2026-05-22,
-  # well past the 7-day cooldown (no minimumReleaseAgeExclude needed). Remove
-  # once happy-dom ships a release that bumps ws. Updated 2026-06-16.
-  "happy-dom>ws": "^8.21.0"
-  # GHSA-q8mj-m7cp-5q26 — qs >=6.11.1 <=6.15.1 has a remotely triggerable DoS
-  # via `qs.stringify` crashing with TypeError on null/undefined entries in
-  # comma-format arrays when encodeValuesOnly is set. qs is pulled in
-  # transitively via bunqueue>@modelcontextprotocol/sdk>express (and
-  # body-parser, express-rate-limit) — all using express@5.2.1 which still
-  # resolves qs@6.15.1. The MCP SDK is the embedded server bunqueue exposes;
-  # we never call `qs.stringify` with the affected option set, so the
-  # practical risk is nil — but `pnpm audit --audit-level=moderate` blocks
-  # merge. Surgical pins on the express/body-parser parents so the override
-  # disappears once the upstream chain bumps. qs@6.15.2 was published
-  # 2026-05-16, past the 7-day cooldown. Remove once express ships a release
-  # that bumps qs. Added 2026-05-24.
-  "express>qs": "^6.15.2"
-  "body-parser>qs": "^6.15.2"
-  # GHSA-h67p-54hq-rp68 / GHSA-52cp-r559-cp3m — js-yaml has quadratic-complexity
-  # DoS bugs in YAML merge-key (`<<`) handling via repeated aliases. The first
-  # advisory covered <=4.1.1 (fixed in 4.2.0); GHSA-52cp-r559-cp3m widened the
-  # vulnerable range to <4.3.0, so the prior ^4.2.0 pin stopped clearing the
-  # gate. Pulled in transitively via @commitlint/cli > @commitlint/load >
-  # cosmiconfig > js-yaml — a dev-only commit-message linter that only ever
-  # parses our own config, never untrusted YAML, and isn't in the shipped image
-  # (the prod Docker stage installs `--prod`), so practical risk is nil — but
-  # `pnpm audit --audit-level=moderate` blocks merge. js-yaml 4.3.0 (published
-  # 2026-06-26, past the 7-day cooldown) clears both advisories. Surgical pin on
-  # the cosmiconfig parent. Remove once cosmiconfig bumps js-yaml. Updated
-  # 2026-07-21.
-  "cosmiconfig>js-yaml": "^4.3.0"
-  # GHSA-xgm2-5f3f-mvvc / GHSA-hvrm-45r6-mjfj / GHSA-w62v-xxxg-mg59 — hono
-  # <4.12.27 has three defects: the AWS API Gateway v1 adapter drops a repeated
-  # request-header value during de-duplication; hono/jsx doesn't isolate its
-  # render context per request (cross-request data disclosure under load); and
-  # the hono/jsx cx() helper allows a server-side XSS via an escaping bypass. We
-  # pin hono@4.12.30 directly (package.json), but bunqueue's embedded MCP server
-  # pulls its own copy via @modelcontextprotocol/sdk (which declares hono
-  # ^4.11.4) — both the @modelcontextprotocol/sdk>hono edge and its
-  # @hono/node-server>hono peer. xray runs on Bun.serve (no AWS adapter) and
-  # renders no hono/jsx, so none of the three is reachable here — but `pnpm
-  # audit --audit-level=moderate` (supply-chain CI) blocks merge until every
-  # copy is bumped. ^4.12.30 stays inside the SDK's ^4.11.4 range, so it's a
-  # safe in-range bump, not a forced major. 4.12.30 was published 2026-07-13,
-  # past the 7-day cooldown (no minimumReleaseAgeExclude needed). Remove once
-  # @modelcontextprotocol/sdk ships a release on hono >=4.12.27. Updated 2026-07-23.
-  "@modelcontextprotocol/sdk>hono": "^4.12.30"
-  "@hono/node-server>hono": "^4.12.30"
-  # GHSA-cmwh-pvxp-8882 — DOMPurify <3.4.11 has an ALLOWED_ATTR pollution via
-  # setConfig(). Rides in via mermaid>dompurify (docs-site toolchain). mermaid
-  # sanitizes the diagrams WE author at build time, never untrusted input, and
-  # we never call setConfig with attacker-controlled config — and it's dev-only
-  # (VitePress is dropped from the prod `--prod` image), so practical risk is
-  # nil. Was suppressed via auditConfig.ignoreGhsas while the fix sat in
-  # cooldown; dompurify 3.4.11 (published 2026-06-17) is now well past the 7-day
-  # cooldown, so we pin it as a real fix instead of ignoring. mermaid@11.15.0
-  # declares dompurify ^3.3.1, so ^3.4.11 is compatible. Surgical pin on the
-  # mermaid parent. Remove once mermaid bumps dompurify. Added 2026-07-21.
-  "mermaid>dompurify": "^3.4.11"
-  # GHSA-r28c-9q8g-f849 — postcss <=8.5.17 has a path-traversal in its
-  # previous-source-map auto-loader (`sourceMappingURL`): a crafted `.css` can
-  # make postcss read an arbitrary `.map` file off disk. Rides in transitively
-  # via the VitePress docs toolchain (vite>postcss and @vue/compiler-sfc>postcss;
-  # 22 paths, all deduped onto a single postcss copy). Dev-only — vitepress is a
-  # devDependency dropped from the `--prod` Docker image — and the docs build
-  # only ever processes CSS WE author, never untrusted input, so practical risk
-  # is nil; but `pnpm audit --audit-level=moderate` blocks merge. Bare (not
-  # parent-scoped) because the single shared copy is reached through several
-  # parents — a per-parent pin would leave a path unbumped and the gate red.
-  # 8.5.18 published 2026-07-12, past the 7-day cooldown. Remove once the
-  # VitePress chain resolves postcss >=8.5.18 on its own. Added 2026-07-27.
-  postcss: "^8.5.18"
-
-# VEX-style "not affected" disposition: GHSA-gv7w-rqvm-qjhr is unreachable in
-# this repo, so the audit gate is told to skip that one advisory. The advisory
-# is in esbuild's *Deno* installer (`lib/deno/mod.ts`), which fetches the native
-# binary with no SHA-256 check. We never invoke esbuild via Deno: every esbuild
-# copy here is a dev-only build-tool transitive (drizzle-kit, and — since the
-# docs site — vitepress>vite), installed through the *Node* path
-# (`lib/npm/node-install.ts`), which hardcodes registry.npmjs.org (it does NOT
-# read NPM_CONFIG_REGISTRY) and SHA-256-checks the binary before exec. The
-# vulnerable code path does not run here, and none of it ships in the `--prod`
-# image.
-#
-# Why keep ignoring rather than bumping to the patched esbuild 0.28.1: when this
-# entry was added (2026-06-16) drizzle-kit's was the only esbuild in the tree,
-# and the plan was to pin ^0.28.1 once it cleared the 7-day cooldown. That plan
-# no longer works — the later VitePress docs PR pulled in vite 5.4, which pins
-# esbuild ~0.21.5; our esbuild copies (0.21.5 via vite, 0.25.x via drizzle-kit)
-# are all <0.28.1, and vite 5.4 can't move to 0.28 without breaking. vitepress
-# has no stable release off vite 5.4 yet (only a 2.0.0-alpha on vite 6), so an
-# override can't eliminate this ignore — the vite-pinned copy would still trip
-# it. This now shares the fate of the vite/esbuild dev-server ignores below:
-# revisit when vitepress ships a stable vite-6 release. Updated 2026-07-21.
-auditConfig:
-  ignoreGhsas:
-    - GHSA-gv7w-rqvm-qjhr
-    # ---- VitePress docs toolchain — dev-only, static-output VEX --------------
-    # The advisories below all live in the docs-site toolchain (added with the
-    # VitePress docs PR). They share one disposition: NOT AFFECTED.
-    #   • Dev-only — vitepress/vite/esbuild/mermaid are devDependencies. The prod
-    #     image installs `--prod` (Dockerfile stage 1), which drops them; none of
-    #     this code ships in the container.
-    #   • Static output — `pnpm docs:build` emits static HTML to GitHub Pages. The
-    #     deployed site runs no vite/esbuild dev server, so the dev-server classes
-    #     below have zero production surface.
-    # We do NOT bump to remediate the vite findings: they're patched only in vite
-    # 6.x, but vitepress@1.6.4 pins vite 5.x (no 5.x backport) — forcing vite 6
-    # would break the pinned vitepress. Revisit when vitepress ships a stable
-    # release on vite 6 (its 2.x line).
-    #
-    # GHSA-fx2h-pf6j-xcff (HIGH) — vite `server.fs.deny` bypass via Windows
-    # alternate paths. Dev-server-only AND Windows-only; we build on macOS/Linux
-    # and deploy static. Unreachable. Added 2026-06-21.
-    - GHSA-fx2h-pf6j-xcff
-    # GHSA-4w7w-66w2-5vf9 (moderate) — vite path traversal in optimized-deps
-    # `.map` handling. Dev-server-only; absent from the static build. 2026-06-21.
-    - GHSA-4w7w-66w2-5vf9
-    # GHSA-v6wh-96g9-6wx3 (moderate) — launch-editor (vite dev-server "open in
-    # editor") NTLMv2 hash disclosure via UNC paths on Windows. Dev-server-only,
-    # Windows-only. Unreachable here. Added 2026-06-21.
-    - GHSA-v6wh-96g9-6wx3
-    # GHSA-67mh-4wv8-2f99 (moderate) — esbuild dev server lets any site read
-    # responses (permissive CORS). Same advisory the `overrides` above patch for
-    # the drizzle-kit path; here it rides in via vitepress>vite>esbuild (0.21.5,
-    # which vite 5.4 pins). esbuild is vite's transform library, never run via its
-    # `serve` mode, and the docs deploy is static — the dev server never runs.
-    # Bumping vite's esbuild to 0.25 risks breaking vite 5.4's build, so ignore
-    # rather than override. Added 2026-06-21.
-    - GHSA-67mh-4wv8-2f99
-    # ---- MCP-SDK transitives (bunqueue>@modelcontextprotocol/sdk) ------------
-    # GHSA-frvp-7c67-39w9 (moderate) — @hono/node-server <2.0.5 has a path
-    # traversal in its serve-static handler on Windows: an encoded backslash
-    # (%5C) escapes the static root. NOT AFFECTED: the flaw is Windows-only (it
-    # relies on `\` being a path separator) while xray ships a Linux image and
-    # serves assets through Bun.serve, never this Node adapter. The fix is also a
-    # major bump (1.19.x -> 2.x) that the SDK's declared `^1.19.9` range doesn't
-    # sanction — forcing it would be a bigger risk than the unreachable bug, so
-    # ignore rather than override. Revisit once @modelcontextprotocol/sdk moves
-    # to @hono/node-server 2.x on its own. Added 2026-07-23.
-    - GHSA-frvp-7c67-39w9
-    # GHSA-v2hh-gcrm-f6hx (high) / GHSA-4c8g-83qw-93j6 (high) — fast-uri host
-    # confusion via a literal-backslash authority delimiter / failed IDN
-    # canonicalization. Rides in via @modelcontextprotocol/sdk>ajv>fast-uri (and
-    # ajv-formats>ajv, plus the dev-only @commitlint>ajv). NOT PRACTICALLY
-    # REACHABLE: ajv uses fast-uri only to resolve JSON-Schema $id/$ref
-    # identifiers over first-party schemas — it makes no host-based security
-    # decision, which is the only thing the host-confusion class subverts.
-    # TEMPORARY bridge, not a standing VEX: unlike the overrides above, no
-    # cooldown-clean fix exists yet — every release clearing BOTH advisories
-    # (fast-uri 3.1.4 / 4.1.1 / 2.4.3) was published 2026-07-18..19, inside the
-    # 7-day window, so minimumReleaseAgeStrict rejects them and the rule forbids
-    # a minimumReleaseAgeExclude bypass for a non-urgent (unreachable) CVE. Same
-    # cooldown bridge dompurify used: convert to a surgical `ajv>fast-uri`
-    # override once 3.1.4 clears cooldown (~2026-07-26). Added 2026-07-23.
-    - GHSA-v2hh-gcrm-f6hx
-    - GHSA-4c8g-83qw-93j6
+  # GHSA-fx2h-pf6j-xcff / GHSA-4w7w-66w2-5vf9 / GHSA-v6wh-96g9-6wx3 — vite
+  # <=6.4.2 has a `server.fs.deny` bypass via Windows alternate paths, a path
+  # traversal in optimized-deps `.map` handling, and (via launch-editor) an
+  # NTLMv2 hash disclosure over UNC paths. All three are dev-server-only and the
+  # first and third are Windows-only, so none is reachable from our static docs
+  # build — but they are patched only in vite >=6.4.3, and vitepress@1.6.4
+  # declares `vite ^5.4.14`, so the chain cannot reach a patched version on its
+  # own. vite 5.4's bundled esbuild ~0.21.5 additionally trips
+  # GHSA-67mh-4wv8-2f99.
+  #
+  # These four were suppressed via `auditConfig.ignoreGhsas` until 2026-07-29 on
+  # the reasoning that vitepress had no stable release off vite 5. That reasoning
+  # only ever justified *not moving vitepress*; it did not rule out moving vite
+  # underneath it. Forcing vite 7.3.6 (published 2026-06-25, past both the 7-day
+  # `minimumReleaseAge` gate and our 30-day proactive-upgrade bar) clears all
+  # four advisories outright and lets the ignore list be deleted entirely.
+  #
+  # This is deliberately OUTSIDE vitepress@1.6.4's declared `vite ^5.4.14` range,
+  # so it is verified by build rather than by semver: `pnpm docs:build` renders
+  # all 7 pages, and the tag-stripped prose (SHA-256 over the HTML with <script>
+  # and <style> removed, so bundler-generated content hashes don't count) is
+  # byte-identical to the vite 5.4.21 build. vite 6.4.3 also builds clean; vite
+  # 8.1.0 builds but warns that vitepress calls the deprecated
+  # `transformWithEsbuild`, which is why this pins the 7.x line, not 8.x.
+  # Exact-pinned, not caret: a vite major that vitepress does not sanction must
+  # move on a deliberate, re-verified bump, never by drifting on `pnpm update`.
+  # Remove once vitepress ships a stable release on vite >=6.4.3 (its 2.x line;
+  # only a 2.0.0-alpha exists today). Added 2026-07-29.
+  vite: "7.3.6"

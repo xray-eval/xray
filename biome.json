@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
 	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
 	"files": {
 		"ignoreUnknown": true,
@@ -35,12 +35,13 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
+			"preset": "recommended",
 			"suspicious": {
 				"noExplicitAny": "error",
 				"noTsIgnore": "error",
 				"noEmptyBlockStatements": "error",
-				"noConsole": { "level": "warn", "options": { "allow": ["error", "warn", "info"] } }
+				"noConsole": { "level": "warn", "options": { "allow": ["error", "warn", "info"] } },
+				"noShadow": "error"
 			},
 			"style": {
 				"noNonNullAssertion": "error",
@@ -58,7 +59,6 @@
 			"nursery": {
 				"noFloatingPromises": "error",
 				"noMisusedPromises": "error",
-				"noShadow": "error",
 				"noMisleadingReturnType": "error"
 			}
 		}
