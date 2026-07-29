@@ -18,6 +18,7 @@ import {
 	buildTtsProvider,
 } from "./providers/providers.ts";
 import { makeReplayEvents } from "./replays/replays.events.ts";
+import { SSE_IDLE_TIMEOUT_S } from "./replays/replays.router.ts";
 import { markReplayFailed } from "./replays/replays.service.ts";
 import { createApp } from "./server.ts";
 import { openStoreFromEnv } from "./store/store.ts";
@@ -99,6 +100,10 @@ const server = Bun.serve({
 	port: env.PORT,
 	hostname: env.HOST,
 	development: process.env.NODE_ENV !== "production",
+	// Must outlast the SSE heartbeat — Bun's 10s default killed idle
+	// `/v1/replays/:id/events` streams before their first heartbeat. See the
+	// constant's docstring.
+	idleTimeout: SSE_IDLE_TIMEOUT_S,
 	routes: {
 		"/healthz": (req) => app.fetch(req),
 		"/v1/*": (req) => app.fetch(req),

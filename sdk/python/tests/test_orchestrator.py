@@ -9,7 +9,7 @@ import asyncio
 import io
 import json
 import wave
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -718,3 +718,137 @@ async def test_orchestrator_prefetches_user_turn_audio_concurrently(tmp_path: Pa
     assert sorted(runtime.injected.keys()) == [0, 1, 3]
     # All 3 user turns in flight at once; the old sequential loop capped this at 1.
     assert max_in_flight == 3
+
+
+class _DyingByteStream(httpx.AsyncByteStream):
+    """Yields some chunks, then raises the transport error the server's dropped
+    SSE connection produces mid-iteration (#78) — not on connect, which is a
+    different code path."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    @override
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+        raise httpx.RemoteProtocolError(
+            "peer closed connection without sending complete message body"
+        )
+
+
+def _mock_dying_sse(mock: respx.MockRouter, replay_id: str) -> respx.Route:
+    """SSE endpoint that streams two non-terminal events and then dies."""
+    body = _sse_stream(
+        [
+            ("state", {"type": "state", "lifecycle_state": "analyzing", "analysis_step": "vad"}),
+            ("progress", {"type": "progress", "percent": 40, "step": "vad"}),
+        ]
+    )
+    return mock.get(f"/v1/replays/{replay_id}/events").mock(
+        return_value=httpx.Response(
+            200,
+            stream=_DyingByteStream([body]),
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+
+
+def _mock_driven_replay(mock: respx.MockRouter, replay_id: str) -> None:
+    """Every call the orchestrator makes before it waits for the verdict."""
+    mock.post("/v1/conversations").mock(
+        return_value=httpx.Response(200, json=_conversation_upsert_response())
+    )
+    _mock_turn_audio(mock)
+    mock.post("/v1/replays").mock(
+        return_value=httpx.Response(201, json=_replay_response(replay_id))
+    )
+    mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
+    mock.post(f"/v1/replays/{replay_id}/analyze").mock(
+        return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
+    )
+
+
+async def test_dropped_sse_stream_falls_back_to_the_result_endpoint(tmp_path: Path):
+    """The analyze chain runs server-side, so losing the event stream doesn't
+    lose the verdict. When the stream dies mid-analysis the orchestrator reads
+    the same payload off GET /result instead of raising (#78)."""
+    replay_id = "rep-sse-drop"
+    audio = tmp_path / "mix.wav"
+    audio.write_bytes(_wav_48k_mono())
+    conv = Conversation(name="c", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+
+    with respx.mock(base_url="http://test.local") as mock:
+        _mock_driven_replay(mock, replay_id)
+        sse = _mock_dying_sse(mock, replay_id)
+        result_route = mock.get(f"/v1/replays/{replay_id}/result").mock(
+            return_value=httpx.Response(
+                200, json=_eval_complete_payload(replay_id=replay_id, passed=True)
+            )
+        )
+
+        out = await run(
+            conversation=conv,
+            runtime=StubRuntime(full_audio_path=str(audio), recording_started_at_epoch=1.0),
+            xray_url="http://test.local",
+        )
+
+    assert sse.called
+    assert result_route.called
+    assert isinstance(out, ReplayResult)
+    assert out.passed is True
+    assert out.replay_id == replay_id
+
+
+async def test_dropped_sse_stream_raises_when_the_result_is_not_ready(tmp_path: Path):
+    """A 409 from /result means the chain genuinely hasn't finished — the drop
+    is then a real failure, not a recoverable one, and must surface as
+    ReplayEvaluationError rather than a silent pass."""
+    replay_id = "rep-sse-drop-409"
+    audio = tmp_path / "mix.wav"
+    audio.write_bytes(_wav_48k_mono())
+    conv = Conversation(name="c", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+
+    with respx.mock(base_url="http://test.local") as mock:
+        _mock_driven_replay(mock, replay_id)
+        _mock_dying_sse(mock, replay_id)
+        mock.get(f"/v1/replays/{replay_id}/result").mock(
+            return_value=httpx.Response(
+                409, json={"error": "replay_not_evaluated", "lifecycle_state": "analyzing"}
+            )
+        )
+
+        with pytest.raises(ReplayEvaluationError):
+            await run(
+                conversation=conv,
+                runtime=StubRuntime(full_audio_path=str(audio), recording_started_at_epoch=1.0),
+                xray_url="http://test.local",
+            )
+
+
+async def test_result_fallback_failing_too_still_raises_replay_evaluation_error(tmp_path: Path):
+    """The stream usually drops because the server restarted — so the fallback
+    GET can hit the same dead server. It must not leak a raw httpx error: every
+    other failure in this run surfaces as ReplayEvaluationError, and a dev who
+    wrote `except ReplayEvaluationError` has to catch this one too."""
+    replay_id = "rep-sse-drop-server-down"
+    audio = tmp_path / "mix.wav"
+    audio.write_bytes(_wav_48k_mono())
+    conv = Conversation(name="c", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+
+    with respx.mock(base_url="http://test.local") as mock:
+        _mock_driven_replay(mock, replay_id)
+        _mock_dying_sse(mock, replay_id)
+        # Server still coming back up: the fallback request itself fails.
+        result_route = mock.get(f"/v1/replays/{replay_id}/result").mock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
+
+        with pytest.raises(ReplayEvaluationError):
+            await run(
+                conversation=conv,
+                runtime=StubRuntime(full_audio_path=str(audio), recording_started_at_epoch=1.0),
+                xray_url="http://test.local",
+            )
+
+    assert result_route.called

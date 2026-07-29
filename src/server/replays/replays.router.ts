@@ -53,6 +53,27 @@ import {
 const MAX_REPLAY_BODY_BYTES = 64 * 1024;
 const MAX_COMPARE_BODY_BYTES = 16 * 1024;
 
+/**
+ * Interval of the `: heartbeat` comment written to an otherwise-idle SSE
+ * stream. The analyze chain goes minutes between events (transcribing a long
+ * recording, a judge retrying a provider 503), so this is the only traffic
+ * keeping the connection alive.
+ */
+export const SSE_HEARTBEAT_MS = 15_000;
+
+/**
+ * `Bun.serve`'s idleTimeout, in seconds — imported by `main.ts`.
+ *
+ * Bun's default is 10s, which is SHORTER than the heartbeat above: an idle SSE
+ * stream was killed at ~12s, before its first heartbeat could reset the timer,
+ * so `xray.run` raised `RemoteProtocolError` on replays that completed fine
+ * server-side (#78). Derived from the heartbeat rather than written as a literal
+ * so the two can't drift apart again; the ×3 leaves room for two missed
+ * heartbeats. Applies to every connection, not just SSE — which also gives a
+ * large audio upload more headroom than 10s.
+ */
+export const SSE_IDLE_TIMEOUT_S = Math.ceil((SSE_HEARTBEAT_MS * 3) / 1000);
+
 export function createReplaysRouter(
 	store: Store,
 	jobRunner: JobRunner,
@@ -477,7 +498,7 @@ export function createReplaysRouter(
 
 				heartbeat = setInterval(() => {
 					void stream.write(": heartbeat\n\n");
-				}, 15_000);
+				}, SSE_HEARTBEAT_MS);
 
 				await done.promise;
 				cleanup();
