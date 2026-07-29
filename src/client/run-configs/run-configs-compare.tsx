@@ -6,7 +6,6 @@ import { compareRunConfigs, listRunConfigs } from "@/client/api/api.ts";
 import type {
 	CompareRunConfigsResponse,
 	ConversationScope,
-	ReplaySelection,
 	RunConfigGroupResult,
 	RunConfigSummary,
 } from "@/client/api/api.types.ts";
@@ -15,6 +14,7 @@ import { Button } from "@/client/components/ui/button.tsx";
 import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import { shortHash } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
+import type { ConfigsSearch } from "@/client/router/router.ts";
 
 import { MetricCell } from "./metric-cell.tsx";
 import { bestCellIndex, METRIC_ROWS } from "./metric-rows.ts";
@@ -61,12 +61,6 @@ export function RunConfigsCompare() {
 				.exhaustive()}
 		</section>
 	);
-}
-
-export interface ConfigsSearch {
-	readonly ids?: string | undefined;
-	readonly replays?: ReplaySelection | undefined;
-	readonly scope?: ConversationScope | undefined;
 }
 
 function CompareBody({
@@ -321,6 +315,7 @@ function MetricsMatrix({ comparison }: { comparison: CompareRunConfigsResponse }
 								key={group.hash}
 								group={group}
 								unionConversations={comparison.union_conversations}
+								scope={comparison.conversation_scope}
 								accentIndex={idx}
 							/>
 						))}
@@ -369,13 +364,24 @@ const COLUMN_ACCENTS = [
 function ConfigColumnHeader({
 	group,
 	unionConversations,
+	scope,
 	accentIndex,
 }: {
 	group: RunConfigGroupResult;
 	unionConversations: number;
+	scope: ConversationScope;
 	accentIndex: number;
 }) {
+	// `coverage` describes what the numbers in this column were computed over,
+	// which under `intersection` is the shared subset — not what the config ran.
+	// Saying "ran 1/3" about a config that ran all 3 would be a plain untruth in
+	// a view whose whole pitch is honest numbers, so the verb changes with the
+	// scope instead.
 	const partial = group.coverage.conversations < unionConversations;
+	const coverageLabel =
+		scope === "intersection"
+			? `compared on ${group.coverage.conversations} of ${unionConversations}`
+			: `ran ${group.coverage.conversations}/${unionConversations}`;
 	return (
 		<th scope="col" className="min-w-56 pb-3 text-left align-bottom">
 			<div
@@ -396,10 +402,14 @@ function ConfigColumnHeader({
 				<span
 					className={cn(
 						"font-mono text-[11px] tabular-nums",
-						partial ? "text-warning" : "text-muted-foreground",
+						// Only the union view flags partial coverage: under intersection
+						// every column is deliberately narrowed to the same subset, so
+						// warning-colouring all of them would signal a problem where the
+						// user just made a choice.
+						partial && scope === "union" ? "text-warning" : "text-muted-foreground",
 					)}
 				>
-					ran {group.coverage.conversations}/{unionConversations}
+					{coverageLabel}
 				</span>
 				{group.coverage.failed_replays > 0 && (
 					<Badge variant="outline" className="font-mono text-[10px] font-normal">

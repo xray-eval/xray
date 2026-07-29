@@ -287,6 +287,48 @@ describe("buildMetrics", () => {
 		expect(metrics.tokens.avg_input).toBe(10);
 	});
 
+	test("excludes a replay whose usage rows carried no token counts", () => {
+		// The GenAI vocabulary emits a model_usage row for every chat span, with
+		// null tokens when the span has no `gen_ai.usage.*` attributes — common
+		// for streaming completions. Such a replay measured latency, not tokens,
+		// and counting it as a 0-token sample would drag the average toward zero
+		// while inflating n.
+		const metrics = buildMetrics(
+			input({
+				replays: [replay({ id: "r1" }), replay({ id: "r2", conversationHash: "c2" })],
+				modelUsage: [
+					{ replayId: "r1", ttftMs: 200, latencyMs: 800, inputTokens: null, outputTokens: null },
+					{ replayId: "r2", ttftMs: null, latencyMs: null, inputTokens: 40, outputTokens: 20 },
+				],
+			}),
+		);
+		expect(metrics.tokens).toEqual({ avg_input: 40, avg_output: 20, avg_total: 60, n: 1 });
+	});
+
+	test("keeps a replay that reported only one side of its token split", () => {
+		const metrics = buildMetrics(
+			input({
+				modelUsage: [
+					{ replayId: "r1", ttftMs: null, latencyMs: null, inputTokens: 30, outputTokens: null },
+				],
+			}),
+		);
+		expect(metrics.tokens).toEqual({ avg_input: 30, avg_output: 0, avg_total: 30, n: 1 });
+	});
+
+	test("still measures latency and TTFT on a replay with no token counts", () => {
+		const metrics = buildMetrics(
+			input({
+				modelUsage: [
+					{ replayId: "r1", ttftMs: 200, latencyMs: 800, inputTokens: null, outputTokens: null },
+				],
+			}),
+		);
+		expect(metrics.ttft_ms.n).toBe(1);
+		expect(metrics.model_latency_ms.avg).toBe(800);
+		expect(metrics.tokens.n).toBe(0);
+	});
+
 	test("reports no token data rather than zero when nothing emitted usage", () => {
 		expect(buildMetrics(input()).tokens).toEqual({
 			avg_input: null,

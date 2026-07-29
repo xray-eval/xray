@@ -171,6 +171,29 @@ describe("RunConfigsCompare", () => {
 		await waitFor(() => expect(router.state.location.search.replays).toBe("all"));
 	});
 
+	it("does not claim a config 'ran' fewer conversations than it did under the shared scope", async () => {
+		// Both columns are narrowed to the shared subset, so "ran 1/3" would be a
+		// literal untruth about a config that ran all three.
+		mockApi({ unionConversations: 3, intersectionConversations: 1, fastConversations: 1 });
+		const { ui } = renderWithRouter({
+			initialEntries: [`/configs?ids=${BASELINE},${FAST}&scope=intersection`],
+		});
+		render(ui);
+
+		await waitFor(() => expect(screen.getByLabelText("Run config comparison")).toBeTruthy());
+		expect(screen.queryByText(/^ran /)).toBeNull();
+		expect(screen.getAllByText(/compared on \d+ of 3/).length).toBeGreaterThan(0);
+	});
+
+	it("keeps the 'ran X/Y' wording under the default scope", async () => {
+		mockApi({ unionConversations: 3, intersectionConversations: 1, fastConversations: 1 });
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText("ran 3/3")).toBeTruthy());
+		expect(screen.getByText("ran 1/3")).toBeTruthy();
+	});
+
 	it("links each column header to that config's drill-down", async () => {
 		mockApi();
 		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });

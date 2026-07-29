@@ -208,12 +208,23 @@ function buildInterruption(agentTurns: readonly TurnMetricSample[]): Interruptio
 /**
  * Tokens are summed within a replay before averaging across replays: a replay
  * that made 8 model calls burned more than one that made 2, and a per-row mean
- * would hide exactly that difference. `n` counts replays that emitted usage at
- * all, so a config whose agent isn't instrumented reads as "no data".
+ * would hide exactly that difference.
+ *
+ * Rows with no token counts at all are skipped rather than treated as zero.
+ * The GenAI vocabulary emits a `model_usage` row for every chat span, and
+ * `gen_ai.usage.*` is optional — a streaming completion commonly reports
+ * latency and TTFT but no usage. Counting those as 0-token samples would drag
+ * the average toward zero *and* inflate `n`, so a config whose agent doesn't
+ * report usage would read as "measured, and cheap" instead of "not measured".
+ * Same rule as `yield_ms` above: an absent sample is not a zero.
+ *
+ * A row that reports only one side of the split is kept — that's a real
+ * measurement, and the missing side contributes 0 to its own total.
  */
 function buildTokens(modelUsage: readonly ModelUsageSample[]): TokenAggregate {
 	const perReplay = new Map<string, { input: number; output: number }>();
 	for (const row of modelUsage) {
+		if (row.inputTokens === null && row.outputTokens === null) continue;
 		const totals = perReplay.get(row.replayId) ?? { input: 0, output: 0 };
 		totals.input += row.inputTokens ?? 0;
 		totals.output += row.outputTokens ?? 0;

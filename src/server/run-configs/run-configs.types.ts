@@ -112,6 +112,12 @@ export const CompareRunConfigsRequestSchema = v.object({
 		v.array(RunConfigHashSchema),
 		v.minLength(MIN_COMPARE_CONFIGS),
 		v.maxLength(MAX_COMPARE_CONFIGS),
+		// A repeated hash would render the same config twice and read as two
+		// independent results that happen to agree.
+		v.check(
+			(hashes) => new Set(hashes).size === hashes.length,
+			"config_hashes must not contain duplicates",
+		),
 	),
 	replay_selection: v.optional(ReplaySelectionSchema, "latest"),
 	conversation_scope: v.optional(ConversationScopeSchema, "union"),

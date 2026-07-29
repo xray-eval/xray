@@ -162,12 +162,16 @@ interface GroupRows {
 	readonly evaluations: readonly (EvaluationSample & { readonly runConfigHash: string })[];
 }
 
-function fetchGroupRows(store: Store, hashes: readonly string[]): GroupRows {
-	if (hashes.length === 0) {
-		return { replays: [], turnMetrics: [], modelUsage: [], evaluations: [] };
-	}
-	const inGroups = inArray(replays.runConfigHash, [...hashes]);
-	const replayRows = store.db
+type GroupedReplayRow = IncludableReplay & { readonly runConfigHash: string };
+
+/**
+ * Replay headers only. Split out from `fetchGroupRows` because the list route
+ * needs nothing else, and pulling the three derived-row joins for every group
+ * in the database made a page load scale with the whole run history.
+ */
+function fetchGroupReplays(store: Store, hashes: readonly string[]): GroupedReplayRow[] {
+	if (hashes.length === 0) return [];
+	return store.db
 		.select({
 			id: replays.id,
 			conversationHash: replays.conversationHash,
@@ -176,8 +180,17 @@ function fetchGroupRows(store: Store, hashes: readonly string[]): GroupRows {
 			runConfigHash: replays.runConfigHash,
 		})
 		.from(replays)
-		.where(inGroups)
-		.all();
+		.where(inArray(replays.runConfigHash, [...hashes]))
+		.all()
+		.filter(hasGroup);
+}
+
+function fetchGroupRows(store: Store, hashes: readonly string[]): GroupRows {
+	if (hashes.length === 0) {
+		return { replays: [], turnMetrics: [], modelUsage: [], evaluations: [] };
+	}
+	const inGroups = inArray(replays.runConfigHash, [...hashes]);
+	const replayRows = fetchGroupReplays(store, hashes);
 
 	// `replay_metrics` has no role column, so the agent-turn filter and the
 	// interruption denominator both need the join to `replay_turns` — same
@@ -229,7 +242,7 @@ function fetchGroupRows(store: Store, hashes: readonly string[]): GroupRows {
 		.all();
 
 	return {
-		replays: replayRows.filter(hasGroup),
+		replays: replayRows,
 		turnMetrics: turnMetricRows.filter(hasGroup),
 		modelUsage: modelUsageRows.filter(hasGroup),
 		evaluations: evaluationRows.filter(hasGroup),
@@ -304,12 +317,12 @@ function parseStoredConfig(row: RunConfigRow): unknown {
 export function listRunConfigs(store: Store): ListRunConfigsResponse {
 	const groups = store.db.select().from(runConfigs).all();
 	if (groups.length === 0) return { items: [] };
-	const rows = fetchGroupRows(
+	const replayRows = fetchGroupReplays(
 		store,
 		groups.map((g) => g.hash),
 	);
 	const items: RunConfigSummary[] = groups.map((group) => {
-		const groupReplays = narrowToGroup(rows.replays, group.hash);
+		const groupReplays = narrowToGroup(replayRows, group.hash);
 		const startedAts = groupReplays.map((r) => r.startedAt).sort();
 		return {
 			hash: group.hash,

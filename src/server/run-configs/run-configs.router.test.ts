@@ -153,6 +153,18 @@ describe("POST /v1/run-configs/compare", () => {
 		expect(res.status).toBe(400);
 	});
 
+	it("rejects a repeated hash — two identical columns read as agreeing results", async () => {
+		const { baseline } = seedTwoConfigs();
+		const res = await app.request("/v1/run-configs/compare", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ config_hashes: [baseline, baseline] }),
+		});
+		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string() }));
+		expect(body.error).toBe("invalid_run_config_request");
+	});
+
 	it("rejects a malformed body", async () => {
 		const res = await app.request("/v1/run-configs/compare", {
 			method: "POST",

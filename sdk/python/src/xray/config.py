@@ -42,14 +42,18 @@ class RunConfig:
 
     model: str | None = None
     temperature: float | None = None
+    extra: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     #: Display label for this config's group. Purely cosmetic: the group's
     #: identity is the hash of the config *content*, which the server
     #: computes, so renaming relabels the existing group instead of forking
     #: a new one (last-write-wins, like ``Conversation.name``). Every replay
     #: with the same content lands in the same group whether it was named
     #: or not.
+    #:
+    #: Declared last, after ``extra``, so that adding it didn't shift any
+    #: existing positional argument — ``RunConfig("gpt-4o", 0.5, {...})``
+    #: still binds the dict to ``extra``.
     name: str | None = None
-    extra: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
     def to_wire(self) -> dict[str, JsonValue]:
         """Snake_case JSON body for ``POST /v1/replays``. ``extra`` keys

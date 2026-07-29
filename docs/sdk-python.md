@@ -230,7 +230,7 @@ The recording captures both speakers overlapping at the barge-in point (`LiveKit
 
 ```python
 RunConfig(model: str | None = None, temperature: float | None = None,
-          name: str | None = None, extra: dict[str, JsonValue] = {})
+          extra: dict[str, JsonValue] = {}, name: str | None = None)
 ```
 
 This is per-replay configuration. It is carried to the server on `POST /v1/replays`.
