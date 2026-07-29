@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import array
 import asyncio
+import logging
 import time
 import wave
 from collections.abc import AsyncIterator
@@ -264,9 +265,10 @@ def _runtime(
         room="room-1",
         cache_root=tmp_path / "cache",
         mixdown_dir=tmp_path / "mix",
-        # Tear down as soon as the turns finish — the never-stop teardown has
-        # its own dedicated test; other tests don't want its wait.
-        agent_quiet_period_s=0.0,
+        # Short but non-zero: agent turns end on a quiet window now, so 0 would
+        # end a turn the instant the agent made a sound. Dedicated tests set
+        # their own value; the rest just don't want to wait 1.5s per turn.
+        agent_quiet_period_s=0.05,
         _lk_rtc=lk_rtc,
         _lk_api=lk_api,
     )
@@ -1181,3 +1183,178 @@ async def test_agent_speech_after_last_turn_is_recorded(tmp_path: Path):
         interleaved.frombytes(w.readframes(w.getnframes()))
     right = interleaved[1::2]  # agent channel
     assert any(v != 0 for v in right), "late agent reply was not recorded"
+
+
+def _scripted_agent_runtime(
+    tmp_path: Path, stream: _ScriptedAgentStream
+) -> tuple[LiveKitRuntime, Any]:
+    """A runtime whose agent audio comes from ``stream`` instead of the track's
+    own frame list, so a test can deliver utterances and gaps in real time."""
+    rtc = _build_fake_lk_rtc(staged_events=[_stage_agent_join(), _stage_agent_track([])])
+
+    def _audio_stream(_track: Any, **_kw: Any) -> _ScriptedAgentStream:
+        return stream
+
+    rtc.AudioStream = _audio_stream
+    rt = _runtime(tmp_path, rtc, _build_fake_lk_api(), user_audio={0: _make_silence_pcm(40)})
+    return rt, rtc
+
+
+async def _feed_utterance(stream: _ScriptedAgentStream, *, frames: int = 2) -> None:
+    for _ in range(frames):
+        stream.feed(_make_tone_pcm(20))
+    await asyncio.sleep(0.02)
+
+
+async def test_agent_turn_collapses_utterances_across_a_tool_gap(tmp_path: Path):
+    """#117: an agent that narrates, calls a tool, then answers emits two
+    utterances with no user speech between them. The turn ends when the agent
+    goes quiet — not at the first final caption — so both utterances land in the
+    same turn instead of the answer being lost."""
+    stream = _ScriptedAgentStream()
+    rt, rtc = _scripted_agent_runtime(tmp_path, stream)
+    rt.agent_quiet_period_s = 0.3
+    rt.agent_turn_timeout_s = 3.0
+
+    conv = Conversation(
+        name="c",
+        turns=[Turn.user("what year is it?", key="u0"), Turn.agent(key="a0")],
+    )
+    task = asyncio.create_task(rt.run(conv))
+    await asyncio.sleep(0.05)  # connect + user turn published; agent turn now waiting
+    room = rtc.Room.rooms[0]
+
+    await _feed_utterance(stream)  # "One moment, let me look that up."
+    name, args = _stage_transcription_final("One moment, let me look that up.")
+    room.fire(name, *args)
+    await asyncio.sleep(0.15)  # tool round-trip: silence shorter than the quiet period
+
+    await _feed_utterance(stream)  # the real answer
+    name, args = _stage_transcription_final("It's 2011.")
+    room.fire(name, *args)
+    await asyncio.sleep(0.02)
+    stream.end()
+
+    result = await asyncio.wait_for(task, timeout=5.0)
+    transcript = result.responses[1].transcript
+    assert "One moment, let me look that up." in transcript
+    assert "It's 2011." in transcript
+
+
+async def test_agent_turn_ends_on_silence_without_any_final_caption(tmp_path: Path):
+    """Silence — not the caption — is what ends the turn. An agent whose
+    captions never go final still yields the floor a quiet period after it
+    stops speaking, instead of stalling for the whole turn timeout."""
+    stream = _ScriptedAgentStream()
+    rt, _rtc = _scripted_agent_runtime(tmp_path, stream)
+    rt.agent_quiet_period_s = 0.15
+    rt.agent_turn_timeout_s = 3.0
+
+    conv = Conversation(name="c", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+    task = asyncio.create_task(rt.run(conv))
+    await asyncio.sleep(0.05)
+    await _feed_utterance(stream)
+    stream.end()
+
+    # Well under agent_turn_timeout_s: the quiet period, not the cap, ended it.
+    result = await asyncio.wait_for(task, timeout=1.5)
+    assert result.responses[1].transcript == ""
+
+
+async def test_per_turn_quiet_period_overrides_the_runtime_default(tmp_path: Path):
+    """A turn the dev knows does a lookup declares its own quiet period; the
+    runtime default (too short to bridge this gap) does not apply to it."""
+    stream = _ScriptedAgentStream()
+    rt, rtc = _scripted_agent_runtime(tmp_path, stream)
+    rt.agent_quiet_period_s = 0.05
+    rt.agent_turn_timeout_s = 3.0
+
+    conv = Conversation(
+        name="c",
+        turns=[Turn.user("what year is it?", key="u0"), Turn.agent(key="a0", quiet_period_ms=400)],
+    )
+    task = asyncio.create_task(rt.run(conv))
+    await asyncio.sleep(0.05)
+    room = rtc.Room.rooms[0]
+
+    await _feed_utterance(stream)
+    name, args = _stage_transcription_final("One moment.")
+    room.fire(name, *args)
+    await asyncio.sleep(0.2)  # > runtime default (50ms), < this turn's 400ms
+
+    await _feed_utterance(stream)
+    name, args = _stage_transcription_final("It's 2011.")
+    room.fire(name, *args)
+    await asyncio.sleep(0.02)
+    stream.end()
+
+    result = await asyncio.wait_for(task, timeout=5.0)
+    assert "One moment." in result.responses[1].transcript
+    assert "It's 2011." in result.responses[1].transcript
+
+
+async def test_agent_turn_is_capped_when_the_agent_never_goes_quiet(tmp_path: Path):
+    """An agent that talks forever can't hang the run — agent_turn_timeout_s
+    caps the turn even though the quiet period is never satisfied."""
+    stream = _ScriptedAgentStream()
+    rt, _rtc = _scripted_agent_runtime(tmp_path, stream)
+    rt.agent_quiet_period_s = 5.0  # never satisfied inside this test
+    rt.agent_turn_timeout_s = 0.3
+
+    async def _talk_forever() -> None:
+        while True:
+            stream.feed(_make_tone_pcm(20))
+            await asyncio.sleep(0.02)
+
+    conv = Conversation(name="c", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+    talker = asyncio.create_task(_talk_forever())
+    try:
+        result = await asyncio.wait_for(rt.run(conv), timeout=3.0)
+    finally:
+        talker.cancel()
+        stream.end()
+    assert len(result.responses) == 2
+
+
+async def test_pump_failure_is_logged_not_swallowed(tmp_path: Path, caplog: Any):
+    """A capture pump that dies on its own must say so. The teardown gather
+    swallows exceptions so a failing pump can't mask the run's outcome — but
+    without a log, a dead pump looks exactly like a silent agent: every later
+    turn waits out agent_turn_timeout_s and comes back empty."""
+    stream = _ScriptedAgentStream()
+    rt, _rtc = _scripted_agent_runtime(tmp_path, stream)
+    rt.agent_quiet_period_s = 0.05
+    rt.agent_turn_timeout_s = 0.3
+
+    original = _ContinuousAgentCapture.pump
+
+    async def _dying_pump(self: _ContinuousAgentCapture) -> None:
+        raise OSError("simulated AudioStream network drop")
+
+    _ContinuousAgentCapture.pump = _dying_pump
+    try:
+        with caplog.at_level(logging.WARNING, logger="xray.runtime.livekit"):
+            await asyncio.wait_for(
+                rt.run(Conversation(name="c", turns=[Turn.user("hi", key="u0")])), timeout=5.0
+            )
+    finally:
+        _ContinuousAgentCapture.pump = original
+
+    assert any("capture pump died" in r.message for r in caplog.records), caplog.text
+    assert any("simulated AudioStream network drop" in r.getMessage() for r in caplog.records)
+
+
+async def test_cancelled_pump_is_not_reported_as_a_failure(tmp_path: Path, caplog: Any):
+    """The normal teardown path cancels the pump; that must stay quiet or every
+    clean run would warn."""
+    stream = _ScriptedAgentStream()
+    rt, _rtc = _scripted_agent_runtime(tmp_path, stream)
+    rt.agent_quiet_period_s = 0.05
+    rt.agent_turn_timeout_s = 0.3
+
+    with caplog.at_level(logging.WARNING, logger="xray.runtime.livekit"):
+        await asyncio.wait_for(
+            rt.run(Conversation(name="c", turns=[Turn.user("hi", key="u0")])), timeout=5.0
+        )
+
+    assert not any("capture pump died" in r.message for r in caplog.records), caplog.text

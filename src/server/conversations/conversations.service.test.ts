@@ -402,6 +402,53 @@ describe("interrupt_after_ms", () => {
 	});
 });
 
+describe("quiet_period_ms", () => {
+	it("leaves the hash of a conversation that doesn't use it untouched", async () => {
+		const turns = makeTurns({
+			turns: [
+				{ role: "user", text: "hi", key: "u0" },
+				{ role: "agent", key: "a0" },
+			],
+		});
+		expect(await canonicalize(turns)).not.toContain("quiet_period_ms");
+	});
+
+	it("changes the hash when a turn declares one", async () => {
+		const base = makeTurns({ turns: [{ role: "agent", key: "a0" }] });
+		const withQuiet = makeTurns({
+			turns: [{ role: "agent", key: "a0", quiet_period_ms: 8000 }],
+		});
+		expect(await hashOf(base)).not.toBe(await hashOf(withQuiet));
+		expect(await canonicalize(withQuiet)).toContain('"quiet_period_ms":8000');
+	});
+
+	it("accepts it on an agent turn and rejects it on a user turn", () => {
+		const onAgent = v.safeParse(CreateConversationRequestSchema, {
+			name: "narrate-then-tool",
+			turns: [
+				{ role: "user", text: "what year is it?" },
+				{ role: "agent", quiet_period_ms: 8000 },
+			],
+		});
+		expect(onAgent.success).toBe(true);
+
+		const onUser = v.safeParse(CreateConversationRequestSchema, {
+			name: "bad",
+			turns: [{ role: "user", text: "hi", quiet_period_ms: 8000 }],
+		});
+		expect(onUser.success).toBe(false);
+	});
+
+	it("rejects a zero or fractional period at the schema", () => {
+		expect(v.safeParse(ConversationTurnSchema, { role: "agent", quiet_period_ms: 0 }).success).toBe(
+			false,
+		);
+		expect(
+			v.safeParse(ConversationTurnSchema, { role: "agent", quiet_period_ms: 1.5 }).success,
+		).toBe(false);
+	});
+});
+
 describe("live conversations", () => {
 	it("salts the hash so two empty-turn live specs are distinct rows", async () => {
 		const a = await canonicalizeAndHashSpec([], [], true);

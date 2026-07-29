@@ -49,6 +49,14 @@ const TurnLanguageSchema = v.pipe(
 // interrupt before the agent makes a sound.
 const InterruptAfterMsSchema = v.pipe(v.number(), v.integer(), v.minValue(1));
 
+// How long an agent turn must stay silent before the driver treats it as over,
+// overriding the runtime default. Driver-side pacing the server never executes —
+// it rides the wire because it changes what the recording contains (a turn that
+// waits out a tool round-trip captures the answer; one that doesn't, doesn't),
+// which makes it part of the test identity. ≥1 because 0 would end the turn the
+// instant the agent made a sound.
+const QuietPeriodMsSchema = v.pipe(v.number(), v.integer(), v.minValue(1));
+
 const TtsAudioUploadSchema = v.object({
 	kind: v.literal("tts"),
 	voice_id: v.optional(v.pipe(v.string(), v.maxLength(MAX_AUDIO_VOICE_ID))),
@@ -78,6 +86,7 @@ export const ConversationTurnRequestSchema = v.object({
 	key: v.optional(v.pipe(v.string(), v.nonEmpty(), v.maxLength(MAX_TURN_KEY))),
 	audio: v.optional(TurnAudioUploadSchema),
 	interrupt_after_ms: v.optional(InterruptAfterMsSchema),
+	quiet_period_ms: v.optional(QuietPeriodMsSchema),
 	assertions: v.optional(AssertionsArraySchema, []),
 });
 export type ConversationTurnRequest = v.InferOutput<typeof ConversationTurnRequestSchema>;
@@ -113,6 +122,11 @@ export const CreateConversationRequestSchema = v.pipe(
 	v.check(
 		(input) => input.turns.every(isInterruptPlacementValid),
 		"interrupt_after_ms is only valid on a user turn that immediately follows an agent turn",
+	),
+	v.check(
+		(input) =>
+			input.turns.every((turn) => turn.quiet_period_ms === undefined || turn.role === "agent"),
+		"quiet_period_ms is only valid on an agent turn",
 	),
 );
 export type CreateConversationRequest = v.InferOutput<typeof CreateConversationRequestSchema>;
@@ -163,6 +177,10 @@ export const ConversationTurnSchema = v.object({
 	// doesn't interrupt omits the key entirely, leaving every existing
 	// conversation's hash byte-for-byte unchanged.
 	interrupt_after_ms: v.optional(InterruptAfterMsSchema),
+	// Canonical for the same reason as interrupt_after_ms: it changes what the
+	// run records, so it changes the test. Default-less optional so turns on the
+	// runtime default omit the key and every existing hash stays byte-identical.
+	quiet_period_ms: v.optional(QuietPeriodMsSchema),
 	assertions: v.optional(AssertionsArraySchema, []),
 });
 export type ConversationTurn = v.InferOutput<typeof ConversationTurnSchema>;
