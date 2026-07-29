@@ -215,41 +215,51 @@ function ConfigPicker({
 	selected: readonly string[];
 	onToggle: (hash: string) => void;
 }) {
+	const atCapacity = selected.length >= MAX_COMPARE;
 	return (
-		<ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-			{items.map((item) => {
-				const isSelected = selected.includes(item.hash);
-				const atCap = !isSelected && selected.length >= MAX_COMPARE;
-				return (
-					<li key={item.hash}>
-						<button
-							type="button"
-							aria-pressed={isSelected}
-							disabled={atCap}
-							onClick={() => onToggle(item.hash)}
-							className={cn(
-								"w-full rounded-lg border px-4 py-3 text-left transition-colors",
-								"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-								isSelected
-									? "border-foreground/30 bg-muted/50"
-									: "border-border/60 hover:border-border hover:bg-muted/20",
-								atCap && "cursor-not-allowed opacity-50",
-							)}
-						>
-							<span className="block truncate text-sm font-medium">
-								{runConfigLabel(item.name, item.config, item.hash)}
-							</span>
-							<span className="mt-1 block font-mono text-[11px] tabular-nums text-muted-foreground">
-								{item.coverage.conversations} conversation
-								{item.coverage.conversations === 1 ? "" : "s"} · {item.coverage.replays} replay
-								{item.coverage.replays === 1 ? "" : "s"}
-								{item.coverage.failed_replays > 0 && ` · ${item.coverage.failed_replays} failed`}
-							</span>
-						</button>
-					</li>
-				);
-			})}
-		</ul>
+		<div className="space-y-2">
+			<ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+				{items.map((item) => {
+					const isSelected = selected.includes(item.hash);
+					const atCap = !isSelected && atCapacity;
+					return (
+						<li key={item.hash}>
+							<button
+								type="button"
+								aria-pressed={isSelected}
+								disabled={atCap}
+								onClick={() => onToggle(item.hash)}
+								className={cn(
+									"w-full rounded-lg border px-4 py-3 text-left transition-colors",
+									"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+									isSelected
+										? "border-foreground/30 bg-muted/50"
+										: "border-border/60 hover:border-border hover:bg-muted/20",
+									atCap && "cursor-not-allowed opacity-50",
+								)}
+							>
+								<span className="block truncate text-sm font-medium">
+									{runConfigLabel(item.name, item.config, item.hash)}
+								</span>
+								<span className="mt-1 block font-mono text-[11px] tabular-nums text-muted-foreground">
+									{item.coverage.conversations} conversation
+									{item.coverage.conversations === 1 ? "" : "s"} · {item.coverage.replays} replay
+									{item.coverage.replays === 1 ? "" : "s"}
+									{item.coverage.failed_replays > 0 && ` · ${item.coverage.failed_replays} failed`}
+								</span>
+							</button>
+						</li>
+					);
+				})}
+			</ul>
+			{/* Without this, hitting the cap just greys out every remaining card,
+			    which reads as a broken page rather than a limit. */}
+			{atCapacity && (
+				<p role="status" className="text-[11px] text-muted-foreground">
+					Comparing the maximum of {MAX_COMPARE} configs. Deselect one to swap another in.
+				</p>
+			)}
+		</div>
 	);
 }
 
@@ -298,6 +308,15 @@ function ModeToggle<T extends string>({
 	);
 }
 
+/**
+ * The metric-name column stays pinned while the config columns scroll. Past
+ * about four configs the table is wider than the page, and scrolling a plain
+ * table takes the row labels with it — leaving columns of numbers with nothing
+ * saying which metric each row is. `bg-background` is load-bearing: without it
+ * the scrolling cells show through the pinned column.
+ */
+const METRIC_COL = "sticky left-0 z-10 w-44 min-w-44 bg-background text-left";
+
 function MetricsMatrix({ comparison }: { comparison: CompareRunConfigsResponse }) {
 	const groups = comparison.groups;
 	return (
@@ -305,7 +324,7 @@ function MetricsMatrix({ comparison }: { comparison: CompareRunConfigsResponse }
 			<table className="w-full min-w-3xl border-collapse" aria-label="Run config comparison">
 				<thead>
 					<tr>
-						<th scope="col" className="w-44 pb-3 text-left align-bottom">
+						<th scope="col" className={cn(METRIC_COL, "pb-3 align-bottom")}>
 							<span className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
 								Metric
 							</span>
@@ -330,7 +349,7 @@ function MetricsMatrix({ comparison }: { comparison: CompareRunConfigsResponse }
 						);
 						return (
 							<tr key={row.key} className="border-t border-border/60">
-								<th scope="row" className="py-3 pr-4 text-left align-top">
+								<th scope="row" className={cn(METRIC_COL, "py-3 pr-4 align-top")}>
 									<span className="block text-sm font-medium">{row.label}</span>
 									<span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
 										{row.unit}

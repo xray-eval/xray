@@ -90,6 +90,47 @@ function mockApi(options: CompareOptions = {}) {
 	);
 }
 
+/** `count` distinct sha256-shaped hashes, stable across calls. */
+function manyHashes(count: number): string[] {
+	return Array.from({ length: count }, (_, i) =>
+		String(i + 1)
+			.repeat(64)
+			.slice(0, 64),
+	);
+}
+
+function mockManyConfigs(count: number) {
+	const hashes = manyHashes(count);
+	const groups = hashes.map((hash, i) => ({
+		hash,
+		name: `config-${i + 1}`,
+		config: { model: `m-${i + 1}` },
+		created_at: "2026-07-01T00:00:00.000Z",
+		last_run_at: "2026-07-01T00:00:00.000Z",
+		coverage: { conversations: 1, replays: 1, failed_replays: 0 },
+	})) satisfies RunConfigSummary[];
+
+	server.use(
+		http.get("http://localhost/v1/run-configs", () => HttpResponse.json({ items: groups })),
+		http.post("http://localhost/v1/run-configs/compare", async ({ request }) => {
+			const body = v.parse(CompareRunConfigsRequestSchema, await request.json());
+			return HttpResponse.json({
+				replay_selection: body.replay_selection,
+				conversation_scope: body.conversation_scope,
+				union_conversations: 1,
+				intersection_conversations: 1,
+				groups: body.config_hashes.map((hash) => ({
+					hash,
+					name: `config-${hashes.indexOf(hash) + 1}`,
+					config: { model: "m" },
+					coverage: { conversations: 1, replays: 1, failed_replays: 0 },
+					metrics: metrics(),
+				})),
+			});
+		}),
+	);
+}
+
 describe("RunConfigsCompare", () => {
 	it("compares the two most recent configs when the URL names none", async () => {
 		mockApi();
@@ -201,6 +242,29 @@ describe("RunConfigsCompare", () => {
 
 		const link = await waitFor(() => screen.getByRole("link", { name: "baseline" }));
 		expect(link.getAttribute("href")).toBe(`/configs/${BASELINE}`);
+	});
+
+	it("says why the remaining configs went un-clickable at the selection cap", async () => {
+		// Eight greyed-out cards with no explanation reads as "the page broke",
+		// not "you're at the maximum".
+		mockManyConfigs(9);
+		const ids = manyHashes(9).slice(0, 8).join(",");
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${ids}`] });
+		render(ui);
+
+		await waitFor(() =>
+			expect(screen.getByText(/Comparing the maximum of 8 configs/)).toBeTruthy(),
+		);
+	});
+
+	it("stays quiet about the cap below it", async () => {
+		mockManyConfigs(9);
+		const ids = manyHashes(9).slice(0, 3).join(",");
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${ids}`] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByLabelText("Run config comparison")).toBeTruthy());
+		expect(screen.queryByText(/Comparing the maximum of/)).toBeNull();
 	});
 
 	it("tells the dev how to create a config group when none exist", async () => {
