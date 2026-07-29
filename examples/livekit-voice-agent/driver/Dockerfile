@@ -13,8 +13,8 @@ COPY sdk/python /workspace/sdk/python
 RUN pip install --upgrade pip && \
     pip install -e "/workspace/sdk/python[livekit]" && \
     pip install \
-      "pytest==9.0.3" \
-      "pytest-asyncio==1.3.0" \
+      "pytest==9.1.1" \
+      "pytest-asyncio==1.4.0" \
       "httpx==0.28.1"
 
 COPY examples/livekit-voice-agent/driver /workspace/driver

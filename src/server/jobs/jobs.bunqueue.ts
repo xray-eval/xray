@@ -51,7 +51,7 @@ const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2000;
 
 /**
- * Wrap bunqueue@2.7.12 with an xray-shaped surface. One queue
+ * Wrap bunqueue with an xray-shaped surface. One queue
  * (`analyze-chain`) carries every stage of the 3-job pipeline; the
  * dispatcher routes by `job.name`. Same `bunqueue.db` for all stages —
  * keeps the single-image / one-volume promise.
