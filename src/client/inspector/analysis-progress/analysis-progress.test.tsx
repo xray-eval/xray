@@ -21,6 +21,7 @@ function buildReplay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetai
 		audio_path: "/data/audio/replay.wav",
 		job_id: "job-1",
 		run_config: null,
+		run_config_hash: null,
 		turns: [],
 		speech_segments: [],
 		transcripts: [],

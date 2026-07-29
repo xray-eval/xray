@@ -53,10 +53,43 @@ const SNAPSHOT_DIR = new URL("../snapshot", import.meta.url).pathname;
 const DB_PATH = join(SNAPSHOT_DIR, "xray.db");
 const AUDIO_ROOT = join(SNAPSHOT_DIR, "audio");
 
-// Fixed so the committed fixture is stable across regenerations.
-const REPLAY_ID = "ba9e1000-0000-4000-8000-000000000001";
 const RECORDING_STARTED_AT = "2026-07-01T12:00:00.000Z";
 const CONVERSATION_NAME = "user corrects destination mid-answer";
+
+/**
+ * The same conversation run under two configurations, so the config-comparison
+ * view has something real to show on a fresh checkout.
+ *
+ * `agentDelayMs` shifts only the *start* of each agent turn, never its end:
+ * that moves `agent_response_ms` (the number the two configs differ on) while
+ * leaving the barge-in overlap — and therefore `yield_ms` and the
+ * `yielded_within_ms` assertion — identical. Both runs pass; one is simply
+ * quicker off the mark.
+ *
+ * The first variant is byte-identical to the single replay this fixture used
+ * to hold, so the inspector's canonical example is unchanged.
+ */
+interface RunVariant {
+	readonly replayId: string;
+	readonly agentDelayMs: number;
+	readonly config: Record<string, string>;
+	readonly configName: string;
+}
+
+const RUN_VARIANTS: readonly RunVariant[] = [
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000001",
+		agentDelayMs: 0,
+		config: { model: "gpt-4o" },
+		configName: "baseline",
+	},
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000002",
+		agentDelayMs: -250,
+		config: { model: "gemini-2.5-flash" },
+		configName: "fast-follow",
+	},
+];
 
 const SAMPLE_RATE = 48_000;
 const TONE_HZ = 200;
@@ -109,11 +142,19 @@ const SPEC_TURNS: readonly ConversationTurn[] = [
 	{ role: "agent", assertions: [{ kind: "contains", text: "Berlin", case_insensitive: true }] },
 ];
 
-function buildBargeInWav(): StereoWav {
+/** Agent turns start `agentDelayMs` earlier/later; their ends never move. */
+function scriptFor(agentDelayMs: number): readonly ScriptedTurn[] {
+	if (agentDelayMs === 0) return SCRIPT;
+	return SCRIPT.map((turn) =>
+		turn.role === "agent" ? { ...turn, startMs: turn.startMs + agentDelayMs } : turn,
+	);
+}
+
+function buildBargeInWav(script: readonly ScriptedTurn[]): StereoWav {
 	const totalSamples = Math.round((RECORDING_END_MS / 1000) * SAMPLE_RATE);
 	const left = new Int16Array(totalSamples);
 	const right = new Int16Array(totalSamples);
-	for (const turn of SCRIPT) {
+	for (const turn of script) {
 		writeTone(turn.role === "user" ? left : right, turn);
 	}
 	return { sampleRate: SAMPLE_RATE, bitsPerSample: 16, left, right };
@@ -176,43 +217,9 @@ async function main(): Promise<void> {
 		const { json: turnsJson, hash } = await canonicalizeAndHashSpec(SPEC_TURNS, []);
 		ensureConversation(store.db, { hash, name: CONVERSATION_NAME, turnsJson, now });
 
-		createReplay(store, { conversation_hash: hash }, { id: REPLAY_ID, now: () => now });
-
-		const wavPath = join(AUDIO_ROOT, REPLAY_ID, "replay.wav");
-		await mkdir(dirname(wavPath), { recursive: true });
-		await writeFile(wavPath, writeStereoWav(buildBargeInWav()));
-
-		store.db
-			.update(replays)
-			.set({
-				audioPath: `${REPLAY_ID}/replay.wav`,
-				recordingStartedAt: RECORDING_STARTED_AT,
-				lifecycleState: "analyzing",
-				analysisStep: "vad",
-			})
-			.where(eq(replays.id, REPLAY_ID))
-			.run();
-
-		// Drive the three chain stages in order. Each normally enqueues the next
-		// on the job queue; here the fake runner swallows that and we call the
-		// next stage directly, so the whole pipeline runs in one process.
-		const events = makeReplayEvents();
-		const runner = makeFakeJobRunner();
-		await makeAnalyzeProcessor(
-			store,
-			AUDIO_ROOT,
-			events,
-			runner,
-			makeScriptedTranscription(),
-		)({
-			replayId: REPLAY_ID,
-		});
-		await makeCalculateMetricsProcessor(store, events, runner)({ replayId: REPLAY_ID });
-		await makeEvaluateReplayProcessor(
-			store,
-			events,
-			UNUSED_JUDGE_PROVIDER,
-		)({ replayId: REPLAY_ID });
+		for (const variant of RUN_VARIANTS) {
+			await seedVariant(store, hash, variant);
+		}
 
 		printSummary(store);
 
@@ -225,31 +232,85 @@ async function main(): Promise<void> {
 	}
 }
 
-function printSummary(store: ReturnType<typeof openStore>): void {
-	const replay = store.db.select().from(replays).where(eq(replays.id, REPLAY_ID)).get();
-	const metrics = store.db
-		.select()
-		.from(replayMetrics)
-		.where(eq(replayMetrics.replayId, REPLAY_ID))
-		.all();
-	const outcomes = store.db
-		.select()
-		.from(assertionResults)
-		.where(eq(assertionResults.replayId, REPLAY_ID))
-		.all();
-	const evaluation = store.db
-		.select()
-		.from(replayEvaluations)
-		.where(eq(replayEvaluations.replayId, REPLAY_ID))
-		.get();
+async function seedVariant(
+	store: ReturnType<typeof openStore>,
+	conversationHash: string,
+	variant: RunVariant,
+): Promise<void> {
+	const { replayId } = variant;
+	createReplay(
+		store,
+		{
+			conversation_hash: conversationHash,
+			run_config: variant.config,
+			run_config_name: variant.configName,
+		},
+		{ id: replayId, now: () => RECORDING_STARTED_AT },
+	);
 
-	console.info(`snapshot replay ${REPLAY_ID} → ${replay?.lifecycleState}`);
-	const interrupted = metrics.find((m) => m.yieldMs !== null);
-	console.info(`  yield_ms: ${interrupted?.yieldMs ?? "(none)"}`);
-	for (const outcome of outcomes) {
-		console.info(`  turn ${outcome.turnIdx} ${outcome.kind}: ${outcome.status}`);
+	const wavPath = join(AUDIO_ROOT, replayId, "replay.wav");
+	await mkdir(dirname(wavPath), { recursive: true });
+	await writeFile(wavPath, writeStereoWav(buildBargeInWav(scriptFor(variant.agentDelayMs))));
+
+	store.db
+		.update(replays)
+		.set({
+			audioPath: `${replayId}/replay.wav`,
+			recordingStartedAt: RECORDING_STARTED_AT,
+			lifecycleState: "analyzing",
+			analysisStep: "vad",
+		})
+		.where(eq(replays.id, replayId))
+		.run();
+
+	// Drive the three chain stages in order. Each normally enqueues the next
+	// on the job queue; here the fake runner swallows that and we call the
+	// next stage directly, so the whole pipeline runs in one process.
+	const events = makeReplayEvents();
+	const runner = makeFakeJobRunner();
+	await makeAnalyzeProcessor(
+		store,
+		AUDIO_ROOT,
+		events,
+		runner,
+		makeScriptedTranscription(),
+	)({ replayId });
+	await makeCalculateMetricsProcessor(store, events, runner)({ replayId });
+	await makeEvaluateReplayProcessor(store, events, UNUSED_JUDGE_PROVIDER)({ replayId });
+}
+
+function printSummary(store: ReturnType<typeof openStore>): void {
+	for (const variant of RUN_VARIANTS) {
+		const { replayId } = variant;
+		const replay = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+		const metrics = store.db
+			.select()
+			.from(replayMetrics)
+			.where(eq(replayMetrics.replayId, replayId))
+			.all();
+		const outcomes = store.db
+			.select()
+			.from(assertionResults)
+			.where(eq(assertionResults.replayId, replayId))
+			.all();
+		const evaluation = store.db
+			.select()
+			.from(replayEvaluations)
+			.where(eq(replayEvaluations.replayId, replayId))
+			.get();
+
+		console.info(`snapshot replay ${replayId} (${variant.configName}) → ${replay?.lifecycleState}`);
+		const responses = metrics
+			.map((m) => m.agentResponseMs)
+			.filter((ms): ms is number => ms !== null);
+		console.info(`  agent_response_ms: ${responses.join(", ") || "(none)"}`);
+		const interrupted = metrics.find((m) => m.yieldMs !== null);
+		console.info(`  yield_ms: ${interrupted?.yieldMs ?? "(none)"}`);
+		for (const outcome of outcomes) {
+			console.info(`  turn ${outcome.turnIdx} ${outcome.kind}: ${outcome.status}`);
+		}
+		console.info(`  passed: ${evaluation?.passed}`);
 	}
-	console.info(`  passed: ${evaluation?.passed}`);
 }
 
 await main();

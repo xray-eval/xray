@@ -56,6 +56,49 @@ describe("POST /v1/replays", () => {
 		expect(body.id).toMatch(/[0-9a-f-]{36}/);
 	});
 
+	it("returns the run-config group hash so the SDK can link the run to its group", async () => {
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				conversation_hash: hash,
+				run_config: { model: "gpt-4o", temperature: 0.5 },
+				run_config_name: "baseline",
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await readJson(res, v.object({ run_config_hash: v.string() }));
+		expect(body.run_config_hash).toMatch(/^[0-9a-f]{64}$/);
+	});
+
+	it("rejects a run_config_name with no run_config to label", async () => {
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ conversation_hash: hash, run_config_name: "baseline" }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects an over-long run_config_name", async () => {
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				conversation_hash: hash,
+				run_config: { model: "gpt-4o" },
+				run_config_name: "x".repeat(257),
+			}),
+		});
+		expect(res.status).toBe(400);
+	});
+
 	it("returns 404 when the conversation hash doesn't exist", async () => {
 		const { app } = makeApp();
 		const res = await app.request("/v1/replays", {

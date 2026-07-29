@@ -26,4 +26,16 @@ export type {
 	TurnTranscriptResponse,
 	UpdateReplayRequest,
 } from "@/server/replays/replays.types.ts";
+export type {
+	CompareRunConfigsResponse,
+	ConversationScope,
+	ListRunConfigsResponse,
+	MetricAggregate,
+	ReplaySelection,
+	RunConfigConversationRow,
+	RunConfigDetailResponse,
+	RunConfigGroupResult,
+	RunConfigMetrics,
+	RunConfigSummary,
+} from "@/server/run-configs/run-configs.types.ts";
 export type { SpanVocabulary, TurnRole } from "@/server/store/types.ts";

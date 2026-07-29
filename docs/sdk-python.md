@@ -46,7 +46,7 @@ The extras add more:
 | `Assertion` | dataclass | Declarative per-turn check; 9 builder classmethods. |
 | `Judge` | dataclass | Conversation-level LLM evaluator; `Judge.text_match(...)`. |
 | `RecordedAudio` / `TtsAudio` | dataclass | The two user-turn audio references. |
-| `RunConfig` | dataclass | Per-replay config (model, temperature, extras). |
+| `RunConfig` | dataclass | Per-replay config (model, temperature, extras) + an optional group `name`. |
 | `run` | async fn | Orchestrate a scripted Conversation → `ReplayResult`. |
 | `run_live` | async fn | Orchestrate an unscripted OS-mic session → `ReplayResult`. |
 | `attach` | async context manager | Wire xray onto a LiveKit Agents entrypoint. |
@@ -230,15 +230,27 @@ The recording captures both speakers overlapping at the barge-in point (`LiveKit
 
 ```python
 RunConfig(model: str | None = None, temperature: float | None = None,
-          extra: dict[str, JsonValue] = {})
+          name: str | None = None, extra: dict[str, JsonValue] = {})
 ```
 
 This is per-replay configuration. It is carried to the server on `POST /v1/replays`.
 
-Two details about how it goes over the wire:
+The server also hashes the config content to derive a **run-config group**, so every replay that ran under the same configuration is grouped together. That is what powers the config comparison at `/configs` — "how does this strategy do across the whole suite, and how does it compare to the other one?"
+
+Details about how it goes over the wire:
 
 - `extra` keys are flattened to the top level. This lets the compare UI diff them as first-class columns.
 - `model` and `temperature` are omitted entirely when they are `None`.
+- `name` is **not** part of `to_wire()`. It travels as a sibling field, `run_config_name`, because the group's identity is the hash of the config *content* — a label inside the hashed object would make renaming fork the group instead of relabelling it. Renames are last-write-wins, exactly like `Conversation`'s `name`.
+- A group without a name still works; the UI labels it with a summary of its config keys plus a hash prefix.
+
+```python
+# Two runs, two groups, comparable at /configs
+await xray.run(conversation=c, runtime=rt,
+               run_config=RunConfig(name="baseline", model="gpt-4o"))
+await xray.run(conversation=c, runtime=rt,
+               run_config=RunConfig(name="fast-follow", model="gemini-2.5-flash"))
+```
 
 ---
 
@@ -259,7 +271,7 @@ End to end, here is what `run` does:
 1. Checks that every `RecordedAudio` file exists locally.
 2. POSTs the Conversation to `/v1/conversations` and reads back the hash. The body is multipart: a `spec` JSON part plus one file part per `RecordedAudio` turn.
 3. Prefetches every user turn's audio (the bytes the server synthesized or stored). It does this before creating the replay, so a failure leaves no orphan row behind.
-4. POSTs the Replay to `/v1/replays` (`{conversation_hash, run_config?}`) and reads back its `id`.
+4. POSTs the Replay to `/v1/replays` (`{conversation_hash, run_config?, run_config_name?}`) and reads back its `id`.
 5. Drives the runtime. This step binds the replay context, injects the user audio, installs the OTEL pipeline pointed at `xray_url`, attaches the replay baggage, runs the runtime, then force-flushes the spans.
 6. Uploads the stereo mixdown WAV to `/v1/replays/:id/audio` with the `X-Recording-Started-At` header, then POSTs `/v1/replays/:id/analyze`.
 7. Streams `/v1/replays/:id/events` until one of two events arrives. On `evaluation_complete` it returns a `ReplayResult`. On `failed` it raises `ReplayEvaluationError`.

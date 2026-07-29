@@ -8,6 +8,7 @@ import type { JobRunner } from "./jobs/jobs.bunqueue.ts";
 import { createOtlpRouter } from "./otlp/otlp.router.ts";
 import type { ReplayEvents } from "./replays/replays.events.ts";
 import { createReplaysRouter } from "./replays/replays.router.ts";
+import { createRunConfigsRouter } from "./run-configs/run-configs.router.ts";
 import type { Store } from "./store/store.ts";
 import type { TtsProvider } from "./tts/tts.types.ts";
 
@@ -30,6 +31,7 @@ export function createApp(store: Store, config: AppConfig): Hono {
 		}),
 	);
 	app.route("/v1", createReplaysRouter(store, config.jobRunner, config.events));
+	app.route("/v1", createRunConfigsRouter(store));
 	app.route("/v1", createOtlpRouter(store));
 	app.route("/v1", createAudioRouter(store, config.audioRoot));
 	app.route("/", createDocsRouter(app));

@@ -4,6 +4,7 @@ import type {
 	ConversationInput,
 	ReplayInput,
 	ReplayTurnInput,
+	RunConfigInput,
 	SpanInput,
 	SpeechSegmentInput,
 } from "./types.ts";
@@ -38,6 +39,16 @@ export function makeConversationInput(
 	};
 }
 
+export function makeRunConfigInput(overrides: Partial<RunConfigInput> = {}): RunConfigInput {
+	return {
+		hash: fakeHash(2),
+		name: "baseline",
+		configJson: JSON.stringify({ model: "gpt-4o" }),
+		createdAt: "2026-05-16T12:00:00.000Z",
+		...overrides,
+	};
+}
+
 export function makeReplayInput(overrides: Partial<ReplayInput> = {}): ReplayInput {
 	replayCounter += 1;
 	return {
@@ -50,6 +61,7 @@ export function makeReplayInput(overrides: Partial<ReplayInput> = {}): ReplayInp
 		finishedAt: null,
 		audioPath: null,
 		runConfigJson: null,
+		runConfigHash: null,
 		jobId: null,
 		...overrides,
 	};

@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import { ConversationHashSchema } from "@/server/conversations/conversations.types.ts";
+import { RunConfigNameSchema } from "@/server/run-configs/run-configs.types.ts";
 import {
 	ANALYSIS_STEPS,
 	REPLAY_FAILURE_REASONS,
@@ -28,10 +29,23 @@ export const SpanVocabularySchema = v.picklist(SPAN_VOCABULARIES);
  * hash here. The SDK should propagate the returned `id`
  * (xray.replay.id) onto the voice service BEFORE its first OTEL span.
  */
-export const CreateReplayRequestSchema = v.object({
-	conversation_hash: ConversationHashSchema,
-	run_config: v.optional(v.unknown()),
-});
+export const CreateReplayRequestSchema = v.pipe(
+	v.object({
+		conversation_hash: ConversationHashSchema,
+		run_config: v.optional(v.unknown()),
+		// Display label for the run-config group this replay joins. Deliberately
+		// a sibling of `run_config` rather than a key inside it: the label must
+		// not enter the content hash (renaming would fork the group), and
+		// `RunConfig.extra` flattens into `run_config`, so a dev's own `name` key
+		// would otherwise change grouping semantics. Keeps `run_config` a
+		// verbatim opaque blob with no carve-out rule.
+		run_config_name: v.optional(RunConfigNameSchema),
+	}),
+	v.check(
+		(body) => body.run_config_name === undefined || body.run_config != null,
+		"run_config_name requires a run_config to label",
+	),
+);
 export type CreateReplayRequest = v.InferOutput<typeof CreateReplayRequestSchema>;
 
 export const UpdateReplayRequestSchema = v.object({
@@ -169,6 +183,10 @@ export const ReplaySummaryResponseSchema = v.object({
 	started_at: v.string(),
 	finished_at: v.nullable(v.string()),
 	run_config: v.unknown(),
+	// Identity of the run-config group. Null when the replay carried no config
+	// — such a replay belongs to no group and is invisible to the config
+	// comparison view.
+	run_config_hash: v.nullable(v.string()),
 });
 export type ReplaySummaryResponse = v.InferOutput<typeof ReplaySummaryResponseSchema>;
 
@@ -188,6 +206,7 @@ export const ReplayDetailResponseSchema = v.object({
 	audio_path: v.nullable(v.string()),
 	job_id: v.nullable(v.string()),
 	run_config: v.unknown(),
+	run_config_hash: v.nullable(v.string()),
 	turns: v.array(ReplayTurnResponseSchema),
 	speech_segments: v.array(SpeechSegmentResponseSchema),
 	transcripts: v.array(TurnTranscriptResponseSchema),

@@ -183,7 +183,7 @@ async def main():
         conversation=conv,
         runtime=driver,
         xray_url="http://localhost:8080",
-        run_config=xray.RunConfig(model="gpt-4o", temperature=0.5),
+        run_config=xray.RunConfig(name="baseline", model="gpt-4o", temperature=0.5),
     )
     print(f"replay: {result.replay_id} passed={result.passed}")
     for a in result.assertions:

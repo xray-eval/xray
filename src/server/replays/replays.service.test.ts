@@ -3,11 +3,13 @@ import { eq } from "drizzle-orm";
 import { ConversationNotFoundError } from "@/server/conversations/conversations.errors.ts";
 import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
+import { hashRunConfig } from "@/server/run-configs/run-configs.hash.ts";
 import {
 	replayEvaluations,
 	replayMetrics,
 	replays,
 	replayTurns,
+	runConfigs,
 	turnTranscripts,
 } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
@@ -65,6 +67,71 @@ describe("createReplay", () => {
 			run_config: { model: "gpt-4o", temperature: 0.5 },
 		});
 		expect(detail.run_config).toEqual({ model: "gpt-4o", temperature: 0.5 });
+		store.close();
+	});
+
+	it("assigns the replay to a run-config group", async () => {
+		const store = makeTempStore();
+		const { hash } = await seedConversation(store);
+		const detail = createReplay(store, {
+			conversation_hash: hash,
+			run_config: { model: "gpt-4o", temperature: 0.5 },
+			run_config_name: "baseline",
+		});
+		expect(detail.run_config_hash).toBe(hashRunConfig({ model: "gpt-4o", temperature: 0.5 }));
+		const group = store.db
+			.select()
+			.from(runConfigs)
+			.where(eq(runConfigs.hash, hashRunConfig({ model: "gpt-4o", temperature: 0.5 })))
+			.get();
+		expect(group?.name).toBe("baseline");
+		store.close();
+	});
+
+	it("puts two runs of the same config in one group, whatever the key order", async () => {
+		const store = makeTempStore();
+		const { hash } = await seedConversation(store);
+		const first = createReplay(store, {
+			conversation_hash: hash,
+			run_config: { model: "gpt-4o", temperature: 0.5 },
+		});
+		const second = createReplay(store, {
+			conversation_hash: hash,
+			run_config: { temperature: 0.5, model: "gpt-4o" },
+		});
+		expect(second.run_config_hash).toBe(first.run_config_hash);
+		expect(store.db.select().from(runConfigs).all()).toHaveLength(1);
+		store.close();
+	});
+
+	it("leaves a replay ungrouped when it carries no run_config", async () => {
+		const store = makeTempStore();
+		const { hash } = await seedConversation(store);
+		const detail = createReplay(store, { conversation_hash: hash });
+		expect(detail.run_config_hash).toBeNull();
+		expect(store.db.select().from(runConfigs).all()).toHaveLength(0);
+		store.close();
+	});
+
+	it("treats an explicit null run_config as no config at all", async () => {
+		const store = makeTempStore();
+		const { hash } = await seedConversation(store);
+		const detail = createReplay(store, { conversation_hash: hash, run_config: null });
+		expect(detail.run_config_hash).toBeNull();
+		expect(store.db.select().from(runConfigs).all()).toHaveLength(0);
+		store.close();
+	});
+
+	it("does not create the replay when its config cannot be hashed", async () => {
+		const store = makeTempStore();
+		const { hash } = await seedConversation(store);
+		expect(() =>
+			createReplay(store, {
+				conversation_hash: hash,
+				run_config: { temperature: Number.NaN },
+			}),
+		).toThrow(TypeError);
+		expect(store.db.select().from(replays).all()).toHaveLength(0);
 		store.close();
 	});
 });

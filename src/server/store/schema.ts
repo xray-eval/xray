@@ -81,6 +81,28 @@ export const ttsSynthCache = sqliteTable(
 	],
 );
 
+// Run configs — the identity of "the configuration a replay ran under".
+//
+// Same shape as `conversations`: `hash` is a 64-char hex SHA-256 over the
+// canonical-JSON encoding of the config content (see
+// `@/server/run-configs/run-configs.hash.ts`), and `name` is a free-form
+// display label that is NOT part of the identity — so re-running the same
+// config under a new label renames the group instead of forking it.
+//
+// The label is nullable here but not on `conversations`, because it's optional
+// on the wire: a dev who never sets `RunConfig(name=...)` still gets a group,
+// displayed as a summary of its config keys.
+export const runConfigs = sqliteTable(
+	"run_configs",
+	{
+		hash: text("hash").primaryKey(),
+		name: text("name"),
+		configJson: text("config_json").notNull(),
+		createdAt: text("created_at").notNull(),
+	},
+	(t) => [check("run_configs_hash_ck", sql`length(${t.hash}) = 64`)],
+);
+
 // Replays — one execution of one Conversation.
 //
 // Lifecycle is server-owned: the driver POSTs to create (`pending`), PATCHes
@@ -112,14 +134,24 @@ export const replays = sqliteTable(
 		recordingStartedAt: text("recording_started_at"),
 		// Path under XRAY_AUDIO_ROOT to the uploaded stereo WAV.
 		audioPath: text("audio_path"),
-		// Opaque dev-side snapshot of the SUT config at run start.
+		// Opaque dev-side snapshot of the SUT config at run start. Kept verbatim
+		// even though `run_configs.config_json` holds the same content: this is
+		// the per-replay record, and it's the only source a backfill can hash
+		// for replays created before run configs had an identity.
 		runConfigJson: text("run_config_json"),
+		// Group this replay belongs to, for cross-conversation comparison. Null
+		// when the driver sent no run config — such a replay belongs to no group
+		// and is invisible to the comparison view.
+		runConfigHash: text("run_config_hash").references(() => runConfigs.hash, {
+			onDelete: "restrict",
+		}),
 		// bunqueue job id assigned when /analyze is invoked. Null until then.
 		jobId: text("job_id"),
 	},
 	(t) => [
 		index("idx_replays_conversation_hash").on(t.conversationHash, t.startedAt),
 		index("idx_replays_started_at").on(t.startedAt),
+		index("idx_replays_run_config_hash").on(t.runConfigHash, t.startedAt),
 		check(
 			"replays_lifecycle_state_ck",
 			sql`${t.lifecycleState} IN ('pending', 'running', 'recording_uploaded', 'analyzing', 'completed', 'failed')`,

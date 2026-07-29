@@ -10,15 +10,25 @@ import {
 	ReplayDetailResponseSchema,
 	ReplayResultSchema,
 } from "@/server/replays/replays.types.ts";
+import type { CompareRunConfigsRequest } from "@/server/run-configs/run-configs.types.ts";
+import {
+	CompareRunConfigsResponseSchema,
+	ListRunConfigsResponseSchema,
+	RunConfigDetailResponseSchema,
+} from "@/server/run-configs/run-configs.types.ts";
 
 import { ApiRequestFailedError, ApiResponseValidationError } from "./api.errors.ts";
 import type {
 	CompareReplaysResponse,
+	CompareRunConfigsResponse,
 	ConversationResponse,
 	ListConversationsResponse,
 	ListReplaysResponse,
+	ListRunConfigsResponse,
 	ReplayDetailResponse,
 	ReplayResult,
+	ReplaySelection,
+	RunConfigDetailResponse,
 } from "./api.types.ts";
 
 /**
@@ -101,6 +111,29 @@ export function compareReplays(
 		"/v1/replays/compare",
 		{ replay_ids: replayIds },
 		CompareReplaysResponseSchema,
+		signal,
+	);
+}
+
+export function listRunConfigs(signal?: AbortSignal): Promise<ListRunConfigsResponse> {
+	return getJson("/v1/run-configs", ListRunConfigsResponseSchema, signal);
+}
+
+export function compareRunConfigs(
+	body: CompareRunConfigsRequest,
+	signal?: AbortSignal,
+): Promise<CompareRunConfigsResponse> {
+	return postJson("/v1/run-configs/compare", body, CompareRunConfigsResponseSchema, signal);
+}
+
+export function getRunConfigDetail(
+	hash: string,
+	replaySelection: ReplaySelection,
+	signal?: AbortSignal,
+): Promise<RunConfigDetailResponse> {
+	return getJson(
+		`/v1/run-configs/${hash}?replay_selection=${replaySelection}`,
+		RunConfigDetailResponseSchema,
 		signal,
 	);
 }
