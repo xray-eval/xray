@@ -275,6 +275,32 @@ describe("RunConfigsCompare", () => {
 		await waitFor(() => expect(screen.getByText(/No run configs yet/)).toBeTruthy());
 	});
 
+	it("asks for a second config instead of prompting a selection that can't be made", async () => {
+		// The state every dev is in right after their first labelled run. There is
+		// no second card to click, so "select at least 2" would be an instruction
+		// with nothing to act on.
+		server.use(
+			http.get("http://localhost/v1/run-configs", () => HttpResponse.json({ items: [GROUPS[1]] })),
+		);
+		const { ui } = renderWithRouter({ initialEntries: ["/configs"] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText(/Only one run config so far/)).toBeTruthy());
+		expect(screen.getByText(/baseline/)).toBeTruthy();
+		expect(screen.queryByText(/Select at least/)).toBeNull();
+	});
+
+	it("does not offer the shared-only switch when the configs share no conversations", async () => {
+		// Switching to `intersection` over a disjoint pair lands on a matrix where
+		// every cell is "—" with n=0, so the one-click fix would be a dead end.
+		mockApi({ unionConversations: 3, intersectionConversations: 0, fastConversations: 1 });
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText(/no conversations in common/)).toBeTruthy());
+		expect(screen.queryByRole("button", { name: "Compare shared only" })).toBeNull();
+	});
+
 	it("surfaces a list failure rather than an empty page", async () => {
 		server.use(
 			http.get("http://localhost/v1/run-configs", () =>

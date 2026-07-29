@@ -51,13 +51,14 @@ export function RunConfigsCompare() {
 						Failed to load run configs.
 					</p>
 				))
-				.with({ status: "success" }, (q) =>
-					q.data.items.length === 0 ? (
-						<EmptyState />
-					) : (
-						<CompareBody items={q.data.items} search={search} />
-					),
-				)
+				.with({ status: "success" }, (q) => {
+					// Below two configs there is nothing to compare and no second card
+					// to click, so the picker would be a prompt the user can't act on.
+					const [only] = q.data.items;
+					if (only === undefined) return <EmptyState />;
+					if (q.data.items.length < MIN_COMPARE) return <OneConfigState item={only} />;
+					return <CompareBody items={q.data.items} search={search} />;
+				})
 				.exhaustive()}
 		</section>
 	);
@@ -186,6 +187,21 @@ function CoverageNotice({
 				Comparing the {comparison.intersection_conversations} conversation
 				{comparison.intersection_conversations === 1 ? "" : "s"} every selected config ran. Runs
 				outside that shared set are excluded from these numbers.
+			</p>
+		);
+	}
+	// With an empty intersection the one-click fix would land on a matrix where
+	// every cell is "—" with n=0, so say the comparison can't be made fair
+	// instead of offering a button that makes it emptier.
+	if (comparison.intersection_conversations === 0) {
+		return (
+			<p
+				role="status"
+				className="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm"
+			>
+				These configs have no conversations in common, so the numbers below describe entirely
+				different workloads and can't be compared directly. Run them over the same conversations to
+				get a fair comparison.
 			</p>
 		);
 	}
@@ -448,6 +464,28 @@ function EmptyState() {
 				<code className="font-mono text-xs">run_config=RunConfig(name="baseline", model=…)</code> to{" "}
 				<code className="font-mono text-xs">xray.run(...)</code> and every replay under that config
 				gets grouped here.
+			</p>
+		</div>
+	);
+}
+
+/**
+ * One group exists — the state a dev is in right after their first labelled
+ * run. Naming the config they already have is what makes it read as progress
+ * rather than as the empty page again.
+ */
+function OneConfigState({ item }: { item: RunConfigSummary }) {
+	return (
+		<div className="rounded-lg border border-dashed border-border/60 px-6 py-16 text-center">
+			<p className="mx-auto max-w-md text-sm text-muted-foreground">
+				Only one run config so far —{" "}
+				<span className="font-medium text-foreground">
+					{runConfigLabel(item.name, item.config, item.hash)}
+				</span>
+				, over {item.coverage.conversations} conversation
+				{item.coverage.conversations === 1 ? "" : "s"}. Run your suite again under a second{" "}
+				<code className="font-mono text-xs">RunConfig(...)</code> and the two show up here side by
+				side.
 			</p>
 		</div>
 	);
