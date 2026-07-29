@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, count, countDistinct, eq, inArray, isNotNull, isNull, max, sql } from "drizzle-orm";
 
 import {
 	conversations,
@@ -13,7 +13,6 @@ import type { Store, StoreDbOrTx } from "@/server/store/store.ts";
 import type { RunConfigRow } from "@/server/store/types.ts";
 
 import type {
-	AggregateInput,
 	EvaluationSample,
 	IncludableReplay,
 	ModelUsageSample,
@@ -147,27 +146,15 @@ function parseLegacyRunConfig(replayId: string, raw: string | null): unknown {
 	}
 }
 
-/**
- * Every replay in the given groups, plus the derived rows the aggregates read.
- *
- * One fetch per table filtered by `run_config_hash IN (…)` — never by a list of
- * replay ids, which would grow an `IN` clause with the run history and risk
- * SQLite's bound-variable ceiling. Inclusion (latest vs all, scope) is decided
- * afterwards in pure code.
- */
-interface GroupRows {
-	readonly replays: readonly (IncludableReplay & { readonly runConfigHash: string })[];
-	readonly turnMetrics: readonly (TurnMetricSample & { readonly runConfigHash: string })[];
-	readonly modelUsage: readonly (ModelUsageSample & { readonly runConfigHash: string })[];
-	readonly evaluations: readonly (EvaluationSample & { readonly runConfigHash: string })[];
-}
-
 type GroupedReplayRow = IncludableReplay & { readonly runConfigHash: string };
 
 /**
- * Replay headers only. Split out from `fetchGroupRows` because the list route
- * needs nothing else, and pulling the three derived-row joins for every group
- * in the database made a page load scale with the whole run history.
+ * Replay headers for the given groups — the input to selection and to the
+ * coverage counts. Headers, not derived rows: which replays count is decided in
+ * pure code afterwards, and only then are their metrics read.
+ *
+ * Deliberately unfiltered by lifecycle: `coverage.failed_replays` is counted
+ * over the whole group, so a config that fails runs outright stays visible.
  */
 function fetchGroupReplays(store: Store, hashes: readonly string[]): GroupedReplayRow[] {
 	if (hashes.length === 0) return [];
@@ -185,68 +172,98 @@ function fetchGroupReplays(store: Store, hashes: readonly string[]): GroupedRepl
 		.filter(hasGroup);
 }
 
-function fetchGroupRows(store: Store, hashes: readonly string[]): GroupRows {
-	if (hashes.length === 0) {
-		return { replays: [], turnMetrics: [], modelUsage: [], evaluations: [] };
+/** The derived rows the aggregates read, for one explicit set of replays. */
+interface DerivedRows {
+	readonly turnMetrics: readonly TurnMetricSample[];
+	readonly modelUsage: readonly ModelUsageSample[];
+	readonly evaluations: readonly EvaluationSample[];
+}
+
+const REPLAY_ID_BATCH = 500;
+
+/**
+ * Batch an id list for `IN (…)`, de-duplicated.
+ *
+ * The de-duplication is load-bearing rather than tidiness: an id appearing in
+ * two batches would fetch its rows twice, and every aggregate below sums what
+ * it's handed.
+ */
+export function chunkIds(ids: readonly string[], size: number): string[][] {
+	const unique = [...new Set(ids)];
+	const batches: string[][] = [];
+	for (let start = 0; start < unique.length; start += size) {
+		batches.push(unique.slice(start, start + size));
 	}
-	const inGroups = inArray(replays.runConfigHash, [...hashes]);
-	const replayRows = fetchGroupReplays(store, hashes);
+	return batches;
+}
 
-	// `replay_metrics` has no role column, so the agent-turn filter and the
-	// interruption denominator both need the join to `replay_turns` — same
-	// pairing `projectTurnMetrics` does for the per-replay view.
-	const turnMetricRows = store.db
-		.select({
-			replayId: replayMetrics.replayId,
-			role: replayTurns.role,
-			agentResponseMs: replayMetrics.agentResponseMs,
-			interrupted: replayMetrics.interrupted,
-			yieldMs: replayMetrics.yieldMs,
-			runConfigHash: replays.runConfigHash,
-		})
-		.from(replayMetrics)
-		.innerJoin(replays, eq(replays.id, replayMetrics.replayId))
-		.innerJoin(
-			replayTurns,
-			and(
-				eq(replayTurns.replayId, replayMetrics.replayId),
-				eq(replayTurns.idx, replayMetrics.turnIdx),
-			),
-		)
-		.where(inGroups)
-		.all();
+/**
+ * Read the derived rows for exactly the replays that feed a number.
+ *
+ * Keyed by replay id, not by `run_config_hash`, because the useful subset and
+ * the group's history diverge: under the default `latest` selection one replay
+ * per conversation feeds the metrics no matter how many times the suite has been
+ * re-run, so fetching by group would grow every page load with the whole run
+ * history only for `buildMetrics` to discard the surplus.
+ *
+ * Ids are batched because under `all` selection the list *does* grow with the
+ * history, and an unbounded `IN` would eventually reach SQLite's bound-variable
+ * ceiling.
+ */
+function fetchDerivedRows(store: Store, replayIds: readonly string[]): DerivedRows {
+	const turnMetrics: TurnMetricSample[] = [];
+	const modelUsageRows: ModelUsageSample[] = [];
+	const evaluations: EvaluationSample[] = [];
 
-	const modelUsageRows = store.db
-		.select({
-			replayId: modelUsage.replayId,
-			ttftMs: modelUsage.ttftMs,
-			latencyMs: modelUsage.latencyMs,
-			inputTokens: modelUsage.inputTokens,
-			outputTokens: modelUsage.outputTokens,
-			runConfigHash: replays.runConfigHash,
-		})
-		.from(modelUsage)
-		.innerJoin(replays, eq(replays.id, modelUsage.replayId))
-		.where(inGroups)
-		.all();
+	for (const ids of chunkIds(replayIds, REPLAY_ID_BATCH)) {
+		// `replay_metrics` has no role column, so the agent-turn filter and the
+		// interruption denominator both need the join to `replay_turns` — same
+		// pairing `projectTurnMetrics` does for the per-replay view.
+		turnMetrics.push(
+			...store.db
+				.select({
+					replayId: replayMetrics.replayId,
+					role: replayTurns.role,
+					agentResponseMs: replayMetrics.agentResponseMs,
+					interrupted: replayMetrics.interrupted,
+					yieldMs: replayMetrics.yieldMs,
+				})
+				.from(replayMetrics)
+				.innerJoin(
+					replayTurns,
+					and(
+						eq(replayTurns.replayId, replayMetrics.replayId),
+						eq(replayTurns.idx, replayMetrics.turnIdx),
+					),
+				)
+				.where(inArray(replayMetrics.replayId, ids))
+				.all(),
+		);
 
-	const evaluationRows = store.db
-		.select({
-			replayId: replayEvaluations.replayId,
-			passed: replayEvaluations.passed,
-			runConfigHash: replays.runConfigHash,
-		})
-		.from(replayEvaluations)
-		.innerJoin(replays, eq(replays.id, replayEvaluations.replayId))
-		.where(inGroups)
-		.all();
+		modelUsageRows.push(
+			...store.db
+				.select({
+					replayId: modelUsage.replayId,
+					ttftMs: modelUsage.ttftMs,
+					latencyMs: modelUsage.latencyMs,
+					inputTokens: modelUsage.inputTokens,
+					outputTokens: modelUsage.outputTokens,
+				})
+				.from(modelUsage)
+				.where(inArray(modelUsage.replayId, ids))
+				.all(),
+		);
 
-	return {
-		replays: replayRows,
-		turnMetrics: turnMetricRows.filter(hasGroup),
-		modelUsage: modelUsageRows.filter(hasGroup),
-		evaluations: evaluationRows.filter(hasGroup),
-	};
+		evaluations.push(
+			...store.db
+				.select({ replayId: replayEvaluations.replayId, passed: replayEvaluations.passed })
+				.from(replayEvaluations)
+				.where(inArray(replayEvaluations.replayId, ids))
+				.all(),
+		);
+	}
+
+	return { turnMetrics, modelUsage: modelUsageRows, evaluations };
 }
 
 /**
@@ -280,19 +297,6 @@ function coverageOf(
 	};
 }
 
-function aggregateInputFor(
-	rows: GroupRows,
-	hash: string,
-	includedReplays: readonly IncludableReplay[],
-): AggregateInput {
-	return {
-		replays: includedReplays,
-		turnMetrics: narrowToGroup(rows.turnMetrics, hash),
-		modelUsage: narrowToGroup(rows.modelUsage, hash),
-		evaluations: narrowToGroup(rows.evaluations, hash),
-	};
-}
-
 function parseStoredConfig(row: RunConfigRow): unknown {
 	try {
 		return JSON.parse(row.configJson);
@@ -306,6 +310,54 @@ function parseStoredConfig(row: RunConfigRow): unknown {
 	}
 }
 
+interface GroupCoverageCounts {
+	readonly conversations: number;
+	readonly replays: number;
+	readonly failedReplays: number;
+	readonly lastRunAt: string | null;
+}
+
+/**
+ * Coverage for every group, counted in SQL and keyed by hash.
+ *
+ * Aggregated by the database rather than over fetched rows so a page load stays
+ * independent of the run history: the alternative reads every grouped replay
+ * header in the file to produce three integers per group, and builds an `IN`
+ * clause that grows with the number of groups — which a two-parameter sweep
+ * produces quickly.
+ */
+function fetchGroupCoverage(store: Store): Map<string, GroupCoverageCounts> {
+	const rows = store.db
+		.select({
+			hash: replays.runConfigHash,
+			replayCount: count(),
+			conversationCount: countDistinct(replays.conversationHash),
+			// `count(expr)` skips nulls, so a CASE with no ELSE counts exactly the
+			// failed rows — and returns an integer, where `sum` would come back as a
+			// string.
+			failedCount: count(sql`case when ${replays.lifecycleState} = 'failed' then 1 end`),
+			lastRunAt: max(replays.startedAt),
+		})
+		.from(replays)
+		.where(isNotNull(replays.runConfigHash))
+		.groupBy(replays.runConfigHash)
+		.all();
+
+	const byHash = new Map<string, GroupCoverageCounts>();
+	for (const row of rows) {
+		// The `IS NOT NULL` filter already excluded ungrouped replays; the column's
+		// type doesn't know that.
+		if (row.hash === null) continue;
+		byHash.set(row.hash, {
+			conversations: row.conversationCount,
+			replays: row.replayCount,
+			failedReplays: row.failedCount,
+			lastRunAt: row.lastRunAt,
+		});
+	}
+	return byHash;
+}
+
 /**
  * All groups, newest activity first, each with the coverage counts the picker
  * needs to show what a group actually spans before you select it.
@@ -317,23 +369,21 @@ function parseStoredConfig(row: RunConfigRow): unknown {
 export function listRunConfigs(store: Store): ListRunConfigsResponse {
 	const groups = store.db.select().from(runConfigs).all();
 	if (groups.length === 0) return { items: [] };
-	const replayRows = fetchGroupReplays(
-		store,
-		groups.map((g) => g.hash),
-	);
+	const coverage = fetchGroupCoverage(store);
 	const items: RunConfigSummary[] = groups.map((group) => {
-		const groupReplays = narrowToGroup(replayRows, group.hash);
-		const startedAts = groupReplays.map((r) => r.startedAt).sort();
+		// A group no replay points at still belongs in the list — it exists, and
+		// zeros are the honest reading of it.
+		const counts = coverage.get(group.hash);
 		return {
 			hash: group.hash,
 			name: group.name,
 			config: parseStoredConfig(group),
 			created_at: group.createdAt,
-			last_run_at: startedAts.at(-1) ?? null,
+			last_run_at: counts?.lastRunAt ?? null,
 			coverage: {
-				conversations: new Set(groupReplays.map((r) => r.conversationHash)).size,
-				replays: groupReplays.length,
-				failed_replays: groupReplays.filter((r) => r.lifecycleState === "failed").length,
+				conversations: counts?.conversations ?? 0,
+				replays: counts?.replays ?? 0,
+				failed_replays: counts?.failedReplays ?? 0,
 			},
 		};
 	});
@@ -358,29 +408,38 @@ export function compareRunConfigs(
 	req: CompareRunConfigsRequest,
 ): CompareRunConfigsResponse {
 	const groups = req.config_hashes.map((hash) => requireGroup(store, hash));
-	const rows = fetchGroupRows(store, req.config_hashes);
+	const replayRows = fetchGroupReplays(store, req.config_hashes);
 
 	// Included replays are resolved before scope is applied, because the scope
 	// itself is defined by what each config *completed* — a conversation only
 	// one config finished isn't shared workload even if both attempted it.
 	const perGroupIncluded = groups.map((group) =>
-		selectIncludedReplays(narrowToGroup(rows.replays, group.hash), req.replay_selection),
+		selectIncludedReplays(narrowToGroup(replayRows, group.hash), req.replay_selection),
 	);
 	const scope = conversationScopeFilter(
 		perGroupIncluded.map((included) => [...new Set(included.map((r) => r.conversationHash))]),
 		req.conversation_scope,
 	);
+	const perGroupScoped = perGroupIncluded.map((included) =>
+		included.filter((replay) => scope.included.has(replay.conversationHash)),
+	);
+	// Read after selection and scope, so the derived tables are touched only for
+	// replays that actually feed a number.
+	const derived = fetchDerivedRows(
+		store,
+		perGroupScoped.flatMap((included) => included.map((replay) => replay.id)),
+	);
 
 	const groupResults: RunConfigGroupResult[] = groups.map((group, idx) => {
-		const included = (perGroupIncluded[idx] ?? []).filter((replay) =>
-			scope.included.has(replay.conversationHash),
-		);
+		const included = perGroupScoped[idx] ?? [];
 		return {
 			hash: group.hash,
 			name: group.name,
 			config: parseStoredConfig(group),
-			coverage: coverageOf(narrowToGroup(rows.replays, group.hash), included),
-			metrics: buildMetrics(aggregateInputFor(rows, group.hash, included)),
+			coverage: coverageOf(narrowToGroup(replayRows, group.hash), included),
+			// `buildMetrics` keys off `included`, so rows belonging to another
+			// group's replays drop out here — no need to pre-partition by hash.
+			metrics: buildMetrics({ replays: included, ...derived }),
 		};
 	});
 
@@ -407,9 +466,12 @@ export function getRunConfigDetail(
 	selection: ReplaySelection,
 ): RunConfigDetailResponse {
 	const group = requireGroup(store, hash);
-	const rows = fetchGroupRows(store, [hash]);
-	const groupReplays = narrowToGroup(rows.replays, hash);
+	const groupReplays = fetchGroupReplays(store, [hash]);
 	const included = selectIncludedReplays(groupReplays, selection);
+	const derived = fetchDerivedRows(
+		store,
+		included.map((replay) => replay.id),
+	);
 	const names = conversationNames(
 		store,
 		included.map((r) => r.conversationHash),
@@ -422,9 +484,7 @@ export function getRunConfigDetail(
 			replay,
 		]);
 	}
-	const passedById = new Map(
-		narrowToGroup(rows.evaluations, hash).map((row) => [row.replayId, row.passed] as const),
-	);
+	const passedById = new Map(derived.evaluations.map((row) => [row.replayId, row.passed] as const));
 
 	const conversationRows: RunConfigConversationRow[] = [];
 	for (const [conversationHash, conversationReplays] of byConversation) {
@@ -442,7 +502,7 @@ export function getRunConfigDetail(
 				started_at: replay.startedAt,
 				passed: passedById.get(replay.id) ?? null,
 			})),
-			metrics: buildMetrics(aggregateInputFor(rows, hash, conversationReplays)),
+			metrics: buildMetrics({ replays: conversationReplays, ...derived }),
 		});
 	}
 	conversationRows.sort((a, b) => a.conversation_name.localeCompare(b.conversation_name));
@@ -454,7 +514,7 @@ export function getRunConfigDetail(
 		created_at: group.createdAt,
 		replay_selection: selection,
 		coverage: coverageOf(groupReplays, included),
-		metrics: buildMetrics(aggregateInputFor(rows, hash, included)),
+		metrics: buildMetrics({ replays: included, ...derived }),
 		conversations: conversationRows,
 	};
 }

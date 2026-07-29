@@ -13,6 +13,7 @@ import { RunConfigNotFoundError } from "./run-configs.errors.ts";
 import { hashRunConfig } from "./run-configs.hash.ts";
 import {
 	backfillRunConfigs,
+	chunkIds,
 	compareRunConfigs,
 	ensureRunConfig,
 	getRunConfigDetail,
@@ -222,6 +223,32 @@ describe("listRunConfigs", () => {
 	test("returns nothing when no replay ever carried a run config", () => {
 		expect(listRunConfigs(store).items).toEqual([]);
 	});
+
+	test("still lists a group no replay points at, counted as zero", () => {
+		ensureRunConfig(store.db, { config: BASELINE, name: "orphan", now: NOW });
+		const { items } = listRunConfigs(store);
+		expect(items).toHaveLength(1);
+		expect(items[0]?.coverage).toEqual({ conversations: 0, replays: 0, failed_replays: 0 });
+		expect(items[0]?.last_run_at).toBeNull();
+	});
+});
+
+describe("chunkIds", () => {
+	test("splits an id list into batches no larger than the cap", () => {
+		expect(chunkIds(["a", "b", "c", "d", "e"], 2)).toEqual([["a", "b"], ["c", "d"], ["e"]]);
+	});
+
+	test("returns a single batch when the list fits", () => {
+		expect(chunkIds(["a", "b"], 5)).toEqual([["a", "b"]]);
+	});
+
+	test("returns no batches for an empty list", () => {
+		expect(chunkIds([], 5)).toEqual([]);
+	});
+
+	test("de-duplicates, so no replay's rows can be fetched by two batches", () => {
+		expect(chunkIds(["a", "b", "a"], 2)).toEqual([["a", "b"]]);
+	});
 });
 
 describe("compareRunConfigs", () => {
@@ -317,6 +344,28 @@ describe("compareRunConfigs", () => {
 		expect(all.groups[0]?.coverage.replays).toBe(3);
 	});
 
+	test("a failed replay's turn metrics never reach the aggregates", () => {
+		const { baseline, fast } = seedTwoConfigs();
+		seedGroupedReplay(store, {
+			id: "base-b-failed-rerun",
+			conversationHash: CONV_B,
+			config: BASELINE,
+			startedAt: "2026-07-05T00:00:00.000Z",
+			lifecycleState: "failed",
+			agentTurns: [{ agentResponseMs: 9999 }],
+		});
+
+		const result = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "union",
+		});
+		// The failed rerun is the newest run of bravo, but it contributes nothing:
+		// 400/600 from alpha and 800 from bravo's last completed run.
+		expect(result.groups[0]?.metrics.agent_response_ms.avg).toBe(600);
+		expect(result.groups[0]?.metrics.agent_response_ms.n).toBe(3);
+	});
+
 	test("throws for an unknown group rather than silently dropping a column", () => {
 		const { baseline } = seedTwoConfigs();
 		expect(() =>
@@ -375,6 +424,22 @@ describe("getRunConfigDetail", () => {
 		const detail = getRunConfigDetail(store, baseline, "latest");
 		expect(detail.conversations.map((c) => c.conversation_hash)).not.toContain(CONV_C);
 		expect(detail.coverage.failed_replays).toBe(1);
+	});
+
+	test("latest selection leaves an earlier run's metrics out of the aggregate", () => {
+		const { baseline } = seedTwoConfigs();
+		seedGroupedReplay(store, {
+			id: "base-a-rerun",
+			conversationHash: CONV_A,
+			config: BASELINE,
+			startedAt: "2026-07-03T00:00:00.000Z",
+			agentTurns: [{ agentResponseMs: 100 }],
+			passed: true,
+		});
+		const detail = getRunConfigDetail(store, baseline, "latest");
+		// alpha's newest run measured 100ms; the 400/600ms first run must not
+		// average into the row that links to the rerun.
+		expect(detail.conversations[0]?.metrics.agent_response_ms).toMatchObject({ avg: 100, n: 1 });
 	});
 
 	test("per-conversation metrics are scoped to that conversation", () => {
