@@ -131,6 +131,83 @@ describe("genAiSemconvVocabulary — execute_tool", () => {
 		const out = genAiSemconvVocabulary(span, EMPTY_RESOURCE);
 		expect(out?.toolCalls?.[0]?.name).toBe("from_name");
 	});
+
+	it("reads tool I/O from the semconv gen_ai.tool.call.* keys", () => {
+		const span = makeProjectedSpan({
+			name: "execute_tool reserve_table",
+			attributes: {
+				"gen_ai.operation.name": "execute_tool",
+				"gen_ai.tool.name": "reserve_table",
+				"gen_ai.tool.call.arguments": '{"party_size":2}',
+				"gen_ai.tool.call.result": '{"ok":true}',
+			},
+		});
+		const out = genAiSemconvVocabulary(span, EMPTY_RESOURCE);
+		expect(out?.toolCalls?.[0]?.argsJson).toBe('{"party_size":2}');
+		expect(out?.toolCalls?.[0]?.resultJson).toBe('{"ok":true}');
+	});
+
+	it("reads tool I/O from pydantic-ai's pre-v3 tool_arguments / tool_response keys", () => {
+		const span = makeProjectedSpan({
+			name: "running tool",
+			attributes: {
+				"gen_ai.operation.name": "execute_tool",
+				"gen_ai.tool.name": "reserve_table",
+				tool_arguments: '{"party_size":2}',
+				tool_response: '{"ok":true}',
+			},
+		});
+		const out = genAiSemconvVocabulary(span, EMPTY_RESOURCE);
+		expect(out?.toolCalls).toEqual([
+			{
+				name: "reserve_table",
+				argsJson: '{"party_size":2}',
+				resultJson: '{"ok":true}',
+				startedAt: "2026-05-18T12:00:00.000Z",
+				endedAt: "2026-05-18T12:00:01.000Z",
+				latencyMs: 1000,
+			},
+		]);
+	});
+
+	it("keeps the non-prefixed tool I/O keys on the persisted span attributes", () => {
+		const span = makeProjectedSpan({
+			name: "running tool",
+			attributes: {
+				"gen_ai.operation.name": "execute_tool",
+				"gen_ai.tool.name": "reserve_table",
+				tool_arguments: '{"party_size":2}',
+				tool_response: '{"ok":true}',
+				"logfire.msg": "running tool: reserve_table",
+			},
+		});
+		const out = genAiSemconvVocabulary(span, EMPTY_RESOURCE);
+		expect(out?.attributes).toEqual({
+			"gen_ai.operation.name": "execute_tool",
+			"gen_ai.tool.name": "reserve_table",
+			tool_arguments: '{"party_size":2}',
+			tool_response: '{"ok":true}',
+		});
+	});
+
+	it("prefers gen_ai.tool.arguments over the call.* and pre-v3 fallbacks", () => {
+		const span = makeProjectedSpan({
+			name: "execute_tool reserve_table",
+			attributes: {
+				"gen_ai.operation.name": "execute_tool",
+				"gen_ai.tool.name": "reserve_table",
+				"gen_ai.tool.arguments": '{"src":"canonical"}',
+				"gen_ai.tool.call.arguments": '{"src":"semconv"}',
+				tool_arguments: '{"src":"pre_v3"}',
+				"gen_ai.tool.result": '{"src":"canonical"}',
+				"gen_ai.tool.call.result": '{"src":"semconv"}',
+				tool_response: '{"src":"pre_v3"}',
+			},
+		});
+		const out = genAiSemconvVocabulary(span, EMPTY_RESOURCE);
+		expect(out?.toolCalls?.[0]?.argsJson).toBe('{"src":"canonical"}');
+		expect(out?.toolCalls?.[0]?.resultJson).toBe('{"src":"canonical"}');
+	});
 });
 
 describe("genAiSemconvVocabulary — non-matching spans", () => {
