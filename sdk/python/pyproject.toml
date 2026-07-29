@@ -50,8 +50,9 @@ dev = [
   # pull whatever ruff shipped that day. A ruff minor promotes new lint rules
   # to the default set and turns green code red with no code change — exactly
   # the drift that reddened this gate. Pin to the tested version; bump
-  # deliberately after a cooldown-checked audit. 0.15.13 uploaded 2026-05-14.
-  "ruff==0.15.13",
+  # deliberately after a cooldown-checked audit. 0.15.20 uploaded 2026-06-26;
+  # re-verified 2026-07-29 (ruff check + ruff format --check both clean).
+  "ruff==0.15.20",
   "respx>=0.21",
 ]
 
