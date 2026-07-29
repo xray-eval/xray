@@ -147,7 +147,7 @@ function CompareBody({
 							<CoverageNotice
 								comparison={q.data}
 								scope={scope}
-								onUseIntersection={() => setSearch({ scope: "intersection" })}
+								onChangeScope={(next) => setSearch({ scope: next })}
 							/>
 							<MetricsMatrix comparison={q.data} />
 						</>
@@ -167,16 +167,44 @@ function CompareBody({
 function CoverageNotice({
 	comparison,
 	scope,
-	onUseIntersection,
+	onChangeScope,
 }: {
 	comparison: CompareRunConfigsResponse;
 	scope: ConversationScope;
-	onUseIntersection: () => void;
+	onChangeScope: (scope: ConversationScope) => void;
 }) {
 	const uneven = comparison.groups.some(
 		(group) => group.coverage.conversations < comparison.union_conversations,
 	);
 	if (!uneven) return null;
+
+	// Checked before the scope split because an empty intersection is a dead end
+	// in both directions: every cell below is "—" with n=0. Under `union` that
+	// means the one-click fix would only make the matrix emptier; under
+	// `intersection` the user is already standing in it — reached by the mode
+	// toggle or a pasted link — and "comparing the 0 conversations every config
+	// ran" would describe that blank matrix as a result.
+	if (comparison.intersection_conversations === 0) {
+		return (
+			<div
+				role="status"
+				className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm"
+			>
+				<p>
+					These configs have no conversations in common, so{" "}
+					{scope === "intersection"
+						? "there is nothing left to compare them on"
+						: "the numbers below describe entirely different workloads and can't be compared directly"}
+					. Run them over the same conversations to get a fair comparison.
+				</p>
+				{scope === "intersection" && (
+					<Button variant="outline" size="sm" onClick={() => onChangeScope("union")}>
+						Show all runs
+					</Button>
+				)}
+			</div>
+		);
+	}
 
 	if (scope === "intersection") {
 		return (
@@ -190,21 +218,6 @@ function CoverageNotice({
 			</p>
 		);
 	}
-	// With an empty intersection the one-click fix would land on a matrix where
-	// every cell is "—" with n=0, so say the comparison can't be made fair
-	// instead of offering a button that makes it emptier.
-	if (comparison.intersection_conversations === 0) {
-		return (
-			<p
-				role="status"
-				className="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm"
-			>
-				These configs have no conversations in common, so the numbers below describe entirely
-				different workloads and can't be compared directly. Run them over the same conversations to
-				get a fair comparison.
-			</p>
-		);
-	}
 	return (
 		<div
 			role="status"
@@ -215,7 +228,7 @@ function CoverageNotice({
 				workloads. Only {comparison.intersection_conversations} of {comparison.union_conversations}{" "}
 				conversations were run by every config.
 			</p>
-			<Button variant="outline" size="sm" onClick={onUseIntersection}>
+			<Button variant="outline" size="sm" onClick={() => onChangeScope("intersection")}>
 				Compare shared only
 			</Button>
 		</div>
@@ -496,19 +509,28 @@ function OneConfigState({ item }: { item: RunConfigSummary }) {
  * two most recently active configs are compared — the view is useful on first
  * open instead of showing an empty prompt. Derived at render, never mirrored
  * into state.
+ *
+ * A **present but empty** `ids` is not the same as an absent one: it's what
+ * deselecting the last card writes, so it has to survive as an empty selection.
+ * Defaulting it would re-select the cards the user just clicked off. A param
+ * that names only configs this instance doesn't have (a shared link, a renamed
+ * group) still falls back — there the user asked for a comparison, and showing
+ * one beats an empty page.
  */
 export function resolveSelection(
 	raw: string | undefined,
 	items: readonly RunConfigSummary[],
 ): string[] {
+	const fallback = () => items.slice(0, MIN_COMPARE).map((item) => item.hash);
+	if (raw === undefined) return fallback();
+	if (raw.trim().length === 0) return [];
 	const known = new Set(items.map((item) => item.hash));
-	const requested = (raw ?? "")
+	const requested = raw
 		.split(",")
 		.map((hash) => hash.trim())
 		.filter((hash) => known.has(hash));
 	const deduped = [...new Set(requested)].slice(0, MAX_COMPARE);
-	if (deduped.length > 0) return deduped;
-	return items.slice(0, MIN_COMPARE).map((item) => item.hash);
+	return deduped.length > 0 ? deduped : fallback();
 }
 
 function toggle(selected: readonly string[], hash: string): string[] {

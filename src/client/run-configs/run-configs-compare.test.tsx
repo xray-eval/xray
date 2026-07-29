@@ -290,6 +290,46 @@ describe("RunConfigsCompare", () => {
 		expect(screen.queryByText(/Select at least/)).toBeNull();
 	});
 
+	it("leaves the picker empty after the last selected config is clicked off", async () => {
+		// Deselecting everything writes `ids=`, which must not read as "no
+		// selection" — the two cards the user just clicked off would come back.
+		mockApi();
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
+		render(ui);
+
+		const card = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}`) });
+		await waitFor(() => expect(card("baseline").getAttribute("aria-pressed")).toBe("true"));
+
+		for (const name of ["baseline", "fast-follow"]) {
+			await act(async () => {
+				fireEvent.click(card(name));
+			});
+		}
+
+		await waitFor(() => expect(screen.getByText(/Select at least 2 configs/)).toBeTruthy());
+		expect(card("baseline").getAttribute("aria-pressed")).toBe("false");
+		expect(card("fast-follow").getAttribute("aria-pressed")).toBe("false");
+	});
+
+	it("offers a way out of the shared scope when nothing is shared", async () => {
+		// Reachable by clicking "Only shared" directly or pasting the link, not
+		// just via the auto-fix button — and every cell below is "—" with n=0.
+		mockApi({ unionConversations: 3, intersectionConversations: 0, fastConversations: 1 });
+		const { ui, router } = renderWithRouter({
+			initialEntries: [`/configs?ids=${BASELINE},${FAST}&scope=intersection`],
+		});
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText(/no conversations in common/)).toBeTruthy());
+		expect(screen.queryByText(/Comparing the 0 conversation/)).toBeNull();
+
+		const back = screen.getByRole("button", { name: "Show all runs" });
+		await act(async () => {
+			fireEvent.click(back);
+		});
+		await waitFor(() => expect(router.state.location.search.scope).toBe("union"));
+	});
+
 	it("does not offer the shared-only switch when the configs share no conversations", async () => {
 		// Switching to `intersection` over a disjoint pair lands on a matrix where
 		// every cell is "—" with n=0, so the one-click fix would be a dead end.
@@ -333,5 +373,11 @@ describe("resolveSelection", () => {
 
 	it("falls back to the default when every requested hash is unknown", () => {
 		expect(resolveSelection("nonsense", GROUPS)).toEqual([FAST, BASELINE]);
+	});
+
+	it("respects an empty ids param as a deliberate selection of nothing", () => {
+		// Distinct from `undefined`: the user clicked the last card off. Falling
+		// back here would re-select the cards they just deselected.
+		expect(resolveSelection("", GROUPS)).toEqual([]);
 	});
 });
