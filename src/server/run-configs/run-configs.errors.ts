@@ -17,6 +17,24 @@ export class RunConfigNotFoundError extends RunConfigError {
 	}
 }
 
+/**
+ * A `run_config` holding something JSON cannot round-trip (NaN, ±Infinity,
+ * bigint, a function). `run_config` is `v.unknown()` at the wire boundary on
+ * purpose — it's an opaque blob the dev owns — so the canonicalizer is the
+ * first thing that inspects it, and `1e999` is valid JSON that parses to
+ * Infinity. That makes this a caller's bad input, which a route maps to 400;
+ * a bare `TypeError` would fall through to the catch-all and answer 500.
+ */
+export class UnhashableRunConfigError extends RunConfigError {
+	/** What could not be encoded, safe to return to the caller. */
+	readonly valueDescription: string;
+	constructor(valueDescription: string) {
+		super(`Run config contains a value JSON cannot represent: ${valueDescription}`);
+		this.name = "UnhashableRunConfigError";
+		this.valueDescription = valueDescription;
+	}
+}
+
 export class InvalidRunConfigHashError extends RunConfigError {
 	readonly issues: readonly BaseIssue<unknown>[];
 	constructor(issues: readonly BaseIssue<unknown>[]) {

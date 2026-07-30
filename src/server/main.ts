@@ -20,7 +20,7 @@ import {
 import { makeReplayEvents } from "./replays/replays.events.ts";
 import { SSE_IDLE_TIMEOUT_S } from "./replays/replays.router.ts";
 import { markReplayFailed } from "./replays/replays.service.ts";
-import { backfillRunConfigs } from "./run-configs/run-configs.service.ts";
+import { backfillRunConfigs } from "./run-configs/run-configs.groups.ts";
 import { createApp } from "./server.ts";
 import { openStoreFromEnv } from "./store/store.ts";
 

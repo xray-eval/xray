@@ -1,13 +1,17 @@
 import { createHash } from "node:crypto";
 
+import { UnhashableRunConfigError } from "./run-configs.errors.ts";
+
 /**
  * Canonical-JSON encode a run config: object keys sorted at every depth,
  * array order preserved, no whitespace. Two configs with the same content
  * encode to the same string regardless of how the SDK ordered its keys.
  *
- * Throws `TypeError` on values JSON cannot represent (NaN, ±Infinity, bigint,
- * functions). Those can't survive `JSON.parse` at the wire boundary, so this
- * only fires for a caller passing a hand-built object.
+ * Throws `UnhashableRunConfigError` on values JSON cannot represent (NaN,
+ * ±Infinity, bigint, functions). `1e999` is valid JSON that parses to
+ * Infinity and `run_config` is `v.unknown()`, so this is reachable from the
+ * wire — it's a typed error rather than a `TypeError` so the route answers
+ * 400 instead of falling through to the 500 catch-all.
  *
  * Deliberately NOT `canonicalStringify` from
  * `@/server/conversations/conversations.service.ts`, which rejects
@@ -27,7 +31,7 @@ export function canonicalRunConfigJson(value: unknown): string {
 	if (typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
 	if (typeof value === "number") {
 		if (!Number.isFinite(value)) {
-			throw new TypeError("Cannot canonicalize NaN or +/-Infinity in a run config");
+			throw new UnhashableRunConfigError(Number.isNaN(value) ? "NaN" : "±Infinity");
 		}
 		// JSON.stringify(-0) is already "0", so the two spellings collapse onto
 		// one identity without a special case.
@@ -41,7 +45,7 @@ export function canonicalRunConfigJson(value: unknown): string {
 		const parts = entries.map(([k, val]) => `${JSON.stringify(k)}:${canonicalRunConfigJson(val)}`);
 		return `{${parts.join(",")}}`;
 	}
-	throw new TypeError(`Cannot canonicalize run config value of type ${typeof value}`);
+	throw new UnhashableRunConfigError(typeof value);
 }
 
 /**

@@ -4,32 +4,19 @@ import * as v from "valibot";
 import { CompareRunConfigsRequestSchema } from "@/server/run-configs/run-configs.types.ts";
 import { server } from "@/test-server.ts";
 
-import type { RunConfigMetrics, RunConfigSummary } from "../api/api.types.ts";
+import type { RunConfigSummary } from "../api/api.types.ts";
 import { registerHappyDom } from "../test-happy-dom.ts";
-import { resolveSelection } from "./run-configs-compare.tsx";
 import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
 const { act, cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
 const { renderWithRouter } = await import("../test-utils.tsx");
+const { makeRunConfigMetrics } = await import("./test-utils.ts");
 
 afterEach(() => cleanup());
 
 const BASELINE = "a".repeat(64);
 const FAST = "b".repeat(64);
-
-function metrics(over: Partial<RunConfigMetrics> = {}): RunConfigMetrics {
-	return {
-		ttft_ms: { avg: null, p50: null, p95: null, n: 0 },
-		agent_response_ms: { avg: null, p50: null, p95: null, n: 0 },
-		model_latency_ms: { avg: null, p50: null, p95: null, n: 0 },
-		yield_ms: { avg: null, p50: null, p95: null, n: 0 },
-		interruption: { interrupted_turns: 0, agent_turns: 0 },
-		tokens: { avg_input: null, avg_output: null, avg_total: null, n: 0 },
-		pass: { passed: 0, total: 0 },
-		...over,
-	};
-}
 
 const GROUPS = [
 	{
@@ -78,7 +65,7 @@ function mockApi(options: CompareOptions = {}) {
 						replays: 2,
 						failed_replays: hash === BASELINE ? 1 : 0,
 					},
-					metrics: metrics({
+					metrics: makeRunConfigMetrics({
 						ttft_ms:
 							hash === BASELINE
 								? { avg: 400, p50: 380, p95: 900, n: 10 }
@@ -124,7 +111,7 @@ function mockManyConfigs(count: number) {
 					name: `config-${hashes.indexOf(hash) + 1}`,
 					config: { model: "m" },
 					coverage: { conversations: 1, replays: 1, failed_replays: 0 },
-					metrics: metrics(),
+					metrics: makeRunConfigMetrics(),
 				})),
 			});
 		}),
@@ -241,7 +228,9 @@ describe("RunConfigsCompare", () => {
 		render(ui);
 
 		const link = await waitFor(() => screen.getByRole("link", { name: "baseline" }));
-		expect(link.getAttribute("href")).toBe(`/configs/${BASELINE}`);
+		// The comparison's replay selection rides along, so the drill-down explains
+		// the same number the user just clicked.
+		expect(link.getAttribute("href")).toBe(`/configs/${BASELINE}?replays=latest`);
 	});
 
 	it("says why the remaining configs went un-clickable at the selection cap", async () => {
@@ -351,33 +340,5 @@ describe("RunConfigsCompare", () => {
 		render(ui);
 
 		await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
-	});
-});
-
-describe("resolveSelection", () => {
-	it("defaults to the two most recently active configs", () => {
-		expect(resolveSelection(undefined, GROUPS)).toEqual([FAST, BASELINE]);
-	});
-
-	it("keeps the order the URL asked for", () => {
-		expect(resolveSelection(`${BASELINE},${FAST}`, GROUPS)).toEqual([BASELINE, FAST]);
-	});
-
-	it("drops hashes that no longer exist rather than requesting a 404", () => {
-		expect(resolveSelection(`${BASELINE},${"f".repeat(64)}`, GROUPS)).toEqual([BASELINE]);
-	});
-
-	it("de-duplicates a repeated hash", () => {
-		expect(resolveSelection(`${BASELINE},${BASELINE}`, GROUPS)).toEqual([BASELINE]);
-	});
-
-	it("falls back to the default when every requested hash is unknown", () => {
-		expect(resolveSelection("nonsense", GROUPS)).toEqual([FAST, BASELINE]);
-	});
-
-	it("respects an empty ids param as a deliberate selection of nothing", () => {
-		// Distinct from `undefined`: the user clicked the last card off. Falling
-		// back here would re-select the cards they just deselected.
-		expect(resolveSelection("", GROUPS)).toEqual([]);
 	});
 });

@@ -1,24 +1,10 @@
-import { eq } from "drizzle-orm";
-
-import { conversations, replays, runConfigs } from "@/server/store/schema.ts";
+import { conversations } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
-import {
-	fakeHash,
-	makeConversationInput,
-	makeReplayInput,
-	makeTempStore,
-} from "@/server/store/test-utils.ts";
+import { fakeHash, makeConversationInput, makeTempStore } from "@/server/store/test-utils.ts";
 
 import { RunConfigNotFoundError } from "./run-configs.errors.ts";
-import { hashRunConfig } from "./run-configs.hash.ts";
-import {
-	backfillRunConfigs,
-	chunkIds,
-	compareRunConfigs,
-	ensureRunConfig,
-	getRunConfigDetail,
-	listRunConfigs,
-} from "./run-configs.service.ts";
+import { ensureRunConfig } from "./run-configs.groups.ts";
+import { compareRunConfigs, getRunConfigDetail, listRunConfigs } from "./run-configs.service.ts";
 import { seedGroupedReplay } from "./run-configs.test-utils.ts";
 import { beforeEach, describe, expect, test } from "bun:test";
 
@@ -34,112 +20,6 @@ beforeEach(() => {
 });
 
 const NOW = "2026-07-29T10:00:00.000Z";
-
-describe("ensureRunConfig", () => {
-	test("inserts the group on first write and returns its row", () => {
-		const row = ensureRunConfig(store.db, {
-			config: { model: "gpt-4o" },
-			name: "baseline",
-			now: NOW,
-		});
-		expect(row.hash).toBe(hashRunConfig({ model: "gpt-4o" }));
-		expect(row.name).toBe("baseline");
-		expect(row.configJson).toBe('{"model":"gpt-4o"}');
-		expect(row.createdAt).toBe(NOW);
-	});
-
-	test("a config with permuted keys lands in the same group", () => {
-		const first = ensureRunConfig(store.db, {
-			config: { model: "gpt-4o", temperature: 0.5 },
-			now: NOW,
-		});
-		const second = ensureRunConfig(store.db, {
-			config: { temperature: 0.5, model: "gpt-4o" },
-			now: "2026-07-30T10:00:00.000Z",
-		});
-		expect(second.hash).toBe(first.hash);
-		expect(store.db.select().from(runConfigs).all()).toHaveLength(1);
-	});
-
-	test("re-writing with a new name renames the group — last write wins", () => {
-		ensureRunConfig(store.db, { config: { model: "gpt-4o" }, name: "baseline", now: NOW });
-		const renamed = ensureRunConfig(store.db, {
-			config: { model: "gpt-4o" },
-			name: "control-group",
-			now: "2026-07-30T10:00:00.000Z",
-		});
-		expect(renamed.name).toBe("control-group");
-	});
-
-	test("an unnamed re-write keeps the existing name instead of erasing it", () => {
-		ensureRunConfig(store.db, { config: { model: "gpt-4o" }, name: "baseline", now: NOW });
-		const unnamed = ensureRunConfig(store.db, { config: { model: "gpt-4o" }, now: NOW });
-		expect(unnamed.name).toBe("baseline");
-	});
-
-	test("created_at survives an upsert — the group is as old as its first run", () => {
-		ensureRunConfig(store.db, { config: { model: "gpt-4o" }, now: NOW });
-		const again = ensureRunConfig(store.db, {
-			config: { model: "gpt-4o" },
-			now: "2026-08-01T10:00:00.000Z",
-		});
-		expect(again.createdAt).toBe(NOW);
-	});
-});
-
-describe("backfillRunConfigs", () => {
-	function insertLegacyReplay(id: string, runConfigJson: string | null) {
-		store.db
-			.insert(replays)
-			.values(
-				makeReplayInput({ id, conversationHash: CONVERSATION, runConfigJson, runConfigHash: null }),
-			)
-			.run();
-	}
-
-	test("groups replays that predate run-config identity", () => {
-		insertLegacyReplay("legacy-a", '{"model":"gpt-4o"}');
-		insertLegacyReplay("legacy-b", '{"model":"gpt-4o"}');
-		insertLegacyReplay("legacy-c", '{"model":"gemini-2.5-flash"}');
-
-		const grouped = backfillRunConfigs(store, { now: () => NOW });
-
-		expect(grouped).toBe(3);
-		expect(store.db.select().from(runConfigs).all()).toHaveLength(2);
-		const a = store.db.select().from(replays).where(eq(replays.id, "legacy-a")).get();
-		const b = store.db.select().from(replays).where(eq(replays.id, "legacy-b")).get();
-		expect(a?.runConfigHash).toBe(hashRunConfig({ model: "gpt-4o" }));
-		expect(b?.runConfigHash).toBe(a?.runConfigHash);
-	});
-
-	test("leaves legacy groups unnamed — no label exists to recover", () => {
-		insertLegacyReplay("legacy-a", '{"model":"gpt-4o"}');
-		backfillRunConfigs(store, { now: () => NOW });
-		expect(store.db.select().from(runConfigs).all()[0]?.name).toBeNull();
-	});
-
-	test("skips replays with no run config at all", () => {
-		insertLegacyReplay("no-config", null);
-		expect(backfillRunConfigs(store, { now: () => NOW })).toBe(0);
-		expect(store.db.select().from(runConfigs).all()).toHaveLength(0);
-	});
-
-	test("skips a corrupt run_config_json instead of failing the whole startup", () => {
-		insertLegacyReplay("corrupt", "{not json");
-		insertLegacyReplay("fine", '{"model":"gpt-4o"}');
-
-		expect(backfillRunConfigs(store, { now: () => NOW })).toBe(1);
-		const corrupt = store.db.select().from(replays).where(eq(replays.id, "corrupt")).get();
-		expect(corrupt?.runConfigHash).toBeNull();
-	});
-
-	test("is idempotent — a second run has nothing left to do", () => {
-		insertLegacyReplay("legacy-a", '{"model":"gpt-4o"}');
-		backfillRunConfigs(store, { now: () => NOW });
-		expect(backfillRunConfigs(store, { now: () => NOW })).toBe(0);
-		expect(store.db.select().from(runConfigs).all()).toHaveLength(1);
-	});
-});
 
 const BASELINE = { model: "gpt-4o" };
 const FAST = { model: "gemini-2.5-flash" };
@@ -233,24 +113,6 @@ describe("listRunConfigs", () => {
 	});
 });
 
-describe("chunkIds", () => {
-	test("splits an id list into batches no larger than the cap", () => {
-		expect(chunkIds(["a", "b", "c", "d", "e"], 2)).toEqual([["a", "b"], ["c", "d"], ["e"]]);
-	});
-
-	test("returns a single batch when the list fits", () => {
-		expect(chunkIds(["a", "b"], 5)).toEqual([["a", "b"]]);
-	});
-
-	test("returns no batches for an empty list", () => {
-		expect(chunkIds([], 5)).toEqual([]);
-	});
-
-	test("de-duplicates, so no replay's rows can be fetched by two batches", () => {
-		expect(chunkIds(["a", "b", "a"], 2)).toEqual([["a", "b"]]);
-	});
-});
-
 describe("compareRunConfigs", () => {
 	test("aggregates each group over its own latest completed replays", () => {
 		const { baseline, fast } = seedTwoConfigs();
@@ -286,6 +148,51 @@ describe("compareRunConfigs", () => {
 		expect(result.union_conversations).toBe(2);
 		expect(result.intersection_conversations).toBe(2);
 		expect(result.groups[0]?.coverage.failed_replays).toBe(1);
+	});
+
+	test("intersection scope stops attributing an excluded conversation's failure", () => {
+		// baseline's only failure is in CONV_C, which no other config completed, so
+		// intersection excludes it. Counting it anyway renders "compared on 2 of 3
+		// · 1 failed" — a failure badge on a shared workload that had none.
+		const { baseline, fast } = seedTwoConfigs();
+		const intersection = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "intersection",
+		});
+		expect(intersection.groups[0]?.coverage.failed_replays).toBe(0);
+	});
+
+	test("intersection still counts a failure inside the shared workload", () => {
+		// The narrowing must not become a way to hide failures: a config that
+		// failed a conversation every config ran is exactly the signal to keep.
+		const { baseline, fast } = seedTwoConfigs();
+		seedGroupedReplay(store, {
+			id: "base-a-failed",
+			conversationHash: CONV_A,
+			config: BASELINE,
+			startedAt: "2026-07-04T00:00:00.000Z",
+			lifecycleState: "failed",
+		});
+		const intersection = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "intersection",
+		});
+		expect(intersection.groups[0]?.coverage.failed_replays).toBe(1);
+	});
+
+	test("union keeps counting a failure that is the config's only run of that conversation", () => {
+		// Under union the whole point is that a config which fails runs outright
+		// stays visible, even though a conversation it never completed is absent
+		// from every config's completed set.
+		const { baseline, fast } = seedTwoConfigs();
+		const union = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "union",
+		});
+		expect(union.groups[0]?.coverage.failed_replays).toBe(1);
 	});
 
 	test("intersection scope drops a conversation only one config completed", () => {
@@ -364,6 +271,26 @@ describe("compareRunConfigs", () => {
 		// 400/600 from alpha and 800 from bravo's last completed run.
 		expect(result.groups[0]?.metrics.agent_response_ms.avg).toBe(600);
 		expect(result.groups[0]?.metrics.agent_response_ms.n).toBe(3);
+	});
+
+	test("reads a total-only token count out of the store", () => {
+		// The aggregate can only see `total_tokens` if the query selects it, and a
+		// Langfuse-instrumented agent reports nothing else. Without this the whole
+		// token row reads "—  n=0" for a config the inspector shows tokens for.
+		const hash = seedGroupedReplay(store, {
+			id: "total-only",
+			conversationHash: CONVERSATION,
+			config: BASELINE,
+			startedAt: "2026-07-01T00:00:00.000Z",
+			modelCalls: [{ inputTokens: null, outputTokens: null, totalTokens: 1500 }],
+		});
+		const detail = getRunConfigDetail(store, hash, "latest");
+		expect(detail.metrics.tokens).toEqual({
+			avg_input: null,
+			avg_output: null,
+			avg_total: 1500,
+			n: 1,
+		});
 	});
 
 	test("throws for an unknown group rather than silently dropping a column", () => {
@@ -447,6 +374,27 @@ describe("getRunConfigDetail", () => {
 		const detail = getRunConfigDetail(store, baseline, "latest");
 		expect(detail.conversations[0]?.metrics.agent_response_ms.avg).toBe(500);
 		expect(detail.conversations[1]?.metrics.agent_response_ms.avg).toBe(800);
+	});
+
+	test("header coverage describes the whole group, matching the card that linked here", () => {
+		// The picker card counts every replay in the group. Scoping the detail
+		// header to the selection instead made the two disagree with identical
+		// wording — and under `latest` made `replays` a restatement of
+		// `conversations`, since that selection keeps exactly one of each.
+		const { baseline } = seedTwoConfigs();
+		seedGroupedReplay(store, {
+			id: "base-a-rerun",
+			conversationHash: CONV_A,
+			config: BASELINE,
+			startedAt: "2026-07-03T00:00:00.000Z",
+			agentTurns: [{ agentResponseMs: 100 }],
+			passed: true,
+		});
+		const detail = getRunConfigDetail(store, baseline, "latest");
+		expect(detail.coverage).toEqual({ conversations: 3, replays: 4, failed_replays: 1 });
+		expect(listRunConfigs(store).items.find((i) => i.hash === baseline)?.coverage).toEqual(
+			detail.coverage,
+		);
 	});
 
 	test("throws for an unknown group", () => {

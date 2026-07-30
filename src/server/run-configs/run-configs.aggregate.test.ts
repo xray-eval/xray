@@ -250,8 +250,22 @@ describe("buildMetrics", () => {
 		const metrics = buildMetrics(
 			input({
 				modelUsage: [
-					{ replayId: "r1", ttftMs: 250, latencyMs: 900, inputTokens: 10, outputTokens: 5 },
-					{ replayId: "r1", ttftMs: null, latencyMs: 1100, inputTokens: 20, outputTokens: 7 },
+					{
+						replayId: "r1",
+						ttftMs: 250,
+						latencyMs: 900,
+						inputTokens: 10,
+						outputTokens: 5,
+						totalTokens: null,
+					},
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: 1100,
+						inputTokens: 20,
+						outputTokens: 7,
+						totalTokens: null,
+					},
 				],
 			}),
 		);
@@ -265,9 +279,30 @@ describe("buildMetrics", () => {
 			input({
 				replays: [replay({ id: "r1" }), replay({ id: "r2", conversationHash: "c2" })],
 				modelUsage: [
-					{ replayId: "r1", ttftMs: null, latencyMs: null, inputTokens: 10, outputTokens: 5 },
-					{ replayId: "r1", ttftMs: null, latencyMs: null, inputTokens: 30, outputTokens: 15 },
-					{ replayId: "r2", ttftMs: null, latencyMs: null, inputTokens: 20, outputTokens: 10 },
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 10,
+						outputTokens: 5,
+						totalTokens: null,
+					},
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 30,
+						outputTokens: 15,
+						totalTokens: null,
+					},
+					{
+						replayId: "r2",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 20,
+						outputTokens: 10,
+						totalTokens: null,
+					},
 				],
 			}),
 		);
@@ -279,7 +314,14 @@ describe("buildMetrics", () => {
 			input({
 				replays: [replay({ id: "r1" }), replay({ id: "r2", conversationHash: "c2" })],
 				modelUsage: [
-					{ replayId: "r1", ttftMs: null, latencyMs: null, inputTokens: 10, outputTokens: 5 },
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 10,
+						outputTokens: 5,
+						totalTokens: null,
+					},
 				],
 			}),
 		);
@@ -297,8 +339,22 @@ describe("buildMetrics", () => {
 			input({
 				replays: [replay({ id: "r1" }), replay({ id: "r2", conversationHash: "c2" })],
 				modelUsage: [
-					{ replayId: "r1", ttftMs: 200, latencyMs: 800, inputTokens: null, outputTokens: null },
-					{ replayId: "r2", ttftMs: null, latencyMs: null, inputTokens: 40, outputTokens: 20 },
+					{
+						replayId: "r1",
+						ttftMs: 200,
+						latencyMs: 800,
+						inputTokens: null,
+						outputTokens: null,
+						totalTokens: null,
+					},
+					{
+						replayId: "r2",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 40,
+						outputTokens: 20,
+						totalTokens: null,
+					},
 				],
 			}),
 		);
@@ -309,18 +365,191 @@ describe("buildMetrics", () => {
 		const metrics = buildMetrics(
 			input({
 				modelUsage: [
-					{ replayId: "r1", ttftMs: null, latencyMs: null, inputTokens: 30, outputTokens: null },
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 30,
+						outputTokens: null,
+						totalTokens: null,
+					},
 				],
 			}),
 		);
 		expect(metrics.tokens).toEqual({ avg_input: 30, avg_output: 0, avg_total: 30, n: 1 });
 	});
 
+	test("counts a replay whose usage reported only a total", () => {
+		// Langfuse sources the three counts from three independent attributes, so
+		// `usage_details.total` with no split is a real shape in the wild. Dropping
+		// it would blank the whole token row for a config the inspector happily
+		// shows token counts for.
+		const metrics = buildMetrics(
+			input({
+				modelUsage: [
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: null,
+						outputTokens: null,
+						totalTokens: 1500,
+					},
+				],
+			}),
+		);
+		expect(metrics.tokens).toEqual({ avg_input: null, avg_output: null, avg_total: 1500, n: 1 });
+	});
+
+	test("does not double-count a row that reports both a split and a total", () => {
+		// The GenAI vocabulary derives total from input + output, so every one of
+		// its rows carries all three.
+		const metrics = buildMetrics(
+			input({
+				modelUsage: [
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 40,
+						outputTokens: 20,
+						totalTokens: 60,
+					},
+				],
+			}),
+		);
+		expect(metrics.tokens).toEqual({ avg_input: 40, avg_output: 20, avg_total: 60, n: 1 });
+	});
+
+	test("drops the breakdown when one replay mixes a split row with a total-only row", () => {
+		// One agent emitting both GenAI semconv and Langfuse spans is enough — no
+		// mixing across replays needed. Rendering "40 in · 20 out" under a 1060
+		// headline is a breakdown that contradicts the number it sits beneath.
+		const metrics = buildMetrics(
+			input({
+				modelUsage: [
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 40,
+						outputTokens: 20,
+						totalTokens: 60,
+					},
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: null,
+						outputTokens: null,
+						totalTokens: 1000,
+					},
+				],
+			}),
+		);
+		expect(metrics.tokens).toEqual({
+			avg_input: null,
+			avg_output: null,
+			avg_total: 1060,
+			n: 1,
+		});
+	});
+
+	test("rounding drift between the two means does not suppress a sound breakdown", () => {
+		// avg_input 11 + avg_output 6 = 17 while the mean total is 16 — three
+		// separately-rounded means, not an inconsistency. Deciding this on the
+		// rendered averages would blank a breakdown that adds up on every replay.
+		const metrics = buildMetrics(
+			input({
+				replays: [replay({ id: "r1" }), replay({ id: "r2", conversationHash: "c2" })],
+				modelUsage: [
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 10,
+						outputTokens: 5,
+						totalTokens: null,
+					},
+					{
+						replayId: "r2",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 11,
+						outputTokens: 6,
+						totalTokens: null,
+					},
+				],
+			}),
+		);
+		expect(metrics.tokens.avg_input).toBe(11);
+		expect(metrics.tokens.avg_output).toBe(6);
+	});
+
+	test("trusts the reported total over the split when the two disagree", () => {
+		// Langfuse's total can include cached or reasoning tokens the split omits.
+		// The total is the number to trust; showing "30 in · 0 out" beneath it
+		// would claim the missing 70 were never spent.
+		const metrics = buildMetrics(
+			input({
+				modelUsage: [
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 30,
+						outputTokens: null,
+						totalTokens: 100,
+					},
+				],
+			}),
+		);
+		expect(metrics.tokens).toEqual({ avg_input: null, avg_output: null, avg_total: 100, n: 1 });
+	});
+
+	test("a total-only replay keeps the headline but costs the whole sample its breakdown", () => {
+		// r2 never reported a split. Counting it as 0 in / 0 out would halve the
+		// breakdown while the total stays right, and averaging the split over r1
+		// alone would print a breakdown that doesn't add up to the headline beside
+		// it. Neither is honest, so the total stands alone.
+		const metrics = buildMetrics(
+			input({
+				replays: [replay({ id: "r1" }), replay({ id: "r2", conversationHash: "c2" })],
+				modelUsage: [
+					{
+						replayId: "r1",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: 40,
+						outputTokens: 20,
+						totalTokens: 60,
+					},
+					{
+						replayId: "r2",
+						ttftMs: null,
+						latencyMs: null,
+						inputTokens: null,
+						outputTokens: null,
+						totalTokens: 1000,
+					},
+				],
+			}),
+		);
+		expect(metrics.tokens).toEqual({ avg_input: null, avg_output: null, avg_total: 530, n: 2 });
+	});
+
 	test("still measures latency and TTFT on a replay with no token counts", () => {
 		const metrics = buildMetrics(
 			input({
 				modelUsage: [
-					{ replayId: "r1", ttftMs: 200, latencyMs: 800, inputTokens: null, outputTokens: null },
+					{
+						replayId: "r1",
+						ttftMs: 200,
+						latencyMs: 800,
+						inputTokens: null,
+						outputTokens: null,
+						totalTokens: null,
+					},
 				],
 			}),
 		);

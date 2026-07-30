@@ -1,3 +1,4 @@
+import { RunConfigError, UnhashableRunConfigError } from "./run-configs.errors.ts";
 import { canonicalRunConfigJson, hashRunConfig } from "./run-configs.hash.ts";
 import { describe, expect, test } from "bun:test";
 
@@ -32,9 +33,25 @@ describe("canonicalRunConfigJson", () => {
 	});
 
 	test("rejects values JSON cannot represent", () => {
-		expect(() => canonicalRunConfigJson({ n: Number.NaN })).toThrow(TypeError);
-		expect(() => canonicalRunConfigJson({ n: Number.POSITIVE_INFINITY })).toThrow(TypeError);
-		expect(() => canonicalRunConfigJson({ n: 1n })).toThrow(TypeError);
+		expect(() => canonicalRunConfigJson({ n: Number.NaN })).toThrow(UnhashableRunConfigError);
+		expect(() => canonicalRunConfigJson({ n: Number.POSITIVE_INFINITY })).toThrow(
+			UnhashableRunConfigError,
+		);
+		expect(() => canonicalRunConfigJson({ n: 1n })).toThrow(UnhashableRunConfigError);
+	});
+
+	test("the rejection is a typed RunConfigError, so a route can map it to a 400", () => {
+		// `1e999` parses to Infinity, and `run_config` is `v.unknown()` at the
+		// wire boundary — so this is a caller's bad input reaching the hasher, not
+		// an internal fault. A bare TypeError would land in the router's
+		// catch-all and answer 500.
+		try {
+			hashRunConfig({ budget: Number.POSITIVE_INFINITY });
+			throw new Error("expected canonicalization to reject Infinity");
+		} catch (err) {
+			expect(err).toBeInstanceOf(UnhashableRunConfigError);
+			expect(err).toBeInstanceOf(RunConfigError);
+		}
 	});
 });
 

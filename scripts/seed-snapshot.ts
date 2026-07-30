@@ -205,8 +205,10 @@ const RUN_VARIANTS: readonly RunVariant[] = [
  * coverage is what the compare view's fair-comparison warning is for, so the
  * fixture has to contain a case that triggers it.
  *
- * `...0001` and `...0002` are the barge-in runs this fixture has always held —
- * the inspector's canonical example is unchanged.
+ * `...0001` is the barge-in run this fixture has always held and its WAV is
+ * byte-identical — the inspector's canonical example is unchanged. `...0002` is
+ * new: a second run of that same conversation under `fast-follow`, so the
+ * barge-in conversation has more than one config to compare.
  */
 interface SeedReplay {
 	readonly replayId: string;

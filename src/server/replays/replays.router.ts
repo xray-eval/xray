@@ -14,6 +14,7 @@ import {
 	ValidationErrorResponseSchema,
 } from "@/server/core/types.ts";
 import type { JobRunner } from "@/server/jobs/jobs.bunqueue.ts";
+import { UnhashableRunConfigError } from "@/server/run-configs/run-configs.errors.ts";
 import { sanitizeIssues } from "@/server/sanitize-issues/sanitize-issues.ts";
 import type { Store } from "@/server/store/store.ts";
 
@@ -585,6 +586,27 @@ export function createReplaysRouter(
 			)
 			.with(P.instanceOf(InvalidReplayIdError), (e) =>
 				c.json({ error: "invalid_replay_id", issues: sanitizeIssues(e.issues) }, 400),
+			)
+			// `run_config` is `v.unknown()`, so a value JSON cannot round-trip
+			// (`1e999` → Infinity) survives validation and is only caught when the
+			// group hash is computed. Still the caller's malformed body: 400,
+			// reported as an issue so the documented 400 shape holds.
+			.with(P.instanceOf(UnhashableRunConfigError), (e) =>
+				c.json(
+					{
+						error: "invalid_replay_request",
+						issues: [
+							{
+								kind: "validation",
+								type: "run_config",
+								expected: "a value JSON can represent",
+								received: e.valueDescription,
+								message: e.message,
+							},
+						],
+					},
+					400,
+				),
 			)
 			.with(P.instanceOf(InvalidCompareSelectionError), (e) =>
 				c.json({ error: "invalid_compare_selection", count: e.count, min: e.min, max: e.max }, 400),

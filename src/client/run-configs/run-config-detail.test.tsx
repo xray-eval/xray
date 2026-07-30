@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 registerHappyDom();
 const { cleanup, render, screen, waitFor } = await import("@testing-library/react");
 const { renderWithRouter } = await import("../test-utils.tsx");
+const { makeRunConfigMetrics } = await import("./test-utils.ts");
 
 afterEach(() => cleanup());
 
@@ -17,20 +18,21 @@ const CONVERSATION_HASH = "b".repeat(64);
 const LATEST_REPLAY = "11111111-1111-1111-1111-111111111111";
 const EARLIER_REPLAY = "22222222-2222-2222-2222-222222222222";
 
+/** This page's baseline: TTFT and voice-to-voice measured, the rest absent. */
 function metrics(over: Partial<RunConfigMetrics> = {}): RunConfigMetrics {
-	return {
+	return makeRunConfigMetrics({
 		ttft_ms: { avg: 250, p50: 240, p95: 900, n: 12 },
 		agent_response_ms: { avg: 600, p50: 580, p95: 1200, n: 8 },
-		model_latency_ms: { avg: null, p50: null, p95: null, n: 0 },
-		yield_ms: { avg: null, p50: null, p95: null, n: 0 },
 		interruption: { interrupted_turns: 1, agent_turns: 4 },
-		tokens: { avg_input: null, avg_output: null, avg_total: null, n: 0 },
 		pass: { passed: 1, total: 1 },
 		...over,
-	};
+	});
 }
 
-function mockDetail(replays: { id: string; started_at: string; passed: boolean | null }[]) {
+function mockDetail(
+	replays: { id: string; started_at: string; passed: boolean | null }[],
+	groupReplays = replays.length,
+) {
 	server.use(
 		http.get(`http://localhost/v1/run-configs/${CONFIG_HASH}`, ({ request }) => {
 			const selection = new URL(request.url).searchParams.get("replay_selection");
@@ -40,7 +42,8 @@ function mockDetail(replays: { id: string; started_at: string; passed: boolean |
 				config: { model: "gpt-4o", temperature: 0.5 },
 				created_at: "2026-07-01T00:00:00.000Z",
 				replay_selection: selection ?? "latest",
-				coverage: { conversations: 1, replays: replays.length, failed_replays: 1 },
+				// Group-wide, exactly as `listRunConfigs` counts it for the card.
+				coverage: { conversations: 1, replays: groupReplays, failed_replays: 1 },
 				metrics: metrics(),
 				conversations: [
 					{
@@ -119,6 +122,27 @@ describe("RunConfigDetail", () => {
 
 		await waitFor(() => expect(screen.getAllByText("n=12").length).toBeGreaterThan(0));
 		expect(screen.getAllByText("n=0").length).toBeGreaterThan(0);
+	});
+
+	it("says what the aggregate covers when the selection excludes runs", async () => {
+		// The header counts the whole group, same as the card that linked here.
+		// Without this line the metrics silently describe a subset of it.
+		mockDetail(ONE_REPLAY, 4);
+		const { ui } = renderWithRouter({ initialEntries: [`/configs/${CONFIG_HASH}`] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText(/1 of 4 replays/)).toBeTruthy());
+	});
+
+	it("does not caveat the aggregate when it already covers every replay", async () => {
+		mockDetail(ONE_REPLAY, 1);
+		const { ui } = renderWithRouter({ initialEntries: [`/configs/${CONFIG_HASH}`] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText("Across every conversation")).toBeTruthy());
+		// The pass-rate cell also renders "1 of 1 replays", so match the caveat's
+		// own conversations clause rather than the replay count.
+		expect(screen.queryByText(/of \d+ conversations/)).toBeNull();
 	});
 
 	it("surfaces a load failure instead of rendering an empty page", async () => {

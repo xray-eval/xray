@@ -106,10 +106,17 @@ export const METRIC_ROWS: readonly MetricRow[] = [
 		better: "none",
 		read: (m) => {
 			if (m.tokens.avg_total === null) return { ...EMPTY_CELL, n: m.tokens.n };
+			// The split is null when no replay reported one — an agent can emit a
+			// total alone. "0 in · 0 out" under a real total would invent a
+			// measurement nobody took, so drop the line instead.
+			const split =
+				m.tokens.avg_input === null && m.tokens.avg_output === null
+					? null
+					: `${m.tokens.avg_input ?? 0} in · ${m.tokens.avg_output ?? 0} out`;
 			return {
 				value: m.tokens.avg_total,
 				display: String(m.tokens.avg_total),
-				detail: `${m.tokens.avg_input ?? 0} in · ${m.tokens.avg_output ?? 0} out`,
+				detail: split,
 				n: m.tokens.n,
 			};
 		},

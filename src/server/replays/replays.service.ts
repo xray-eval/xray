@@ -4,7 +4,7 @@ import * as v from "valibot";
 import { ConversationNotFoundError } from "@/server/conversations/conversations.errors.ts";
 import { getConversationByHash } from "@/server/conversations/conversations.service.ts";
 import type { JobRunner } from "@/server/jobs/jobs.bunqueue.ts";
-import { ensureRunConfig } from "@/server/run-configs/run-configs.service.ts";
+import { ensureRunConfig } from "@/server/run-configs/run-configs.groups.ts";
 import {
 	assertionResults,
 	judgeResults,

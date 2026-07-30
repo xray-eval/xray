@@ -56,7 +56,10 @@ describe("POST /v1/replays", () => {
 		expect(body.id).toMatch(/[0-9a-f-]{36}/);
 	});
 
-	it("returns the run-config group hash so the SDK can link the run to its group", async () => {
+	// The group id is exposed on the replay so an API consumer can get from a run
+	// to its config group. Nothing in this repo reads it yet — the inspector has
+	// no link to the group, and the SDK doesn't surface it on `ReplayResult`.
+	it("returns the run-config group hash on the created replay", async () => {
 		const { app, store } = makeApp();
 		const { hash } = await seedConversation(store);
 		const res = await app.request("/v1/replays", {
@@ -117,6 +120,29 @@ describe("POST /v1/replays", () => {
 			body: JSON.stringify({ conversation_hash: "" }),
 		});
 		expect(res.status).toBe(400);
+	});
+
+	it("returns 400 for a run_config the hasher cannot encode", async () => {
+		// `1e999` is valid JSON that parses to Infinity, and `run_config` is
+		// `v.unknown()` by design, so it reaches the canonicalizer intact. A
+		// caller's malformed body is a 400, not a 500 with a logged stack.
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: `{"conversation_hash":"${hash}","run_config":{"budget":1e999}}`,
+		});
+		expect(res.status).toBe(400);
+		const body = await readJson(
+			res,
+			v.object({
+				error: v.string(),
+				issues: v.array(v.object({ type: v.string(), received: v.string() })),
+			}),
+		);
+		expect(body.error).toBe("invalid_replay_request");
+		expect(body.issues[0]).toMatchObject({ type: "run_config", received: "±Infinity" });
 	});
 });
 

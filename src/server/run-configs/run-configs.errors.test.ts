@@ -5,6 +5,7 @@ import {
 	RunConfigBodyTooLargeError,
 	RunConfigError,
 	RunConfigNotFoundError,
+	UnhashableRunConfigError,
 } from "./run-configs.errors.ts";
 import { describe, expect, test } from "bun:test";
 
@@ -14,6 +15,13 @@ describe("run config errors", () => {
 		expect(err).toBeInstanceOf(RunConfigError);
 		expect(err.name).toBe("RunConfigNotFoundError");
 		expect(err.configHash).toBe("a".repeat(64));
+	});
+
+	test("UnhashableRunConfigError is catchable as RunConfigError and names the value", () => {
+		const err = new UnhashableRunConfigError("bigint");
+		expect(err).toBeInstanceOf(RunConfigError);
+		expect(err.name).toBe("UnhashableRunConfigError");
+		expect(err.valueDescription).toBe("bigint");
 	});
 
 	test("InvalidRunConfigHashError carries its issues", () => {

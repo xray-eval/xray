@@ -9,7 +9,7 @@ import {
 import type { Store } from "@/server/store/store.ts";
 import type { ReplayLifecycleState } from "@/server/store/types.ts";
 
-import { ensureRunConfig } from "./run-configs.service.ts";
+import { ensureRunConfig } from "./run-configs.groups.ts";
 
 export interface SeedGroupedReplayInput {
 	readonly id: string;
@@ -30,6 +30,11 @@ export interface SeedGroupedReplayInput {
 		readonly latencyMs?: number | null;
 		readonly inputTokens?: number | null;
 		readonly outputTokens?: number | null;
+		/**
+		 * Independent of the split, matching the column: Langfuse reads all three
+		 * from separate attributes and can report a total with no breakdown.
+		 */
+		readonly totalTokens?: number | null;
 	}[];
 	readonly passed?: boolean;
 }
@@ -124,7 +129,7 @@ export function seedGroupedReplay(store: Store, input: SeedGroupedReplayInput): 
 				model: "gpt-4o",
 				inputTokens: call.inputTokens ?? null,
 				outputTokens: call.outputTokens ?? null,
-				totalTokens: null,
+				totalTokens: call.totalTokens ?? null,
 				ttftMs: call.ttftMs ?? null,
 				startedAt: input.startedAt,
 				endedAt: input.startedAt,

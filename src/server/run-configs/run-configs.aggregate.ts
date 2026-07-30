@@ -151,6 +151,12 @@ export interface ModelUsageSample {
 	readonly latencyMs: number | null;
 	readonly inputTokens: number | null;
 	readonly outputTokens: number | null;
+	/**
+	 * Required rather than optional so a caller that forgets to select
+	 * `model_usage.total_tokens` fails to compile instead of silently reporting
+	 * "no tokens measured" for every Langfuse-instrumented replay.
+	 */
+	readonly totalTokens: number | null;
 }
 
 export interface EvaluationSample {
@@ -218,14 +224,34 @@ function buildInterruption(agentTurns: readonly TurnMetricSample[]): Interruptio
  * report usage would read as "measured, and cheap" instead of "not measured".
  * Same rule as `yield_ms` above: an absent sample is not a zero.
  *
- * A row that reports only one side of the split is kept — that's a real
- * measurement, and the missing side contributes 0 to its own total.
+ * The three counts are three independent columns, not a split plus its sum:
+ * the GenAI vocabulary derives `total_tokens` from input + output, but Langfuse
+ * reads all three from separate attributes, so `usage_details.total` alone —
+ * with no split — is a real shape. A row's total is therefore whatever it
+ * reported, falling back to the split only when it reported none; taking both
+ * would double-count every GenAI row.
+ *
+ * `avg_input` / `avg_output` average over the replays that reported a split,
+ * which is a *different denominator* from `n`. Averaging them over every
+ * replay would let a total-only replay count as 0 in / 0 out and halve the
+ * breakdown while the headline total stayed right — the same "an absent sample
+ * is not a zero" rule as the whole-row skip, one level down. Both come back
+ * null when no replay reported a split.
  */
 function buildTokens(modelUsage: readonly ModelUsageSample[]): TokenAggregate {
-	const perReplay = new Map<string, { input: number; output: number }>();
+	interface ReplayTokens {
+		total: number;
+		input: number;
+		output: number;
+	}
+	const perReplay = new Map<string, ReplayTokens>();
 	for (const row of modelUsage) {
-		if (row.inputTokens === null && row.outputTokens === null) continue;
-		const totals = perReplay.get(row.replayId) ?? { input: 0, output: 0 };
+		const split = row.inputTokens !== null || row.outputTokens !== null;
+		const rowTotal =
+			row.totalTokens ?? (split ? (row.inputTokens ?? 0) + (row.outputTokens ?? 0) : null);
+		if (!split && rowTotal === null) continue;
+		const totals = perReplay.get(row.replayId) ?? { total: 0, input: 0, output: 0 };
+		totals.total += rowTotal ?? 0;
 		totals.input += row.inputTokens ?? 0;
 		totals.output += row.outputTokens ?? 0;
 		perReplay.set(row.replayId, totals);
@@ -234,8 +260,25 @@ function buildTokens(modelUsage: readonly ModelUsageSample[]): TokenAggregate {
 		return { avg_input: null, avg_output: null, avg_total: null, n: 0 };
 	}
 	const totals = [...perReplay.values()];
-	const avgInput = Math.round(totals.reduce((s, t) => s + t.input, 0) / totals.length);
-	const avgOutput = Math.round(totals.reduce((s, t) => s + t.output, 0) / totals.length);
+	const mean = (values: readonly number[]): number =>
+		Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+
+	// Decided per replay on raw sums, never on the rendered averages: three
+	// separately-rounded means drift by ±1 on data that adds up perfectly, so an
+	// `avg_input + avg_output !== avg_total` test would blank sound breakdowns.
+	const splitAccountsForTotal = totals.every((t) => t.input + t.output === t.total);
+	if (!splitAccountsForTotal) {
+		return {
+			avg_input: null,
+			avg_output: null,
+			avg_total: mean(totals.map((t) => t.total)),
+			n: totals.length,
+		};
+	}
+	const avgInput = mean(totals.map((t) => t.input));
+	const avgOutput = mean(totals.map((t) => t.output));
+	// Summed rather than averaged independently, so the headline is always the
+	// breakdown's own arithmetic when a breakdown is shown at all.
 	return {
 		avg_input: avgInput,
 		avg_output: avgOutput,

@@ -1,20 +1,6 @@
-import type { RunConfigMetrics } from "@/client/api/api.types.ts";
-
 import { bestCellIndex, METRIC_ROWS } from "./metric-rows.ts";
+import { makeRunConfigMetrics } from "./test-utils.ts";
 import { describe, expect, test } from "bun:test";
-
-function metrics(over: Partial<RunConfigMetrics> = {}): RunConfigMetrics {
-	return {
-		ttft_ms: { avg: null, p50: null, p95: null, n: 0 },
-		agent_response_ms: { avg: null, p50: null, p95: null, n: 0 },
-		model_latency_ms: { avg: null, p50: null, p95: null, n: 0 },
-		yield_ms: { avg: null, p50: null, p95: null, n: 0 },
-		interruption: { interrupted_turns: 0, agent_turns: 0 },
-		tokens: { avg_input: null, avg_output: null, avg_total: null, n: 0 },
-		pass: { passed: 0, total: 0 },
-		...over,
-	};
-}
 
 function rowByKey(key: string) {
 	const row = METRIC_ROWS.find((r) => r.key === key);
@@ -29,7 +15,7 @@ describe("METRIC_ROWS", () => {
 
 	test("reads a latency cell with its percentiles and sample size", () => {
 		const cell = rowByKey("ttft_ms").read(
-			metrics({ ttft_ms: { avg: 250, p50: 240, p95: 900, n: 12 } }),
+			makeRunConfigMetrics({ ttft_ms: { avg: 250, p50: 240, p95: 900, n: 12 } }),
 		);
 		expect(cell.value).toBe(250);
 		expect(cell.display).toBe("250ms");
@@ -38,7 +24,7 @@ describe("METRIC_ROWS", () => {
 	});
 
 	test("an unmeasured cell says so instead of showing a zero", () => {
-		const cell = rowByKey("ttft_ms").read(metrics());
+		const cell = rowByKey("ttft_ms").read(makeRunConfigMetrics());
 		expect(cell.value).toBeNull();
 		expect(cell.display).toBe("—");
 		expect(cell.n).toBe(0);
@@ -46,7 +32,7 @@ describe("METRIC_ROWS", () => {
 
 	test("interruption rate is a percentage of agent turns", () => {
 		const cell = rowByKey("interruption").read(
-			metrics({ interruption: { interrupted_turns: 3, agent_turns: 12 } }),
+			makeRunConfigMetrics({ interruption: { interrupted_turns: 3, agent_turns: 12 } }),
 		);
 		expect(cell.display).toBe("25%");
 		expect(cell.detail).toBe("3 of 12 agent turns");
@@ -54,23 +40,37 @@ describe("METRIC_ROWS", () => {
 	});
 
 	test("pass rate is a percentage of evaluated replays", () => {
-		const cell = rowByKey("pass").read(metrics({ pass: { passed: 3, total: 4 } }));
+		const cell = rowByKey("pass").read(makeRunConfigMetrics({ pass: { passed: 3, total: 4 } }));
 		expect(cell.display).toBe("75%");
 		expect(cell.detail).toBe("3 of 4 replays");
 	});
 
 	test("token cell shows the split behind the total", () => {
 		const cell = rowByKey("tokens").read(
-			metrics({ tokens: { avg_input: 120, avg_output: 40, avg_total: 160, n: 5 } }),
+			makeRunConfigMetrics({ tokens: { avg_input: 120, avg_output: 40, avg_total: 160, n: 5 } }),
 		);
 		expect(cell.display).toBe("160");
 		expect(cell.detail).toBe("120 in · 40 out");
 		expect(cell.n).toBe(5);
 	});
 
+	test("token cell omits the split when the agent only reported a total", () => {
+		// Langfuse can report `usage_details.total` with no breakdown. Rendering
+		// that as "0 in · 0 out" under a 1500-token headline invents a measurement
+		// nobody took.
+		const cell = rowByKey("tokens").read(
+			makeRunConfigMetrics({
+				tokens: { avg_input: null, avg_output: null, avg_total: 1500, n: 2 },
+			}),
+		);
+		expect(cell.display).toBe("1500");
+		expect(cell.detail).toBeNull();
+		expect(cell.n).toBe(2);
+	});
+
 	test("formats a latency above a second in seconds", () => {
 		const cell = rowByKey("model_latency_ms").read(
-			metrics({ model_latency_ms: { avg: 1500, p50: 1500, p95: 1500, n: 2 } }),
+			makeRunConfigMetrics({ model_latency_ms: { avg: 1500, p50: 1500, p95: 1500, n: 2 } }),
 		);
 		expect(cell.display).toBe("1.50s");
 	});

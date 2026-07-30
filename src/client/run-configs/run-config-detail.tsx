@@ -16,6 +16,7 @@ import { formatTimestamp, shortHash } from "@/client/format.ts";
 
 import { MetricCell } from "./metric-cell.tsx";
 import { METRIC_ROWS } from "./metric-rows.ts";
+import { ModeToggle } from "./mode-toggle.tsx";
 import { runConfigLabel, runConfigPairs } from "./run-config-label.ts";
 
 export function RunConfigDetail() {
@@ -70,6 +71,9 @@ function DetailBody({
 }) {
 	const navigate = useNavigate();
 	const pairs = runConfigPairs(detail.config);
+	// What the metrics were actually computed over. Derived from the rows the
+	// response already carries rather than a second server-side count.
+	const includedReplays = detail.conversations.reduce((sum, row) => sum + row.replays.length, 0);
 	return (
 		<div className="space-y-8">
 			<div className="space-y-3">
@@ -113,6 +117,15 @@ function DetailBody({
 				<h3 className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
 					Across every conversation
 				</h3>
+				{/* The header above counts the whole group; these numbers are computed
+				    over the selected subset. Silence when they're the same set — a
+				    caveat that always shows is a caveat nobody reads. */}
+				{includedReplays < detail.coverage.replays && (
+					<p className="font-mono text-[11px] tabular-nums text-muted-foreground">
+						{includedReplays} of {detail.coverage.replays} replays · {detail.conversations.length}{" "}
+						of {detail.coverage.conversations} conversations
+					</p>
+				)}
 				<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 					{METRIC_ROWS.map((row) => (
 						<div key={row.key} className="rounded-lg border border-border/60 p-3">
@@ -128,30 +141,21 @@ function DetailBody({
 					<h3 className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
 						Per conversation
 					</h3>
-					<fieldset className="flex rounded-md border border-border/60 p-0.5">
-						<legend className="sr-only">Replays</legend>
-						{(["latest", "all"] as const).map((value) => (
-							<button
-								key={value}
-								type="button"
-								aria-pressed={value === replaySelection}
-								onClick={() =>
-									void navigate({
-										to: "/configs/$configHash",
-										params: { configHash: detail.hash },
-										search: { replays: value },
-									})
-								}
-								className={
-									value === replaySelection
-										? "rounded bg-muted px-2.5 py-1 text-xs font-medium"
-										: "rounded px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
-								}
-							>
-								{value === "latest" ? "Latest run" : "All runs"}
-							</button>
-						))}
-					</fieldset>
+					<ModeToggle
+						label="Replays"
+						value={replaySelection}
+						options={[
+							{ value: "latest", label: "Latest per conversation" },
+							{ value: "all", label: "All completed" },
+						]}
+						onChange={(value) =>
+							void navigate({
+								to: "/configs/$configHash",
+								params: { configHash: detail.hash },
+								search: { replays: value },
+							})
+						}
+					/>
 				</div>
 				{detail.conversations.length === 0 ? (
 					<p className="rounded-lg border border-dashed border-border/60 px-6 py-12 text-center text-sm text-muted-foreground">

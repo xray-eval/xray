@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { ConversationNotFoundError } from "@/server/conversations/conversations.errors.ts";
 import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
+import { UnhashableRunConfigError } from "@/server/run-configs/run-configs.errors.ts";
 import { hashRunConfig } from "@/server/run-configs/run-configs.hash.ts";
 import {
 	replayEvaluations,
@@ -130,7 +131,7 @@ describe("createReplay", () => {
 				conversation_hash: hash,
 				run_config: { temperature: Number.NaN },
 			}),
-		).toThrow(TypeError);
+		).toThrow(UnhashableRunConfigError);
 		expect(store.db.select().from(replays).all()).toHaveLength(0);
 		store.close();
 	});
