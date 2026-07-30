@@ -56,6 +56,74 @@ describe("POST /v1/replays", () => {
 		expect(body.id).toMatch(/[0-9a-f-]{36}/);
 	});
 
+	// The group id is exposed on the replay so an API consumer can get from a run
+	// to its config group. Nothing in this repo reads it yet — the inspector has
+	// no link to the group, and the SDK doesn't surface it on `ReplayResult`.
+	it("returns the run-config group hash on the created replay", async () => {
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				conversation_hash: hash,
+				run_config: { model: "gpt-4o", temperature: 0.5 },
+				run_config_name: "baseline",
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await readJson(res, v.object({ run_config_hash: v.string() }));
+		expect(body.run_config_hash).toMatch(/^[0-9a-f]{64}$/);
+	});
+
+	it("rejects a run_config_name with no run_config to label", async () => {
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ conversation_hash: hash, run_config_name: "baseline" }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects an over-long run_config_name", async () => {
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				conversation_hash: hash,
+				run_config: { model: "gpt-4o" },
+				run_config_name: "x".repeat(257),
+			}),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects a run_config with no content, named or not", async () => {
+		// `RunConfig(name="baseline")` wires as `{}` because the label is
+		// deliberately outside the hashed object. Accepting it would put every
+		// name-only config in the whole install into the hash-of-`{}` group,
+		// whose label then flips last-write-wins — nothing to compare, no warning.
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		for (const body of [
+			{ conversation_hash: hash, run_config: {}, run_config_name: "baseline" },
+			{ conversation_hash: hash, run_config: {} },
+		]) {
+			const res = await app.request("/v1/replays", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+			expect(res.status).toBe(400);
+			const parsed = await readJson(res, v.object({ error: v.string() }));
+			expect(parsed.error).toBe("invalid_replay_request");
+		}
+	});
+
 	it("returns 404 when the conversation hash doesn't exist", async () => {
 		const { app } = makeApp();
 		const res = await app.request("/v1/replays", {
@@ -74,6 +142,29 @@ describe("POST /v1/replays", () => {
 			body: JSON.stringify({ conversation_hash: "" }),
 		});
 		expect(res.status).toBe(400);
+	});
+
+	it("returns 400 for a run_config the hasher cannot encode", async () => {
+		// `1e999` is valid JSON that parses to Infinity, and `run_config` is
+		// `v.unknown()` by design, so it reaches the canonicalizer intact. A
+		// caller's malformed body is a 400, not a 500 with a logged stack.
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: `{"conversation_hash":"${hash}","run_config":{"budget":1e999}}`,
+		});
+		expect(res.status).toBe(400);
+		const body = await readJson(
+			res,
+			v.object({
+				error: v.string(),
+				issues: v.array(v.object({ type: v.string(), received: v.string() })),
+			}),
+		);
+		expect(body.error).toBe("invalid_replay_request");
+		expect(body.issues[0]).toMatchObject({ type: "run_config", received: "±Infinity" });
 	});
 });
 

@@ -20,11 +20,20 @@ import {
 import { makeReplayEvents } from "./replays/replays.events.ts";
 import { SSE_IDLE_TIMEOUT_S } from "./replays/replays.router.ts";
 import { markReplayFailed } from "./replays/replays.service.ts";
+import { backfillRunConfigs } from "./run-configs/run-configs.groups.ts";
 import { createApp } from "./server.ts";
 import { openStoreFromEnv } from "./store/store.ts";
 
 const env = loadEnv();
 const store = openStoreFromEnv(env);
+
+// Group replays that were recorded before run configs had an identity. SQLite
+// can't SHA-256, so this can't live in the migration SQL. Idempotent, so a
+// restart after a partial run finishes the job.
+const backfilled = backfillRunConfigs(store);
+if (backfilled > 0) {
+	console.info(`assigned run-config groups to ${backfilled} pre-existing replay(s)`);
+}
 
 const audioRoot = env.XRAY_AUDIO_ROOT ?? join(env.XRAY_DATA_DIR, "audio");
 mkdirSync(audioRoot, { recursive: true });

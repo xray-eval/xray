@@ -28,8 +28,24 @@ describe("RootLayout", () => {
 		);
 		const { ui } = renderWithRouter({ initialEntries: ["/"] });
 		render(ui);
-		await waitFor(() => expect(screen.getByText(/^conversations$/i)).toBeTruthy());
+		// Query the heading, not the text: the header nav also links to
+		// "Conversations", so a bare text query matches the chrome as well as the
+		// outlet and can't tell you the route actually rendered.
+		await waitFor(() =>
+			expect(screen.getByRole("heading", { name: /^conversations$/i })).toBeTruthy(),
+		);
 		expect(screen.getByRole("heading", { name: /^xray$/i })).toBeTruthy();
+	});
+
+	it("marks the nav link for the current route as active", async () => {
+		server.use(http.get("http://localhost/v1/run-configs", () => HttpResponse.json({ items: [] })));
+		const { ui } = renderWithRouter({ initialEntries: ["/configs"] });
+		render(ui);
+		const configsLink = await waitFor(() => screen.getByRole("link", { name: "Run configs" }));
+		expect(configsLink.getAttribute("data-active")).toBe("true");
+		expect(
+			screen.getByRole("link", { name: "Conversations" }).getAttribute("data-active"),
+		).toBeNull();
 	});
 
 	it("preserves the chrome on a not-found path", async () => {

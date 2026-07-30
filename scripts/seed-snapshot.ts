@@ -1,13 +1,13 @@
 /**
  * Regenerate the committed `snapshot/` fixture from scratch.
  *
- * It builds a scripted barge-in conversation, synthesizes a stereo WAV in which
- * the user talks over the agent, and runs it through the REAL analyze pipeline
- * (VAD → per-turn metrics → assertion evaluation). The result — overlapping
- * audio, a genuine `yield_ms` metric, and a passing `yielded_within_ms`
- * assertion — is written to `snapshot/xray.db` + `snapshot/audio/` so a
- * developer can open the inspector and see an authentic interruption without a
- * live agent or any provider API keys.
+ * It builds two scripted conversations, synthesizes a stereo WAV per replay, and
+ * runs each through the REAL analyze pipeline (VAD → per-turn metrics →
+ * assertion evaluation). The result — overlapping audio, a genuine `yield_ms`
+ * metric, and a passing `yielded_within_ms` assertion — is written to
+ * `snapshot/xray.db` + `snapshot/audio/` so a developer can open the inspector
+ * and see an authentic interruption without a live agent or any provider API
+ * keys.
  *
  * Nothing here is random or clock-dependent, so re-running produces a
  * byte-identical fixture. Run: `bun run scripts/seed-snapshot.ts`.
@@ -53,16 +53,12 @@ const SNAPSHOT_DIR = new URL("../snapshot", import.meta.url).pathname;
 const DB_PATH = join(SNAPSHOT_DIR, "xray.db");
 const AUDIO_ROOT = join(SNAPSHOT_DIR, "audio");
 
-// Fixed so the committed fixture is stable across regenerations.
-const REPLAY_ID = "ba9e1000-0000-4000-8000-000000000001";
-const RECORDING_STARTED_AT = "2026-07-01T12:00:00.000Z";
-const CONVERSATION_NAME = "user corrects destination mid-answer";
-
 const SAMPLE_RATE = 48_000;
 const TONE_HZ = 200;
 
 // One line per turn. The distinct amplitude doubles as the marker the
-// stand-in transcription provider reads back to recover the line.
+// stand-in transcription provider reads back to recover the line — so
+// amplitudes are unique across BOTH scripts, not just within one.
 interface ScriptedTurn {
 	readonly role: "user" | "agent";
 	readonly startMs: number;
@@ -71,7 +67,7 @@ interface ScriptedTurn {
 	readonly transcript: string;
 }
 
-const SCRIPT: readonly ScriptedTurn[] = [
+const BARGE_IN_SCRIPT: readonly ScriptedTurn[] = [
 	{
 		role: "user",
 		startMs: 0,
@@ -97,23 +93,188 @@ const SCRIPT: readonly ScriptedTurn[] = [
 		transcript: "Got it, booking a flight to Berlin instead.",
 	},
 ];
-const RECORDING_END_MS = 8200;
 
-// The conversation the developer would have authored. interrupt_after_ms marks
-// the barge-in; the agent turn it interrupts must yield within 500ms, and the
-// recovery turn must mention the corrected city.
-const SPEC_TURNS: readonly ConversationTurn[] = [
-	{ role: "user", text: SCRIPT[0]?.transcript ?? "", assertions: [] },
-	{ role: "agent", assertions: [{ kind: "yielded_within_ms", max_ms: 500 }] },
-	{ role: "user", text: SCRIPT[2]?.transcript ?? "", interrupt_after_ms: 2000, assertions: [] },
-	{ role: "agent", assertions: [{ kind: "contains", text: "Berlin", case_insensitive: true }] },
+// A short, clean two-turn exchange: no interruption, so `yield_ms` has no
+// sample here and the compare view shows a metric whose `n` legitimately
+// differs per row. Also a third of the audio bytes of the barge-in script,
+// which is what keeps a 5-config fixture from dominating the repo.
+const LOOKUP_SCRIPT: readonly ScriptedTurn[] = [
+	{
+		role: "user",
+		startMs: 0,
+		endMs: 1200,
+		amplitude: 18_000,
+		transcript: "What time is my flight?",
+	},
+	{
+		role: "agent",
+		startMs: 1600,
+		endMs: 3200,
+		amplitude: 21_000,
+		transcript: "Your flight leaves at 6pm.",
+	},
 ];
 
-function buildBargeInWav(): StereoWav {
-	const totalSamples = Math.round((RECORDING_END_MS / 1000) * SAMPLE_RATE);
+interface ScriptedConversation {
+	readonly key: string;
+	readonly name: string;
+	readonly script: readonly ScriptedTurn[];
+	readonly specTurns: readonly ConversationTurn[];
+	readonly recordingEndMs: number;
+}
+
+// The conversations the developer would have authored. interrupt_after_ms marks
+// the barge-in; the agent turn it interrupts must yield within 500ms, and the
+// recovery turn must mention the corrected city.
+const CONVERSATIONS: readonly ScriptedConversation[] = [
+	{
+		key: "barge-in",
+		name: "user corrects destination mid-answer",
+		script: BARGE_IN_SCRIPT,
+		recordingEndMs: 8200,
+		specTurns: [
+			{ role: "user", text: BARGE_IN_SCRIPT[0]?.transcript ?? "", assertions: [] },
+			{ role: "agent", assertions: [{ kind: "yielded_within_ms", max_ms: 500 }] },
+			{
+				role: "user",
+				text: BARGE_IN_SCRIPT[2]?.transcript ?? "",
+				interrupt_after_ms: 2000,
+				assertions: [],
+			},
+			{ role: "agent", assertions: [{ kind: "contains", text: "Berlin", case_insensitive: true }] },
+		],
+	},
+	{
+		key: "lookup",
+		name: "user asks when their flight leaves",
+		script: LOOKUP_SCRIPT,
+		recordingEndMs: 3400,
+		specTurns: [
+			{ role: "user", text: LOOKUP_SCRIPT[0]?.transcript ?? "", assertions: [] },
+			{ role: "agent", assertions: [{ kind: "contains", text: "6pm", case_insensitive: true }] },
+		],
+	},
+];
+
+const ALL_SCRIPTED_TURNS: readonly ScriptedTurn[] = CONVERSATIONS.flatMap((c) => c.script);
+
+/**
+ * Five configurations, so the comparison view has a realistic spread on a fresh
+ * checkout. `agentDelayMs` shifts only the *start* of each agent turn, never its
+ * end: that moves `agent_response_ms` (the number the configs differ on) while
+ * leaving the barge-in overlap — and therefore `yield_ms` and the
+ * `yielded_within_ms` assertion — identical. Every run passes; they differ only
+ * on how quickly the agent gets going.
+ *
+ * `temperature` is a float on purpose: it exercises the run-config canonicalizer
+ * that the conversation one can't handle.
+ */
+interface RunVariant {
+	readonly key: string;
+	readonly configName: string;
+	readonly config: Record<string, string | number>;
+	readonly agentDelayMs: number;
+}
+
+const RUN_VARIANTS: readonly RunVariant[] = [
+	{ key: "baseline", configName: "baseline", config: { model: "gpt-4o" }, agentDelayMs: 0 },
+	{
+		key: "fast-follow",
+		configName: "fast-follow",
+		config: { model: "gemini-2.5-flash" },
+		agentDelayMs: -250,
+	},
+	{
+		key: "precise",
+		configName: "precise",
+		config: { model: "gpt-4o", temperature: 0.2 },
+		agentDelayMs: 120,
+	},
+	{ key: "mini", configName: "mini", config: { model: "gpt-4o-mini" }, agentDelayMs: -100 },
+	{
+		key: "flash-tuned",
+		configName: "flash-tuned",
+		config: { model: "gemini-2.5-flash", temperature: 0.9, top_p: 0.8 },
+		agentDelayMs: 350,
+	},
+];
+
+/**
+ * One row per replay, with a hand-assigned id so the fixture stays stable across
+ * regenerations. Only two configs ran the barge-in conversation: that partial
+ * coverage is what the compare view's fair-comparison warning is for, so the
+ * fixture has to contain a case that triggers it.
+ *
+ * `...0001` is the barge-in run this fixture has always held and its WAV is
+ * byte-identical — the inspector's canonical example is unchanged. `...0002` is
+ * new: a second run of that same conversation under `fast-follow`, so the
+ * barge-in conversation has more than one config to compare.
+ */
+interface SeedReplay {
+	readonly replayId: string;
+	readonly variantKey: string;
+	readonly conversationKey: string;
+	readonly startedAt: string;
+}
+
+const SEED_REPLAYS: readonly SeedReplay[] = [
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000001",
+		variantKey: "baseline",
+		conversationKey: "barge-in",
+		startedAt: "2026-07-01T12:00:00.000Z",
+	},
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000002",
+		variantKey: "fast-follow",
+		conversationKey: "barge-in",
+		startedAt: "2026-07-01T12:05:00.000Z",
+	},
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000003",
+		variantKey: "baseline",
+		conversationKey: "lookup",
+		startedAt: "2026-07-02T09:00:00.000Z",
+	},
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000004",
+		variantKey: "fast-follow",
+		conversationKey: "lookup",
+		startedAt: "2026-07-02T09:05:00.000Z",
+	},
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000005",
+		variantKey: "precise",
+		conversationKey: "lookup",
+		startedAt: "2026-07-02T09:10:00.000Z",
+	},
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000006",
+		variantKey: "mini",
+		conversationKey: "lookup",
+		startedAt: "2026-07-02T09:15:00.000Z",
+	},
+	{
+		replayId: "ba9e1000-0000-4000-8000-000000000007",
+		variantKey: "flash-tuned",
+		conversationKey: "lookup",
+		startedAt: "2026-07-02T09:20:00.000Z",
+	},
+];
+
+/** Agent turns start `agentDelayMs` earlier/later; their ends never move. */
+function scriptFor(script: readonly ScriptedTurn[], agentDelayMs: number): readonly ScriptedTurn[] {
+	if (agentDelayMs === 0) return script;
+	return script.map((turn) =>
+		turn.role === "agent" ? { ...turn, startMs: turn.startMs + agentDelayMs } : turn,
+	);
+}
+
+function buildWav(script: readonly ScriptedTurn[], recordingEndMs: number): StereoWav {
+	const totalSamples = Math.round((recordingEndMs / 1000) * SAMPLE_RATE);
 	const left = new Int16Array(totalSamples);
 	const right = new Int16Array(totalSamples);
-	for (const turn of SCRIPT) {
+	for (const turn of script) {
 		writeTone(turn.role === "user" ? left : right, turn);
 	}
 	return { sampleRate: SAMPLE_RATE, bitsPerSample: 16, left, right };
@@ -142,7 +303,7 @@ function makeScriptedTranscription(): TranscriptionProvider {
 				const magnitude = Math.abs(sample);
 				if (magnitude > peak) peak = magnitude;
 			}
-			const turn = SCRIPT.reduce((best, candidate) =>
+			const turn = ALL_SCRIPTED_TURNS.reduce((best, candidate) =>
 				Math.abs(candidate.amplitude - peak) < Math.abs(best.amplitude - peak) ? candidate : best,
 			);
 			const durationMs = Math.round((input.audio.length / input.sampleRate) * 1000);
@@ -151,15 +312,27 @@ function makeScriptedTranscription(): TranscriptionProvider {
 	};
 }
 
-// evaluate-replay requires a judge provider, but the conversation declares no
+// evaluate-replay requires a judge provider, but neither conversation declares
 // judges, so this is never invoked — it throws loudly if that ever changes.
 const UNUSED_JUDGE_PROVIDER: JudgeProvider = {
 	name: "snapshot-no-judge",
 	model: "none",
 	judge() {
-		throw new Error("seed-snapshot: the barge-in conversation declares no judges");
+		throw new Error("seed-snapshot: neither seeded conversation declares judges");
 	},
 };
+
+function requireVariant(key: string): RunVariant {
+	const variant = RUN_VARIANTS.find((v) => v.key === key);
+	if (variant === undefined) throw new Error(`seed-snapshot: unknown run variant "${key}"`);
+	return variant;
+}
+
+function requireConversation(key: string): ScriptedConversation {
+	const conversation = CONVERSATIONS.find((c) => c.key === key);
+	if (conversation === undefined) throw new Error(`seed-snapshot: unknown conversation "${key}"`);
+	return conversation;
+}
 
 async function main(): Promise<void> {
 	// Start from a clean slate so a regeneration can't leave stale rows or a
@@ -172,47 +345,25 @@ async function main(): Promise<void> {
 
 	const store = openStore({ path: DB_PATH });
 	try {
-		const now = RECORDING_STARTED_AT;
-		const { json: turnsJson, hash } = await canonicalizeAndHashSpec(SPEC_TURNS, []);
-		ensureConversation(store.db, { hash, name: CONVERSATION_NAME, turnsJson, now });
+		const hashes = new Map<string, string>();
+		for (const conversation of CONVERSATIONS) {
+			const { json: turnsJson, hash } = await canonicalizeAndHashSpec(conversation.specTurns, []);
+			ensureConversation(store.db, {
+				hash,
+				name: conversation.name,
+				turnsJson,
+				now: SEED_REPLAYS[0]?.startedAt ?? "",
+			});
+			hashes.set(conversation.key, hash);
+		}
 
-		createReplay(store, { conversation_hash: hash }, { id: REPLAY_ID, now: () => now });
-
-		const wavPath = join(AUDIO_ROOT, REPLAY_ID, "replay.wav");
-		await mkdir(dirname(wavPath), { recursive: true });
-		await writeFile(wavPath, writeStereoWav(buildBargeInWav()));
-
-		store.db
-			.update(replays)
-			.set({
-				audioPath: `${REPLAY_ID}/replay.wav`,
-				recordingStartedAt: RECORDING_STARTED_AT,
-				lifecycleState: "analyzing",
-				analysisStep: "vad",
-			})
-			.where(eq(replays.id, REPLAY_ID))
-			.run();
-
-		// Drive the three chain stages in order. Each normally enqueues the next
-		// on the job queue; here the fake runner swallows that and we call the
-		// next stage directly, so the whole pipeline runs in one process.
-		const events = makeReplayEvents();
-		const runner = makeFakeJobRunner();
-		await makeAnalyzeProcessor(
-			store,
-			AUDIO_ROOT,
-			events,
-			runner,
-			makeScriptedTranscription(),
-		)({
-			replayId: REPLAY_ID,
-		});
-		await makeCalculateMetricsProcessor(store, events, runner)({ replayId: REPLAY_ID });
-		await makeEvaluateReplayProcessor(
-			store,
-			events,
-			UNUSED_JUDGE_PROVIDER,
-		)({ replayId: REPLAY_ID });
+		for (const seed of SEED_REPLAYS) {
+			const hash = hashes.get(seed.conversationKey);
+			if (hash === undefined) {
+				throw new Error(`seed-snapshot: no hash for conversation "${seed.conversationKey}"`);
+			}
+			await seedReplay(store, hash, seed);
+		}
 
 		printSummary(store);
 
@@ -225,31 +376,92 @@ async function main(): Promise<void> {
 	}
 }
 
-function printSummary(store: ReturnType<typeof openStore>): void {
-	const replay = store.db.select().from(replays).where(eq(replays.id, REPLAY_ID)).get();
-	const metrics = store.db
-		.select()
-		.from(replayMetrics)
-		.where(eq(replayMetrics.replayId, REPLAY_ID))
-		.all();
-	const outcomes = store.db
-		.select()
-		.from(assertionResults)
-		.where(eq(assertionResults.replayId, REPLAY_ID))
-		.all();
-	const evaluation = store.db
-		.select()
-		.from(replayEvaluations)
-		.where(eq(replayEvaluations.replayId, REPLAY_ID))
-		.get();
+async function seedReplay(
+	store: ReturnType<typeof openStore>,
+	conversationHash: string,
+	seed: SeedReplay,
+): Promise<void> {
+	const { replayId } = seed;
+	const variant = requireVariant(seed.variantKey);
+	const conversation = requireConversation(seed.conversationKey);
 
-	console.info(`snapshot replay ${REPLAY_ID} → ${replay?.lifecycleState}`);
-	const interrupted = metrics.find((m) => m.yieldMs !== null);
-	console.info(`  yield_ms: ${interrupted?.yieldMs ?? "(none)"}`);
-	for (const outcome of outcomes) {
-		console.info(`  turn ${outcome.turnIdx} ${outcome.kind}: ${outcome.status}`);
+	createReplay(
+		store,
+		{
+			conversation_hash: conversationHash,
+			run_config: variant.config,
+			run_config_name: variant.configName,
+		},
+		{ id: replayId, now: () => seed.startedAt },
+	);
+
+	const wavPath = join(AUDIO_ROOT, replayId, "replay.wav");
+	await mkdir(dirname(wavPath), { recursive: true });
+	const script = scriptFor(conversation.script, variant.agentDelayMs);
+	await writeFile(wavPath, writeStereoWav(buildWav(script, conversation.recordingEndMs)));
+
+	store.db
+		.update(replays)
+		.set({
+			audioPath: `${replayId}/replay.wav`,
+			recordingStartedAt: seed.startedAt,
+			lifecycleState: "analyzing",
+			analysisStep: "vad",
+		})
+		.where(eq(replays.id, replayId))
+		.run();
+
+	// Drive the three chain stages in order. Each normally enqueues the next
+	// on the job queue; here the fake runner swallows that and we call the
+	// next stage directly, so the whole pipeline runs in one process.
+	const events = makeReplayEvents();
+	const runner = makeFakeJobRunner();
+	await makeAnalyzeProcessor(
+		store,
+		AUDIO_ROOT,
+		events,
+		runner,
+		makeScriptedTranscription(),
+	)({ replayId });
+	await makeCalculateMetricsProcessor(store, events, runner)({ replayId });
+	await makeEvaluateReplayProcessor(store, events, UNUSED_JUDGE_PROVIDER)({ replayId });
+}
+
+function printSummary(store: ReturnType<typeof openStore>): void {
+	for (const seed of SEED_REPLAYS) {
+		const { replayId } = seed;
+		const variant = requireVariant(seed.variantKey);
+		const replay = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+		const metrics = store.db
+			.select()
+			.from(replayMetrics)
+			.where(eq(replayMetrics.replayId, replayId))
+			.all();
+		const outcomes = store.db
+			.select()
+			.from(assertionResults)
+			.where(eq(assertionResults.replayId, replayId))
+			.all();
+		const evaluation = store.db
+			.select()
+			.from(replayEvaluations)
+			.where(eq(replayEvaluations.replayId, replayId))
+			.get();
+
+		console.info(
+			`snapshot replay ${replayId} (${variant.configName} / ${seed.conversationKey}) → ${replay?.lifecycleState}`,
+		);
+		const responses = metrics
+			.map((m) => m.agentResponseMs)
+			.filter((ms): ms is number => ms !== null);
+		console.info(`  agent_response_ms: ${responses.join(", ") || "(none)"}`);
+		const interrupted = metrics.find((m) => m.yieldMs !== null);
+		console.info(`  yield_ms: ${interrupted?.yieldMs ?? "(none)"}`);
+		for (const outcome of outcomes) {
+			console.info(`  turn ${outcome.turnIdx} ${outcome.kind}: ${outcome.status}`);
+		}
+		console.info(`  passed: ${evaluation?.passed}`);
 	}
-	console.info(`  passed: ${evaluation?.passed}`);
 }
 
 await main();

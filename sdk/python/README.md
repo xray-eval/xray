@@ -52,7 +52,7 @@ async def main() -> None:
         conversation=conv,
         runtime=runtime,
         xray_url="http://localhost:8080",
-        run_config=RunConfig(model="gpt-4o", temperature=0.5),
+        run_config=RunConfig(name="baseline", model="gpt-4o", temperature=0.5),
     )
     assert result.passed, format_failures(result)
 

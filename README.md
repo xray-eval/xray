@@ -18,6 +18,7 @@ Open-source replay/eval framework for LiveKit voice agents. One Docker image, on
 - **Run it against your LiveKit voice agent.** The SDK joins your room as a user-side participant, plays the user audio, captures the agent's audio + transcript.
 - **xray records the run as a Replay.** The dev's agent emits OpenTelemetry spans during the run — xray's OTLP receiver routes them by `xray.replay.id` and surfaces tool calls, model usage, and timings in the inspector. Spans of recognized vocabularies (`xray.*`, OTel GenAI semconv `gen_ai.*`, Langfuse) light up automatically.
 - **Compare runs side-by-side.** Pick 2–8 Replays of one Conversation to grid-compare; pick two Conversations to align by per-turn `key` and see what diverged.
+- **Compare configurations across your whole suite.** Group replays by the config they ran under and see avg/p50/p95 TTFT, voice-to-voice latency, barge-in behavior and pass rate per config — then click through to the recording behind any number.
 
 ---
 
@@ -119,7 +120,7 @@ async def main() -> None:
         conversation=conv,
         runtime=runtime,
         xray_url="http://localhost:8080",
-        run_config=RunConfig(model="gpt-4o", temperature=0.5),
+        run_config=RunConfig(name="baseline", model="gpt-4o", temperature=0.5),
     )
     assert result.passed, format_failures(result)
 
@@ -137,6 +138,9 @@ The dev's agent reads the replay context (`replay_id`, `conversation_hash`, `mod
 
 - **Replays of the same Conversation:** select 2–8 from the Conversation detail page → grid view with per-column `run_config` headers.
 - **Two Conversations:** pick from the Conversations index → side-by-side aligned by per-turn `key`. Unmatched turns render as labeled "no matching turn" placeholders.
+- **Run configs across every Conversation:** the **Run configs** page compares 2–8 configurations side by side on avg/p50/p95 TTFT, voice-to-voice latency, barge-in behavior, token usage and pass rate — aggregated over all the conversations each config ran. Every metric cell carries its sample size, and the view flags it when the selected configs didn't run the same conversations (with a one-click switch to the shared subset). Drill into a config to see it per conversation, where each row links to that replay in the inspector so you can hear the outlier that produced the number.
+
+  Configs get their identity from a server-side hash of the config content, so every replay you run under the same `RunConfig` is grouped automatically. Pass `RunConfig(name="baseline", …)` to label the group; the name is not part of the hash, so renaming relabels rather than forks.
 
 ---
 
@@ -165,7 +169,7 @@ One Bun process serves both the SPA and the API. One SQLite file at `/data/xray.
                                   │
                                   ▼
                         ┌────────────────────────┐
-                        │           UI           │   Conversations · Replays · Compare
+                        │           UI           │   Conversations · Replays · Run configs · Compare
                         └────────────────────────┘
 ```
 

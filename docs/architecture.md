@@ -207,6 +207,16 @@ in order:
    `lifecycle_state='pending'` and returns `replay_id`. This must
    happen before the runtime emits its first span. Otherwise the OTLP
    receiver would drop those spans as "unknown replay_id."
+   The body is `{conversation_hash, run_config?, run_config_name?}`. When a
+   `run_config` is present, the server hashes its canonical JSON, upserts the
+   matching `run_configs` row (applying `run_config_name` as a label,
+   last-write-wins) and stamps `replays.run_config_hash` — all in the same
+   transaction as the row insert. `run_config_name` is a sibling of
+   `run_config`, not a key inside it, so a label can never enter the identity
+   hash. A replay sent without a `run_config` belongs to no group. An *empty*
+   `run_config` is rejected with a 400: since the label is not hashed, every
+   name-only config would otherwise land in one group whose label flips
+   last-write-wins.
 3. `POST /v1/replays/:id/audio`. This uploads the stereo WAV (left = user,
    right = agent, wall-clock-aligned, written under
    `XRAY_AUDIO_ROOT/<replay_id>/replay.<ext>`). The server flips
@@ -355,6 +365,7 @@ erDiagram
     replays ||--o{ assertion_results : "replay_id (evaluation)"
     replays ||--o{ judge_results : "replay_id (evaluation)"
     replays ||--|| replay_evaluations : "replay_id (verdict)"
+    run_configs ||--o{ replays : "run_config_hash (config group)"
 
     conversations {
         text hash PK "SHA-256 of canonical spec JSON {turns (incl. assertions + sha256 of RecordedAudio bytes), judges}"
@@ -373,8 +384,15 @@ erDiagram
         text started_at
         text finished_at
         text audio_path "relative path under XRAY_AUDIO_ROOT to the stereo WAV"
-        text run_config_json
+        text run_config_json "verbatim per-replay config snapshot the driver sent"
+        text run_config_hash FK "group identity: SHA-256 of the canonical config JSON; null when no run_config was sent"
         text job_id "bunqueue job id (null before /analyze)"
+    }
+    run_configs {
+        text hash PK "SHA-256 of the canonical-JSON encoding of the run_config content"
+        text name "Free-form display label; NOT part of the hash, last-write-wins on re-POST"
+        text config_json "canonical JSON of the config - the hash input"
+        text created_at
     }
     replay_turns {
         text replay_id PK,FK
@@ -425,6 +443,7 @@ flowchart LR
     EP4["POST /v1/replays/compare<br/>(body: 2–8 replay ids)"]
     EP5["GET /v1/replays/:id/audio<br/>(stereo WAV bytes)"]
     EP6["GET /v1/replays/:id/events<br/>(SSE - live progress)"]
+    EP7["GET /v1/run-configs<br/>POST /v1/run-configs/compare<br/>GET /v1/run-configs/:hash<br/>(config groups + aggregates)"]
 
     UI --> EP1
     UI --> EP2
@@ -432,6 +451,7 @@ flowchart LR
     UI --> EP4
     UI --> EP5
     UI --> EP6
+    UI --> EP7
 
     EP3 -. "joins<br/>replays + replay_turns + speech_segments<br/>+ tool_calls + model_usage + spans" .-> DB[("SQLite")]
     EP5 -. "streams<br/>WAV bytes" .-> AUDIO[("XRAY_AUDIO_ROOT")]

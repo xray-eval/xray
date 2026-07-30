@@ -24,6 +24,7 @@ const REPLAY_FIXTURES = [
 		started_at: "2026-05-15T10:00:00.000Z",
 		finished_at: "2026-05-15T10:00:30.000Z",
 		run_config: null,
+		run_config_hash: null,
 	},
 	{
 		id: "22222222-2222-2222-2222-222222222222",
@@ -34,6 +35,7 @@ const REPLAY_FIXTURES = [
 		started_at: "2026-05-15T10:01:00.000Z",
 		finished_at: "2026-05-15T10:01:30.000Z",
 		run_config: null,
+		run_config_hash: null,
 	},
 	{
 		id: "33333333-3333-3333-3333-333333333333",
@@ -44,6 +46,7 @@ const REPLAY_FIXTURES = [
 		started_at: "2026-05-15T10:02:00.000Z",
 		finished_at: null,
 		run_config: null,
+		run_config_hash: null,
 	},
 ] satisfies ReplaySummaryResponse[];
 

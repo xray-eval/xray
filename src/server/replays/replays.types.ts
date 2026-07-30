@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import { ConversationHashSchema } from "@/server/conversations/conversations.types.ts";
+import { RunConfigNameSchema } from "@/server/run-configs/run-configs.types.ts";
 import {
 	ANALYSIS_STEPS,
 	REPLAY_FAILURE_REASONS,
@@ -22,16 +23,48 @@ export const TurnRoleSchema = v.picklist(TURN_ROLES);
 export const SpanVocabularySchema = v.picklist(SPAN_VOCABULARIES);
 
 /**
+ * `RunConfig(name="baseline")` wires as `{}` — the label is deliberately kept
+ * out of the hashed object, so a name-only config carries no content. Every
+ * such replay would hash to the same group and its label would flip
+ * last-write-wins, leaving one group with nothing to compare inside it.
+ */
+function isContentFreeRunConfig(value: unknown): boolean {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		Object.keys(value).length === 0
+	);
+}
+
+/**
  * Body of `POST /v1/replays` (JSON). The SDK POSTs `/v1/conversations`
  * first to upsert the conversation row (server hashes the canonical
  * turn JSON and returns the `conversation_hash`), then references that
  * hash here. The SDK should propagate the returned `id`
  * (xray.replay.id) onto the voice service BEFORE its first OTEL span.
  */
-export const CreateReplayRequestSchema = v.object({
-	conversation_hash: ConversationHashSchema,
-	run_config: v.optional(v.unknown()),
-});
+export const CreateReplayRequestSchema = v.pipe(
+	v.object({
+		conversation_hash: ConversationHashSchema,
+		run_config: v.optional(v.unknown()),
+		// Display label for the run-config group this replay joins. Deliberately
+		// a sibling of `run_config` rather than a key inside it: the label must
+		// not enter the content hash (renaming would fork the group), and
+		// `RunConfig.extra` flattens into `run_config`, so a dev's own `name` key
+		// would otherwise change grouping semantics. Keeps `run_config` a
+		// verbatim opaque blob with no carve-out rule.
+		run_config_name: v.optional(RunConfigNameSchema),
+	}),
+	v.check(
+		(body) => body.run_config_name === undefined || body.run_config != null,
+		"run_config_name requires a run_config to label",
+	),
+	v.check(
+		(body) => !isContentFreeRunConfig(body.run_config),
+		"run_config must set at least one field — a run_config_name alone does not define a config group",
+	),
+);
 export type CreateReplayRequest = v.InferOutput<typeof CreateReplayRequestSchema>;
 
 export const UpdateReplayRequestSchema = v.object({
@@ -169,6 +202,10 @@ export const ReplaySummaryResponseSchema = v.object({
 	started_at: v.string(),
 	finished_at: v.nullable(v.string()),
 	run_config: v.unknown(),
+	// Identity of the run-config group. Null when the replay carried no config
+	// — such a replay belongs to no group and is invisible to the config
+	// comparison view.
+	run_config_hash: v.nullable(v.string()),
 });
 export type ReplaySummaryResponse = v.InferOutput<typeof ReplaySummaryResponseSchema>;
 
@@ -188,6 +225,7 @@ export const ReplayDetailResponseSchema = v.object({
 	audio_path: v.nullable(v.string()),
 	job_id: v.nullable(v.string()),
 	run_config: v.unknown(),
+	run_config_hash: v.nullable(v.string()),
 	turns: v.array(ReplayTurnResponseSchema),
 	speech_segments: v.array(SpeechSegmentResponseSchema),
 	transcripts: v.array(TurnTranscriptResponseSchema),

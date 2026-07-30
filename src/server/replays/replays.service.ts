@@ -4,6 +4,7 @@ import * as v from "valibot";
 import { ConversationNotFoundError } from "@/server/conversations/conversations.errors.ts";
 import { getConversationByHash } from "@/server/conversations/conversations.service.ts";
 import type { JobRunner } from "@/server/jobs/jobs.bunqueue.ts";
+import { ensureRunConfig } from "@/server/run-configs/run-configs.groups.ts";
 import {
 	assertionResults,
 	judgeResults,
@@ -72,20 +73,34 @@ export function createReplay(
 	}
 	const id = opts.id ?? crypto.randomUUID();
 	const startedAt = now();
-	const replayRow: ReplayRow = {
-		id,
-		conversationHash: req.conversation_hash,
-		lifecycleState: "pending",
-		analysisStep: null,
-		failureReason: null,
-		startedAt,
-		finishedAt: null,
-		recordingStartedAt: null,
-		audioPath: null,
-		runConfigJson: req.run_config === undefined ? null : JSON.stringify(req.run_config),
-		jobId: null,
-	};
-	store.db.insert(replays).values(replayRow).run();
+	// An explicit `null` run_config means the same as omitting it: no config
+	// content, so no group to join.
+	const hasRunConfig = req.run_config !== undefined && req.run_config !== null;
+	const replayRow: ReplayRow = store.db.transaction((tx) => {
+		const group = hasRunConfig
+			? ensureRunConfig(tx, {
+					config: req.run_config,
+					...(req.run_config_name !== undefined ? { name: req.run_config_name } : {}),
+					now: startedAt,
+				})
+			: undefined;
+		const row: ReplayRow = {
+			id,
+			conversationHash: req.conversation_hash,
+			lifecycleState: "pending",
+			analysisStep: null,
+			failureReason: null,
+			startedAt,
+			finishedAt: null,
+			recordingStartedAt: null,
+			audioPath: null,
+			runConfigJson: hasRunConfig ? JSON.stringify(req.run_config) : null,
+			runConfigHash: group?.hash ?? null,
+			jobId: null,
+		};
+		tx.insert(replays).values(row).run();
+		return row;
+	});
 	return buildReplayDetail(store, replayRow);
 }
 
@@ -169,6 +184,7 @@ function toSummary(r: ReplayRow): ReplaySummaryResponse {
 		started_at: r.startedAt,
 		finished_at: r.finishedAt,
 		run_config: parseJsonOrNull(r.runConfigJson),
+		run_config_hash: r.runConfigHash,
 	};
 }
 
@@ -214,6 +230,7 @@ function buildReplayDetail(store: Store, r: ReplayRow): ReplayDetailResponse {
 		audio_path: r.audioPath,
 		job_id: r.jobId,
 		run_config: parseJsonOrNull(r.runConfigJson),
+		run_config_hash: r.runConfigHash,
 		turns: turns.map(toTurnResponse),
 		speech_segments: segments.map(toSegmentResponse),
 		transcripts: transcriptRows.map(toTranscriptResponse),

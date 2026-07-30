@@ -18,7 +18,7 @@ import pytest
 import respx
 from typing_extensions import override
 
-from xray import Assertion, Conversation, Judge, ReplayResult, Turn, run
+from xray import Assertion, Conversation, Judge, ReplayResult, RunConfig, Turn, run
 from xray.conversation import AgentResponse
 from xray.errors import (
     AgentNotJoinedError,
@@ -852,3 +852,104 @@ async def test_result_fallback_failing_too_still_raises_replay_evaluation_error(
             )
 
     assert result_route.called
+
+
+async def _run_with_config(*, tmp_path: Path, run_config: RunConfig | None) -> respx.Route:
+    """Drive one replay and hand back the mocked `POST /v1/replays` route so a
+    caller can assert on the body the SDK actually sent."""
+    wav = _make_wav(tmp_path)
+    replay_id = "00000000-0000-0000-0000-0000000000cf"
+    conversation = Conversation(name="x", turns=[Turn.user("hi", key="u0")])
+
+    with respx.mock(base_url="http://test.local") as mock:
+        mock.post("/v1/conversations").mock(
+            return_value=httpx.Response(200, json=_conversation_upsert_response())
+        )
+        _mock_turn_audio(mock)
+        post_replay = mock.post("/v1/replays").mock(
+            return_value=httpx.Response(201, json=_replay_response(replay_id))
+        )
+        mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
+        mock.post(f"/v1/replays/{replay_id}/analyze").mock(
+            return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
+        )
+        _mock_sse_endpoint(
+            mock,
+            replay_id,
+            _sse_stream(
+                [
+                    (
+                        "evaluation_complete",
+                        {
+                            "type": "evaluation_complete",
+                            "result": _eval_complete_payload(replay_id=replay_id),
+                        },
+                    )
+                ]
+            ),
+        )
+
+        await run(
+            conversation=conversation,
+            runtime=StubRuntime(full_audio_path=str(wav)),
+            xray_url="http://test.local",
+            run_config=run_config,
+        )
+    return post_replay
+
+
+def _replay_request_body(route: respx.Route) -> dict[str, object]:
+    call = route.calls[0]
+    request_obj: object = getattr(call, "request", None)
+    content_obj: object = getattr(request_obj, "content", b"")
+    assert isinstance(content_obj, bytes)
+    parsed: object = json.loads(content_obj.decode("utf-8"))
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+@pytest.mark.asyncio
+async def test_replay_post_sends_run_config_name_beside_the_config(tmp_path: Path):
+    """The label rides as a sibling of `run_config`, never as a key inside it:
+    the server hashes `run_config` to derive the group identity."""
+    route = await _run_with_config(
+        tmp_path=tmp_path, run_config=RunConfig(name="baseline", model="gpt-4o")
+    )
+    body = _replay_request_body(route)
+    assert body["run_config"] == {"model": "gpt-4o"}
+    assert body["run_config_name"] == "baseline"
+
+
+@pytest.mark.asyncio
+async def test_replay_post_omits_run_config_name_when_unnamed(tmp_path: Path):
+    route = await _run_with_config(tmp_path=tmp_path, run_config=RunConfig(model="gpt-4o"))
+    body = _replay_request_body(route)
+    assert body["run_config"] == {"model": "gpt-4o"}
+    assert "run_config_name" not in body
+
+
+@pytest.mark.asyncio
+async def test_replay_post_omits_both_when_no_run_config_is_given(tmp_path: Path):
+    route = await _run_with_config(tmp_path=tmp_path, run_config=None)
+    body = _replay_request_body(route)
+    assert "run_config" not in body
+    assert "run_config_name" not in body
+
+
+@pytest.mark.asyncio
+async def test_replay_post_treats_an_empty_name_as_unnamed(tmp_path: Path):
+    """`RunConfig(name="")` is a label the dev didn't fill in, not a label of
+    zero characters. The server's `run_config_name` rejects the empty string,
+    so sending it would 400 the whole run over a cosmetic field."""
+    route = await _run_with_config(tmp_path=tmp_path, run_config=RunConfig(name="", model="gpt-4o"))
+    body = _replay_request_body(route)
+    assert body["run_config"] == {"model": "gpt-4o"}
+    assert "run_config_name" not in body
+
+
+@pytest.mark.asyncio
+async def test_run_refuses_a_name_only_run_config_before_creating_the_replay(tmp_path: Path):
+    """A config with a label and no content hashes to the same group as every
+    other one. Fail in the caller's process rather than silently merging."""
+    with pytest.raises(ValueError, match="at least one"):
+        await _run_with_config(tmp_path=tmp_path, run_config=RunConfig(name="baseline"))

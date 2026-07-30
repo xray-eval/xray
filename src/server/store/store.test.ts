@@ -12,15 +12,18 @@ import {
 	modelUsage,
 	replays,
 	replayTurns,
+	runConfigs,
 	spans,
 	speechSegments,
 	toolCalls,
 } from "./schema.ts";
 import { openStore, openStoreFromEnv } from "./store.ts";
 import {
+	fakeHash,
 	makeConversationInput,
 	makeReplayInput,
 	makeReplayTurnInput,
+	makeRunConfigInput,
 	makeSpanInput,
 	makeSpeechSegmentInput,
 } from "./test-utils.ts";
@@ -57,6 +60,7 @@ describe("openStore", () => {
 				"model_usage",
 				"replay_turns",
 				"replays",
+				"run_configs",
 				"spans",
 				"speech_segments",
 				"tool_calls",
@@ -99,6 +103,59 @@ describe("openStore", () => {
 			.get();
 		expect(row?.hash).toBe(persistHash);
 		second.close();
+	});
+
+	it("defaults run_config_hash to null so replays predating run-config identity stay readable", () => {
+		const store = openStore({ path: ":memory:" });
+		store.db
+			.insert(conversations)
+			.values(makeConversationInput({ hash: fakeHash(1) }))
+			.run();
+		store.db
+			.insert(replays)
+			.values(makeReplayInput({ id: "legacy", runConfigJson: '{"model":"gpt-4o"}' }))
+			.run();
+		const row = store.db.select().from(replays).where(eq(replays.id, "legacy")).get();
+		expect(row?.runConfigHash).toBeNull();
+		expect(row?.runConfigJson).toBe('{"model":"gpt-4o"}');
+		store.close();
+	});
+
+	it("enforces the replays → run_configs foreign key", () => {
+		const store = openStore({ path: ":memory:" });
+		store.db
+			.insert(conversations)
+			.values(makeConversationInput({ hash: fakeHash(1) }))
+			.run();
+		expect(() =>
+			store.db
+				.insert(replays)
+				.values(makeReplayInput({ id: "orphan", runConfigHash: "f".repeat(64) }))
+				.run(),
+		).toThrow();
+		store.close();
+	});
+
+	it("round-trips a run config group and the replays that reference it", () => {
+		const store = openStore({ path: ":memory:" });
+		const groupHash = "c".repeat(64);
+		store.db
+			.insert(conversations)
+			.values(makeConversationInput({ hash: fakeHash(1) }))
+			.run();
+		store.db
+			.insert(runConfigs)
+			.values(makeRunConfigInput({ hash: groupHash }))
+			.run();
+		store.db
+			.insert(replays)
+			.values(makeReplayInput({ id: "grouped", runConfigHash: groupHash }))
+			.run();
+		const row = store.db.select().from(replays).where(eq(replays.id, "grouped")).get();
+		expect(row?.runConfigHash).toBe(groupHash);
+		const group = store.db.select().from(runConfigs).where(eq(runConfigs.hash, groupHash)).get();
+		expect(group?.name).toBe("baseline");
+		store.close();
 	});
 
 	it("throws StoreParentDirNotFoundError when the parent dir is missing", () => {

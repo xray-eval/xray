@@ -29,6 +29,7 @@ function buildReplay(
 		audio_path: null,
 		job_id: null,
 		run_config,
+		run_config_hash: null,
 		turns,
 		speech_segments: [],
 		transcripts: [],

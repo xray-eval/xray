@@ -9,6 +9,7 @@ import type {
 	replayMetrics,
 	replays,
 	replayTurns,
+	runConfigs,
 	spans,
 	speechSegments,
 	toolCalls,
@@ -87,6 +88,9 @@ export type SpanVocabulary = (typeof SPAN_VOCABULARIES)[number];
 
 export type ConversationRow = InferSelectModel<typeof conversations>;
 export type ConversationInput = InferInsertModel<typeof conversations>;
+
+export type RunConfigRow = InferSelectModel<typeof runConfigs>;
+export type RunConfigInput = InferInsertModel<typeof runConfigs>;
 
 export type ReplayRow = InferSelectModel<typeof replays>;
 export type ReplayInput = InferInsertModel<typeof replays>;

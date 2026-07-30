@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import {
+	createMemoryHistory,
+	createRootRoute,
+	createRoute,
+	createRouter,
+	RouterProvider,
+} from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import type { AppRouter } from "./router/router.ts";
@@ -20,6 +26,33 @@ function createTestQueryClient(): QueryClient {
  */
 export function withQueryClient(ui: ReactNode): ReactNode {
 	return <QueryClientProvider client={createTestQueryClient()}>{ui}</QueryClientProvider>;
+}
+
+/**
+ * Mount one component inside a memory router, for components that render a
+ * `<Link>` but own no route of their own. `renderWithRouter` boots the whole
+ * app and navigates to a URL — the right tool for a page, but it drags in that
+ * page's queries and MSW handlers when all you want is to hand a component a
+ * prop and read the markup back.
+ *
+ * Uses a catch-all route so any `to=` the component links to resolves.
+ */
+export function withRouter(ui: ReactNode): ReactNode {
+	const rootRoute = createRootRoute({ component: () => <>{ui}</> });
+	const splatRoute = createRoute({
+		getParentRoute: () => rootRoute,
+		path: "$",
+		component: () => <>{ui}</>,
+	});
+	const router = createRouter({
+		routeTree: rootRoute.addChildren([splatRoute]),
+		history: createMemoryHistory({ initialEntries: ["/"] }),
+	});
+	return (
+		<QueryClientProvider client={createTestQueryClient()}>
+			<RouterProvider router={router} />
+		</QueryClientProvider>
+	);
 }
 
 export interface RenderWithRouterResult {
