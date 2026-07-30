@@ -102,6 +102,28 @@ describe("POST /v1/replays", () => {
 		expect(res.status).toBe(400);
 	});
 
+	it("rejects a run_config with no content, named or not", async () => {
+		// `RunConfig(name="baseline")` wires as `{}` because the label is
+		// deliberately outside the hashed object. Accepting it would put every
+		// name-only config in the whole install into the hash-of-`{}` group,
+		// whose label then flips last-write-wins — nothing to compare, no warning.
+		const { app, store } = makeApp();
+		const { hash } = await seedConversation(store);
+		for (const body of [
+			{ conversation_hash: hash, run_config: {}, run_config_name: "baseline" },
+			{ conversation_hash: hash, run_config: {} },
+		]) {
+			const res = await app.request("/v1/replays", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+			expect(res.status).toBe(400);
+			const parsed = await readJson(res, v.object({ error: v.string() }));
+			expect(parsed.error).toBe("invalid_replay_request");
+		}
+	});
+
 	it("returns 404 when the conversation hash doesn't exist", async () => {
 		const { app } = makeApp();
 		const res = await app.request("/v1/replays", {

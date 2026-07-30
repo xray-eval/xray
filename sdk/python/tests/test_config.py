@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from xray import RunConfig
 
 
@@ -38,3 +40,13 @@ def test_two_configs_differing_only_by_name_have_identical_wire_content():
 def test_name_is_readable_off_the_dataclass_for_the_orchestrator_to_send():
     assert RunConfig(name="baseline").name == "baseline"
     assert RunConfig().name is None
+
+
+def test_to_wire_rejects_a_config_with_no_content():
+    """A name-only config carries nothing to hash. The server groups replays by
+    the hash of this object, so every name-only config across an install would
+    land in one group whose label flips to whoever ran last."""
+    with pytest.raises(ValueError, match="at least one"):
+        RunConfig(name="baseline").to_wire()
+    with pytest.raises(ValueError, match="at least one"):
+        RunConfig().to_wire()

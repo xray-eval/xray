@@ -17,22 +17,38 @@ import { RunConfigsCompare } from "../run-configs/run-configs-compare.tsx";
 import { NotFoundView } from "./not-found.tsx";
 import { RootLayout } from "./root-layout.tsx";
 
-const CompareSearchSchema = v.object({
-	ids: v.optional(v.string()),
+/**
+ * Per-field rather than around the whole object, because router-core merges a
+ * validator's output *over* the raw search (`{ ...parentSearch, ...validated }`).
+ * A rejected value therefore has to come back as a key holding `undefined` to
+ * overwrite the raw one — returning a smaller object strips nothing, and the
+ * junk reaches the page. Falling back to `undefined` rather than to a concrete
+ * default also keeps the key absent when the URL omits it, so generated `<Link>`
+ * hrefs don't accumulate `?replays=latest&scope=union`.
+ *
+ * Every field needs this, including the plain strings: TanStack JSON-parses
+ * search values, so `?ids=123` arrives as a number.
+ */
+function urlParam<TSchema extends v.GenericSchema>(schema: TSchema) {
+	return v.fallback(v.optional(schema), undefined);
+}
+
+export const CompareSearchSchema = v.object({
+	ids: urlParam(v.string()),
 });
 export type CompareSearch = v.InferOutput<typeof CompareSearchSchema>;
 
 // Config comparison state lives in the URL so a comparison is shareable:
 // which configs, over which replays, across which conversations.
-const ConfigsSearchSchema = v.object({
-	ids: v.optional(v.string()),
-	replays: v.optional(ReplaySelectionSchema),
-	scope: v.optional(ConversationScopeSchema),
+export const ConfigsSearchSchema = v.object({
+	ids: urlParam(v.string()),
+	replays: urlParam(ReplaySelectionSchema),
+	scope: urlParam(ConversationScopeSchema),
 });
 export type ConfigsSearch = v.InferOutput<typeof ConfigsSearchSchema>;
 
-const ConfigDetailSearchSchema = v.object({
-	replays: v.optional(ReplaySelectionSchema),
+export const ConfigDetailSearchSchema = v.object({
+	replays: urlParam(ReplaySelectionSchema),
 });
 export type ConfigDetailSearch = v.InferOutput<typeof ConfigDetailSearchSchema>;
 
@@ -63,32 +79,25 @@ export const compareReplaysRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/compare/replays",
 	component: CompareReplays,
-	validateSearch: (search): CompareSearch => {
-		const parsed = v.safeParse(CompareSearchSchema, search);
-		return parsed.success ? parsed.output : {};
-	},
+	validateSearch: (search): CompareSearch => v.parse(CompareSearchSchema, search),
 });
 
 export const runConfigsRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/configs",
 	component: RunConfigsCompare,
-	// Tolerant parse: a hand-edited or stale search param degrades to defaults
-	// rather than crashing the page a user just pasted a link to.
-	validateSearch: (search): ConfigsSearch => {
-		const parsed = v.safeParse(ConfigsSearchSchema, search);
-		return parsed.success ? parsed.output : {};
-	},
+	// `v.parse` rather than `safeParse`: every field is wrapped in `urlParam`, so
+	// the schema is total and has no failure branch to handle. `router.test.ts`
+	// pins that — a field added without `urlParam` fails there rather than
+	// throwing at a user who pasted a stale link.
+	validateSearch: (search): ConfigsSearch => v.parse(ConfigsSearchSchema, search),
 });
 
 export const runConfigDetailRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/configs/$configHash",
 	component: RunConfigDetail,
-	validateSearch: (search): ConfigDetailSearch => {
-		const parsed = v.safeParse(ConfigDetailSearchSchema, search);
-		return parsed.success ? parsed.output : {};
-	},
+	validateSearch: (search): ConfigDetailSearch => v.parse(ConfigDetailSearchSchema, search),
 });
 
 export const compareConversationsRoute = createRoute({

@@ -23,6 +23,21 @@ export const TurnRoleSchema = v.picklist(TURN_ROLES);
 export const SpanVocabularySchema = v.picklist(SPAN_VOCABULARIES);
 
 /**
+ * `RunConfig(name="baseline")` wires as `{}` — the label is deliberately kept
+ * out of the hashed object, so a name-only config carries no content. Every
+ * such replay would hash to the same group and its label would flip
+ * last-write-wins, leaving one group with nothing to compare inside it.
+ */
+function isContentFreeRunConfig(value: unknown): boolean {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		Object.keys(value).length === 0
+	);
+}
+
+/**
  * Body of `POST /v1/replays` (JSON). The SDK POSTs `/v1/conversations`
  * first to upsert the conversation row (server hashes the canonical
  * turn JSON and returns the `conversation_hash`), then references that
@@ -44,6 +59,10 @@ export const CreateReplayRequestSchema = v.pipe(
 	v.check(
 		(body) => body.run_config_name === undefined || body.run_config != null,
 		"run_config_name requires a run_config to label",
+	),
+	v.check(
+		(body) => !isContentFreeRunConfig(body.run_config),
+		"run_config must set at least one field — a run_config_name alone does not define a config group",
 	),
 );
 export type CreateReplayRequest = v.InferOutput<typeof CreateReplayRequestSchema>;

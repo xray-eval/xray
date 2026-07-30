@@ -945,3 +945,11 @@ async def test_replay_post_treats_an_empty_name_as_unnamed(tmp_path: Path):
     body = _replay_request_body(route)
     assert body["run_config"] == {"model": "gpt-4o"}
     assert "run_config_name" not in body
+
+
+@pytest.mark.asyncio
+async def test_run_refuses_a_name_only_run_config_before_creating_the_replay(tmp_path: Path):
+    """A config with a label and no content hashes to the same group as every
+    other one. Fail in the caller's process rather than silently merging."""
+    with pytest.raises(ValueError, match="at least one"):
+        await _run_with_config(tmp_path=tmp_path, run_config=RunConfig(name="baseline"))

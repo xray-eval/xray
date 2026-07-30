@@ -164,7 +164,11 @@ function DetailBody({
 				) : (
 					<ul className="space-y-2">
 						{detail.conversations.map((row) => (
-							<ConversationRow key={row.conversation_hash} row={row} />
+							<ConversationRow
+								key={row.conversation_hash}
+								row={row}
+								replaySelection={replaySelection}
+							/>
 						))}
 					</ul>
 				)}
@@ -181,8 +185,18 @@ function DetailBody({
  * context. Earlier runs stay individually reachable below; the conversation spec
  * is reachable too, but secondary.
  */
-function ConversationRow({ row }: { row: RunConfigConversationRow }) {
+function ConversationRow({
+	row,
+	replaySelection,
+}: {
+	row: RunConfigConversationRow;
+	replaySelection: ReplaySelection;
+}) {
 	const extraReplays = row.replays.slice(1);
+	// The header line is the newest run — its timestamp, its verdict, its audio.
+	// Under `all` the metrics below average every run, so an unqualified verdict
+	// reads as the row's, and green "passed" lands above a 25% pass rate.
+	const verdictPrefix = replaySelection === "all" ? "latest " : "";
 	return (
 		<li className="rounded-lg border border-border/60 p-4 transition-colors hover:border-border">
 			<div className="flex flex-wrap items-start justify-between gap-3">
@@ -213,6 +227,7 @@ function ConversationRow({ row }: { row: RunConfigConversationRow }) {
 				<div className="flex items-center gap-2">
 					{row.replays[0]?.passed !== null && row.replays[0] !== undefined && (
 						<Badge variant={row.replays[0].passed === true ? "default" : "destructive"}>
+							{verdictPrefix}
 							{row.replays[0].passed === true ? "passed" : "failed"}
 						</Badge>
 					)}

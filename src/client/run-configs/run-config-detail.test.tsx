@@ -1,5 +1,7 @@
 import { HttpResponse, http } from "msw";
+import * as v from "valibot";
 
+import { ReplaySelectionSchema } from "@/server/run-configs/run-configs.types.ts";
 import { server } from "@/test-server.ts";
 
 import type { RunConfigMetrics } from "../api/api.types.ts";
@@ -35,7 +37,11 @@ function mockDetail(
 ) {
 	server.use(
 		http.get(`http://localhost/v1/run-configs/${CONFIG_HASH}`, ({ request }) => {
-			const selection = new URL(request.url).searchParams.get("replay_selection");
+			const raw = new URL(request.url).searchParams.get("replay_selection");
+			// Validated with the server's own schema rather than echoed back: the
+			// real route 400s an unknown selection, and a mock that echoes would
+			// hide a client sending one.
+			const selection = raw === null ? null : v.parse(ReplaySelectionSchema, raw);
 			return HttpResponse.json({
 				hash: CONFIG_HASH,
 				name: "baseline",
@@ -105,6 +111,31 @@ describe("RunConfigDetail", () => {
 		expect(hrefs).toContain(`/replays/${EARLIER_REPLAY}`);
 	});
 
+	it("says the pass badge covers only the newest run when the metrics don't", async () => {
+		// Under `all` the badge reads the newest replay while the pass-rate cell
+		// beside it averages every one, so an unqualified green "passed" can sit
+		// directly above "1 of 2 replays".
+		mockDetail([
+			...ONE_REPLAY,
+			{ id: EARLIER_REPLAY, started_at: "2026-07-01T10:00:00.000Z", passed: false },
+		]);
+		const { ui } = renderWithRouter({
+			initialEntries: [`/configs/${CONFIG_HASH}?replays=all`],
+		});
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText("latest passed")).toBeTruthy());
+	});
+
+	it("leaves the badge unqualified under the latest selection, where it covers everything", async () => {
+		mockDetail(ONE_REPLAY);
+		const { ui } = renderWithRouter({ initialEntries: [`/configs/${CONFIG_HASH}`] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByText("passed")).toBeTruthy());
+		expect(screen.queryByText("latest passed")).toBeNull();
+	});
+
 	it("renders the config as key/value pairs plus the group label", async () => {
 		mockDetail(ONE_REPLAY);
 		const { ui } = renderWithRouter({ initialEntries: [`/configs/${CONFIG_HASH}`] });
@@ -143,6 +174,19 @@ describe("RunConfigDetail", () => {
 		// The pass-rate cell also renders "1 of 1 replays", so match the caveat's
 		// own conversations clause rather than the replay count.
 		expect(screen.queryByText(/of \d+ conversations/)).toBeNull();
+	});
+
+	it("ignores an unknown replay selection rather than erroring the page", async () => {
+		// A stale bookmark or a hand-edited URL should land on the default view,
+		// not on "Failed to load this run config."
+		mockDetail(ONE_REPLAY);
+		const { ui } = renderWithRouter({
+			initialEntries: [`/configs/${CONFIG_HASH}?replays=nonsense`],
+		});
+		render(ui);
+
+		await waitFor(() => expect(screen.getByRole("heading", { name: "baseline" })).toBeTruthy());
+		expect(screen.queryByRole("alert")).toBeNull();
 	});
 
 	it("surfaces a load failure instead of rendering an empty page", async () => {

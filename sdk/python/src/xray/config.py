@@ -49,7 +49,9 @@ class RunConfig:
     #: a new one (last-write-wins, like ``Conversation.name``). Every replay
     #: with the same content lands in the same group whether it was named
     #: or not. ``None`` and ``""`` both mean unnamed — the group then shows
-    #: a summary of its config keys.
+    #: a summary of its config keys. Because it is not part of the content,
+    #: a name cannot stand in for one: ``to_wire()`` rejects a config that
+    #: sets nothing else.
     #:
     #: Declared last, after ``extra``, so that adding it didn't shift any
     #: existing positional argument — ``RunConfig("gpt-4o", 0.5, {...})``
@@ -70,6 +72,10 @@ class RunConfig:
         ``extra`` carries arbitrary developer-defined keys, so a closed
         ``TypedDict`` would lie about the shape whenever ``extra`` is
         non-empty.
+
+        Raises ``ValueError`` when nothing but ``name`` is set — the label
+        is not content, so such a config would hash into the same group as
+        every other name-only one.
         """
         body: dict[str, JsonValue] = {}
         if self.model is not None:
@@ -78,6 +84,12 @@ class RunConfig:
             body["temperature"] = self.temperature
         for key, value in self.extra.items():
             body[key] = value
+        if not body:
+            raise ValueError(
+                "RunConfig must set at least one of model / temperature / extra — "
+                "name only labels the group the server derives from this content, "
+                "so a name-only config would join every other one in a single group"
+            )
         return body
 
 

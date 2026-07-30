@@ -213,7 +213,10 @@ in order:
    last-write-wins) and stamps `replays.run_config_hash` — all in the same
    transaction as the row insert. `run_config_name` is a sibling of
    `run_config`, not a key inside it, so a label can never enter the identity
-   hash. A replay sent without a `run_config` belongs to no group.
+   hash. A replay sent without a `run_config` belongs to no group. An *empty*
+   `run_config` is rejected with a 400: since the label is not hashed, every
+   name-only config would otherwise land in one group whose label flips
+   last-write-wins.
 3. `POST /v1/replays/:id/audio`. This uploads the stereo WAV (left = user,
    right = agent, wall-clock-aligned, written under
    `XRAY_AUDIO_ROOT/<replay_id>/replay.<ext>`). The server flips

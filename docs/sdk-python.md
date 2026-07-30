@@ -243,6 +243,7 @@ Details about how it goes over the wire:
 - `model` and `temperature` are omitted entirely when they are `None`.
 - `name` is **not** part of `to_wire()`. It travels as a sibling field, `run_config_name`, because the group's identity is the hash of the config *content* — a label inside the hashed object would make renaming fork the group instead of relabelling it. Renames are last-write-wins, exactly like `Conversation`'s `name`.
 - A group without a name still works; the UI labels it with a summary of its config keys plus a hash prefix.
+- A config that sets **only** `name` raises `ValueError`. Since the label is not hashed, such a config has no content — every name-only config in an install would hash into one group whose label flips to whoever ran last. Give the group something to compare: `model`, `temperature`, or an `extra` key.
 
 ```python
 # Two runs, two groups, comparable at /configs

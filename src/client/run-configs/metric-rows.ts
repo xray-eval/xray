@@ -137,6 +137,12 @@ export const METRIC_ROWS: readonly MetricRow[] = [
  * only one config reported the metric gets no marker, because highlighting
  * "the only config that emitted TTFT" as the best would reward instrumentation
  * coverage rather than speed.
+ *
+ * Deliberately not gated on sample size, though a win over `n=1` is weaker than
+ * one over `n=200`. Every cell renders its own `n` right under the value, and
+ * any floor would be an invented constant that suppresses the marker on exactly
+ * the small suites where it's most used. Weighing the two honestly needs a
+ * significance test, which is more machinery than a highlight is worth.
  */
 export function bestCellIndex(
 	values: readonly (number | null)[],

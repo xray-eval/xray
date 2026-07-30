@@ -222,6 +222,31 @@ describe("RunConfigsCompare", () => {
 		expect(screen.getByText("ran 1/3")).toBeTruthy();
 	});
 
+	it("falls back to the defaults when the URL carries junk instead of erroring", async () => {
+		// A stale link or a hand-edited param must degrade, not strand the user on
+		// "Failed to load the comparison." The mock parses the request body with
+		// the server's own schema, so a leaked value fails it exactly as the route
+		// would.
+		mockApi();
+		const { ui } = renderWithRouter({
+			initialEntries: [`/configs?ids=${BASELINE},${FAST}&scope=bogus&replays=nonsense`],
+		});
+		render(ui);
+
+		await waitFor(() => expect(screen.getByLabelText("Run config comparison")).toBeTruthy());
+		expect(screen.queryByRole("alert")).toBeNull();
+	});
+
+	it("survives an ids param that is not a string", async () => {
+		// TanStack JSON-parses search values, so `?ids=123` reaches the page as a
+		// number — and `resolveSelection` calls `.trim()` on it.
+		mockApi();
+		const { ui } = renderWithRouter({ initialEntries: ["/configs?ids=123"] });
+		render(ui);
+
+		await waitFor(() => expect(screen.getByLabelText("Run config comparison")).toBeTruthy());
+	});
+
 	it("links each column header to that config's drill-down", async () => {
 		mockApi();
 		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
