@@ -5,6 +5,8 @@ import { formatDurationMs } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { accentAt } from "./column-accents.ts";
+import type { ConfigFacets } from "./config-facets.ts";
+import { facetLabelText } from "./config-facets.ts";
 import { METRIC_ROWS } from "./metric-rows.ts";
 import { runConfigLabel } from "./run-config-label.ts";
 
@@ -18,16 +20,26 @@ import { runConfigLabel } from "./run-config-label.ts";
  */
 export function ConfigChips({
 	groups,
+	facets,
 	onRemove,
 }: {
 	groups: readonly RunConfigGroupResult[];
+	facets: ConfigFacets;
 	onRemove: (hash: string) => void;
 }) {
 	if (groups.length === 0) return null;
 	return (
 		<ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 			{groups.map((group, idx) => {
-				const label = runConfigLabel(group.name, group.config, group.hash);
+				// Distinguishing pairs only, for the same reason the grid headers use
+				// them: the card truncates, and a label built from the full config
+				// leads with what every config shares — so unnamed configs read as
+				// identical cards whose remove buttons all announce the same name.
+				const label = facetLabelText(
+					group.name,
+					facets.distinguishing.get(group.hash) ?? [],
+					group.hash,
+				);
 				return (
 					<li
 						key={group.hash}
@@ -37,7 +49,12 @@ export function ConfigChips({
 						<span className={cn("h-full w-0.5 shrink-0 self-stretch", accentAt(idx))} aria-hidden />
 						<div className="min-w-0 flex-1 space-y-1.5">
 							<div className="flex items-baseline justify-between gap-2">
-								<span className="truncate text-xs font-medium">{label}</span>
+								<span
+									className="truncate text-xs font-medium"
+									title={runConfigLabel(group.name, group.config, group.hash)}
+								>
+									{label}
+								</span>
 								<button
 									type="button"
 									aria-label={`Remove ${label} from comparison`}

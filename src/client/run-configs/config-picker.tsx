@@ -33,10 +33,11 @@ export function ConfigPicker({
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger
-				aria-label="Choose configs to compare"
-				className="flex w-full items-center justify-between gap-2 rounded-md border border-border/60 bg-transparent px-3 py-2 text-left text-sm transition-colors hover:border-border hover:bg-muted/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-			>
+			{/* No `aria-label`: it would replace the trigger's contents for the
+			    accessible name, and the ran/total count below is the part worth
+			    knowing before opening the list. The prompt text names the button on
+			    its own, so the label bought nothing and cost the counts. */}
+			<PopoverTrigger className="flex w-full items-center justify-between gap-2 rounded-md border border-border/60 bg-transparent px-3 py-2 text-left text-sm transition-colors hover:border-border hover:bg-muted/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
 				<span className="text-muted-foreground">Choose configs to compare</span>
 				<span className="flex items-center gap-2">
 					<span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">

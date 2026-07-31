@@ -148,8 +148,10 @@ function mockManyConfigs(count: number) {
 
 /** The chooser is a dropdown now — rows only exist once it's open. */
 async function openChooser() {
+	// Substring, not exact: the trigger's accessible name also carries its
+	// ran/total counts, which vary with the fixture.
 	const trigger = await waitFor(() =>
-		screen.getByRole("button", { name: "Choose configs to compare" }),
+		screen.getByRole("button", { name: /Choose configs to compare/ }),
 	);
 	await act(async () => {
 		fireEvent.click(trigger);

@@ -1,7 +1,9 @@
-import type { CompareRunConfigsResponse } from "@/client/api/api.types.ts";
+import type { CompareRunConfigsResponse, RunConfigCompareCell } from "@/client/api/api.types.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { accentAt } from "./column-accents.ts";
+import type { ConfigFacets } from "./config-facets.ts";
+import { facetLabelText } from "./config-facets.ts";
 import type { RankedMetricRow } from "./heat-scale.ts";
 import { heatIntensity, heatRange } from "./heat-scale.ts";
 import { runConfigLabel } from "./run-config-label.ts";
@@ -18,22 +20,29 @@ import { runConfigLabel } from "./run-config-label.ts";
 export function HeatGrid({
 	comparison,
 	row,
+	facets,
 }: {
 	comparison: CompareRunConfigsResponse;
 	row: RankedMetricRow;
+	facets: ConfigFacets;
 }) {
 	const { conversations, groups } = comparison;
 	if (conversations.length === 0) return null;
 
-	const cellFor = (groupIdx: number, conversationHash: string) =>
-		groups[groupIdx]?.conversations.find((c) => c.conversation_hash === conversationHash);
+	// Indexed once per grid rather than scanned per cell: every cell is visited
+	// twice (once to size the scale, once to render), and there is one grid per
+	// ranked metric, so a linear `find` turns the page into groups × rows ×
+	// metrics × cells.
+	const cellsByGroup = groups.map(
+		(group) => new Map(group.conversations.map((cell) => [cell.conversation_hash, cell])),
+	);
 
 	// Scaled per grid, not per column: the comparison is between configs on the
 	// same conversation, so they have to share one scale.
 	const range = heatRange(
 		conversations.flatMap((conv) =>
-			groups.map((_, idx) => {
-				const cell = cellFor(idx, conv.hash);
+			cellsByGroup.map((cells) => {
+				const cell = cells.get(conv.hash);
 				return cell === undefined ? null : row.read(cell.metrics).value;
 			}),
 		),
@@ -66,13 +75,22 @@ export function HeatGrid({
 						{groups.map((group, idx) => (
 							<th key={group.hash} scope="col" className="w-24 pb-2 pl-1 align-bottom">
 								<div className={cn("mb-1 h-0.5 w-6", accentAt(idx))} aria-hidden />
-								{/* Trailing room so adjacent truncated headers read as two
-								    labels rather than one run-on string. */}
+								{/* Only what distinguishes this config from the others being
+								    compared. A column is 6rem wide and truncates, and the full
+								    summary leads with the pairs every config shares — so
+								    truncation ate the one pair that identified the column and
+								    every header rendered the same string. The whole config
+								    stays one hover away. Trailing room so adjacent truncated
+								    labels read as two rather than one run-on string. */}
 								<span
 									className="block truncate pr-2 text-[11px] font-medium"
 									title={runConfigLabel(group.name, group.config, group.hash)}
 								>
-									{runConfigLabel(group.name, group.config, group.hash)}
+									{facetLabelText(
+										group.name,
+										facets.distinguishing.get(group.hash) ?? [],
+										group.hash,
+									)}
 								</span>
 							</th>
 						))}
@@ -87,10 +105,10 @@ export function HeatGrid({
 							>
 								{conv.name}
 							</th>
-							{groups.map((_, idx) => (
+							{cellsByGroup.map((cells, idx) => (
 								<HeatCell
 									key={groups[idx]?.hash ?? idx}
-									cell={cellFor(idx, conv.hash)}
+									cell={cells.get(conv.hash)}
 									row={row}
 									range={range}
 								/>
@@ -108,7 +126,7 @@ function HeatCell({
 	row,
 	range,
 }: {
-	cell: { metrics: Parameters<RankedMetricRow["read"]>[0] } | undefined;
+	cell: RunConfigCompareCell | undefined;
 	row: RankedMetricRow;
 	range: ReturnType<typeof heatRange>;
 }) {

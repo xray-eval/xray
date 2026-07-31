@@ -138,30 +138,39 @@ function CompareBody({
 							Failed to load the comparison.
 						</p>
 					))
-					.with({ status: "success" }, (q) => (
-						<div className="space-y-8">
-							<ConfigChips groups={q.data.groups} onRemove={toggle} />
-							<CoverageNotice
-								comparison={q.data}
-								scope={scope}
-								onChangeScope={(next) => setSearch({ scope: next })}
-							/>
-							{/* Per-conversation first: the aggregate table says which config
-							    won on average, the grids say where it won and where it fell
-							    over — and the second question is the one a debugger is for. */}
-							{rankedMetricRows().map((row) => (
-								<HeatGrid key={row.key} comparison={q.data} row={row} />
-							))}
-							<details className="group">
-								<summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground hover:text-foreground">
-									All metrics, aggregated
-								</summary>
-								<div className="mt-4">
-									<MetricsMatrix comparison={q.data} />
-								</div>
-							</details>
-						</div>
-					))
+					.with({ status: "success" }, (q) => {
+						// Split over the compared groups, not `items`: a column's label
+						// only has to separate it from the other columns on screen, and
+						// what distinguishes four selected configs is usually far shorter
+						// than what distinguishes all forty. Derived once here so the
+						// chips and every grid label the same config the same way —
+						// same reason `ConfigList` takes its facets from this component.
+						const comparedFacets = splitConfigFacets(q.data.groups);
+						return (
+							<div className="space-y-8">
+								<ConfigChips groups={q.data.groups} facets={comparedFacets} onRemove={toggle} />
+								<CoverageNotice
+									comparison={q.data}
+									scope={scope}
+									onChangeScope={(next) => setSearch({ scope: next })}
+								/>
+								{/* Per-conversation first: the aggregate table says which config
+								    won on average, the grids say where it won and where it fell
+								    over — and the second question is the one a debugger is for. */}
+								{rankedMetricRows().map((row) => (
+									<HeatGrid key={row.key} comparison={q.data} row={row} facets={comparedFacets} />
+								))}
+								<details className="group">
+									<summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground hover:text-foreground">
+										All metrics, aggregated
+									</summary>
+									<div className="mt-4">
+										<MetricsMatrix comparison={q.data} />
+									</div>
+								</details>
+							</div>
+						);
+					})
 					.exhaustive()
 			)}
 		</>

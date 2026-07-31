@@ -1,8 +1,16 @@
-import type { AggregateInput, IncludableReplay } from "./run-configs.aggregate.ts";
+import type {
+	AggregateInput,
+	EvaluationSample,
+	IncludableReplay,
+	ModelUsageSample,
+	TurnMetricSample,
+} from "./run-configs.aggregate.ts";
 import {
 	aggregateMetric,
 	buildMetrics,
 	conversationScopeFilter,
+	derivedForReplays,
+	indexDerivedByReplay,
 	percentile,
 	selectIncludedReplays,
 } from "./run-configs.aggregate.ts";
@@ -702,5 +710,96 @@ describe("assertion and judge tallies", () => {
 		});
 		expect(metrics.assertions).toEqual({ passed: 0, total: 0 });
 		expect(metrics.judges).toEqual({ passed: 0, total: 0 });
+	});
+});
+
+describe("indexDerivedByReplay", () => {
+	const turn = (replayId: string): TurnMetricSample => ({
+		replayId,
+		role: "agent",
+		agentResponseMs: 100,
+		interrupted: false,
+		yieldMs: null,
+	});
+	const usage = (replayId: string): ModelUsageSample => ({
+		replayId,
+		ttftMs: 10,
+		latencyMs: 20,
+		inputTokens: null,
+		outputTokens: null,
+		totalTokens: null,
+	});
+	const evaluation = (replayId: string): EvaluationSample => ({
+		replayId,
+		passed: true,
+		assertionsPassed: 1,
+		assertionsTotal: 1,
+		judgesPassed: 0,
+		judgesTotal: 0,
+	});
+
+	test("buckets every table by replay id", () => {
+		const index = indexDerivedByReplay({
+			turnMetrics: [turn("r1"), turn("r2"), turn("r1")],
+			modelUsage: [usage("r2")],
+			evaluations: [evaluation("r1")],
+		});
+
+		expect(index.get("r1")?.turnMetrics).toHaveLength(2);
+		expect(index.get("r1")?.modelUsage).toEqual([]);
+		expect(index.get("r1")?.evaluations).toHaveLength(1);
+		expect(index.get("r2")?.turnMetrics).toHaveLength(1);
+		expect(index.get("r2")?.modelUsage).toEqual([usage("r2")]);
+		expect(index.get("r2")?.evaluations).toEqual([]);
+	});
+
+	test("has no entry for a replay no table mentions", () => {
+		const index = indexDerivedByReplay({ turnMetrics: [], modelUsage: [], evaluations: [] });
+		expect(index.get("r1")).toBeUndefined();
+	});
+
+	test("collects only the requested replays' rows", () => {
+		const index = indexDerivedByReplay({
+			turnMetrics: [turn("r1"), turn("r2")],
+			modelUsage: [usage("r1"), usage("r2")],
+			evaluations: [evaluation("r1"), evaluation("r2")],
+		});
+
+		const collected = derivedForReplays(index, [replay({ id: "r1" })]);
+
+		expect(collected.turnMetrics).toEqual([turn("r1")]);
+		expect(collected.modelUsage).toEqual([usage("r1")]);
+		expect(collected.evaluations).toEqual([evaluation("r1")]);
+	});
+
+	test("a replay with nothing derived contributes no rows rather than throwing", () => {
+		const index = indexDerivedByReplay({
+			turnMetrics: [turn("r1")],
+			modelUsage: [],
+			evaluations: [],
+		});
+
+		const collected = derivedForReplays(index, [
+			replay({ id: "r1" }),
+			replay({ id: "never-analyzed" }),
+		]);
+
+		expect(collected.turnMetrics).toEqual([turn("r1")]);
+		expect(collected.modelUsage).toEqual([]);
+	});
+
+	test("feeds buildMetrics the same numbers as the unindexed rows would", () => {
+		// The whole point of the index is that it is a faster route to an
+		// identical answer — if the two ever disagree, the index is a bug.
+		const derived = {
+			turnMetrics: [turn("r1"), turn("excluded")],
+			modelUsage: [usage("r1"), usage("excluded")],
+			evaluations: [evaluation("r1"), evaluation("excluded")],
+		};
+		const replays = [replay({ id: "r1" })];
+
+		expect(
+			buildMetrics({ replays, ...derivedForReplays(indexDerivedByReplay(derived), replays) }),
+		).toEqual(buildMetrics({ replays, ...derived }));
 	});
 });

@@ -1,13 +1,15 @@
 import type { Store } from "@/server/store/store.ts";
 import type { RunConfigRow } from "@/server/store/types.ts";
 
-import type { IncludableReplay } from "./run-configs.aggregate.ts";
+import type { DerivedSamples, IncludableReplay } from "./run-configs.aggregate.ts";
 import {
 	buildMetrics,
 	conversationScopeFilter,
+	derivedForReplays,
+	indexDerivedByReplay,
 	selectIncludedReplays,
 } from "./run-configs.aggregate.ts";
-import type { DerivedRows, GroupedReplayRow } from "./run-configs.queries.ts";
+import type { GroupedReplayRow } from "./run-configs.queries.ts";
 import {
 	conversationNames,
 	fetchDerivedRows,
@@ -163,10 +165,15 @@ export function compareRunConfigs(
 		included.filter((replay) => scope.included.has(replay.conversationHash)),
 	);
 	// Read after selection and scope, so the derived tables are touched only for
-	// replays that actually feed a number.
-	const derived = fetchDerivedRows(
-		store,
-		perGroupScoped.flatMap((included) => included.map((replay) => replay.id)),
+	// replays that actually feed a number. Indexed once here rather than per
+	// caller: the group aggregate and every one of its per-conversation cells
+	// read the same fetch, and re-walking all of it per cell is what makes a
+	// wide comparison quadratic.
+	const derived = indexDerivedByReplay(
+		fetchDerivedRows(
+			store,
+			perGroupScoped.flatMap((included) => included.map((replay) => replay.id)),
+		),
 	);
 
 	// Under `union` every conversation any config completed is in scope, so a
@@ -181,9 +188,7 @@ export function compareRunConfigs(
 			name: group.name,
 			config: parseStoredConfig(group),
 			coverage: coverageOf(narrowToGroup(replayRows, group.hash), included, failureConversations),
-			// `buildMetrics` keys off `included`, so rows belonging to another
-			// group's replays drop out here — no need to pre-partition by hash.
-			metrics: buildMetrics({ replays: included, ...derived }),
+			metrics: buildMetrics({ replays: included, ...derivedForReplays(derived, included) }),
 			conversations: cellsFor(included, derived),
 		};
 	});
@@ -206,7 +211,7 @@ export function compareRunConfigs(
  */
 function cellsFor(
 	included: readonly IncludableReplay[],
-	derived: DerivedRows,
+	derived: ReadonlyMap<string, DerivedSamples>,
 ): RunConfigCompareCell[] {
 	const byConversation = new Map<string, IncludableReplay[]>();
 	for (const replay of included) {
@@ -217,7 +222,7 @@ function cellsFor(
 	return [...byConversation].map(([conversationHash, replays]) => ({
 		conversation_hash: conversationHash,
 		replay_id: newestOf(replays).id,
-		metrics: buildMetrics({ replays, ...derived }),
+		metrics: buildMetrics({ replays, ...derivedForReplays(derived, replays) }),
 	}));
 }
 
@@ -260,10 +265,13 @@ export function getRunConfigDetail(
 	const group = requireGroup(store, hash);
 	const groupReplays = fetchGroupReplays(store, [hash]);
 	const included = selectIncludedReplays(groupReplays, selection);
-	const derived = fetchDerivedRows(
+	const derivedRows = fetchDerivedRows(
 		store,
 		included.map((replay) => replay.id),
 	);
+	// Same reason as `compareRunConfigs`: one index feeds the group aggregate and
+	// every conversation row, instead of each row re-walking the whole fetch.
+	const derived = indexDerivedByReplay(derivedRows);
 	const names = conversationNames(
 		store,
 		included.map((r) => r.conversationHash),
@@ -276,7 +284,9 @@ export function getRunConfigDetail(
 			replay,
 		]);
 	}
-	const passedById = new Map(derived.evaluations.map((row) => [row.replayId, row.passed] as const));
+	const passedById = new Map(
+		derivedRows.evaluations.map((row) => [row.replayId, row.passed] as const),
+	);
 
 	const conversationRows: RunConfigConversationRow[] = [];
 	for (const [conversationHash, conversationReplays] of byConversation) {
@@ -294,7 +304,10 @@ export function getRunConfigDetail(
 				started_at: replay.startedAt,
 				passed: passedById.get(replay.id) ?? null,
 			})),
-			metrics: buildMetrics({ replays: conversationReplays, ...derived }),
+			metrics: buildMetrics({
+				replays: conversationReplays,
+				...derivedForReplays(derived, conversationReplays),
+			}),
 		});
 	}
 	conversationRows.sort((a, b) => a.conversation_name.localeCompare(b.conversation_name));
@@ -306,7 +319,7 @@ export function getRunConfigDetail(
 		created_at: group.createdAt,
 		replay_selection: selection,
 		coverage: groupCoverageOf(groupReplays),
-		metrics: buildMetrics({ replays: included, ...derived }),
+		metrics: buildMetrics({ replays: included, ...derivedForReplays(derived, included) }),
 		conversations: conversationRows,
 	};
 }

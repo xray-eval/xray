@@ -5,8 +5,19 @@ registerHappyDom();
 const { cleanup, fireEvent, render, screen } = await import("@testing-library/react");
 const { ConfigChips } = await import("./config-chips.tsx");
 const { makeRunConfigGroupResult, makeRunConfigMetrics } = await import("./test-utils.ts");
+const { splitConfigFacets } = await import("./config-facets.ts");
 
 afterEach(() => cleanup());
+
+/** Facets from the groups under comparison, the way `CompareBody` derives them. */
+function renderChips(
+	groups: readonly ReturnType<typeof makeRunConfigGroupResult>[],
+	onRemove: (hash: string) => void = () => undefined,
+) {
+	return render(
+		<ConfigChips groups={groups} facets={splitConfigFacets(groups)} onRemove={onRemove} />,
+	);
+}
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);
@@ -33,7 +44,7 @@ const GROUPS = [
 
 describe("ConfigChips", () => {
 	it("carries each config's headline numbers, so the row is readable without the grids", () => {
-		render(<ConfigChips groups={GROUPS} onRemove={() => undefined} />);
+		renderChips(GROUPS);
 
 		const baseline = screen.getByRole("listitem", { name: /baseline/ });
 		// Judge and assertion rates side by side: a config can pass every
@@ -45,12 +56,12 @@ describe("ConfigChips", () => {
 	});
 
 	it("reports how many replays a number rests on", () => {
-		render(<ConfigChips groups={GROUPS} onRemove={() => undefined} />);
+		renderChips(GROUPS);
 		expect(screen.getByRole("listitem", { name: /baseline/ }).textContent).toContain("4");
 	});
 
 	it("flags a config with failed replays, which the pass rate alone hides", () => {
-		render(<ConfigChips groups={GROUPS} onRemove={() => undefined} />);
+		renderChips(GROUPS);
 
 		expect(screen.getByRole("listitem", { name: /baseline/ }).textContent).toContain("1 failed");
 		expect(screen.getByRole("listitem", { name: /fast-follow/ }).textContent).not.toContain(
@@ -60,14 +71,51 @@ describe("ConfigChips", () => {
 
 	it("reports the config the user dropped", () => {
 		const removed: string[] = [];
-		render(<ConfigChips groups={GROUPS} onRemove={(hash) => removed.push(hash)} />);
+		renderChips(GROUPS, (hash) => removed.push(hash));
 		fireEvent.click(screen.getByRole("button", { name: "Remove baseline from comparison" }));
 
 		expect(removed).toEqual([A]);
 	});
 
+	it("tells two unnamed configs apart by what actually differs between them", () => {
+		// The regression this guards: `runConfigLabel` joins every pair and cuts at
+		// 64 chars, so configs sharing a long prefix all rendered the same string —
+		// and the remove buttons all got the same accessible name, leaving no way
+		// to say which card you meant.
+		const shared = "openai_gpt5_6_luna_preview_2026_07_14_high_reasoning";
+		const groups = [
+			makeRunConfigGroupResult({ hash: A, config: { ai_model: shared, temperature: "0.2" } }),
+			makeRunConfigGroupResult({ hash: B, config: { ai_model: shared, temperature: "0.9" } }),
+		];
+		renderChips(groups);
+
+		expect(
+			screen.getByRole("button", { name: "Remove temperature=0.2 from comparison" }),
+		).toBeDefined();
+		expect(
+			screen.getByRole("button", { name: "Remove temperature=0.9 from comparison" }),
+		).toBeDefined();
+	});
+
+	it("keeps the dev's name when there is one, since that outranks any derived label", () => {
+		renderChips(GROUPS);
+		expect(screen.getByRole("button", { name: "Remove baseline from comparison" })).toBeDefined();
+	});
+
+	it("falls back to the hash when two configs are distinguished by nothing", () => {
+		// Same config content under two group hashes shouldn't happen (the hash is
+		// derived from the content), but a label of "" would be unclickable.
+		const groups = [
+			makeRunConfigGroupResult({ hash: A, config: { model: "gpt-5" } }),
+			makeRunConfigGroupResult({ hash: B, config: { model: "gpt-5" } }),
+		];
+		renderChips(groups);
+
+		expect(screen.getAllByRole("button", { name: /^Remove \w+ from comparison$/ })).toHaveLength(2);
+	});
+
 	it("renders nothing when nothing is selected", () => {
-		const { container } = render(<ConfigChips groups={[]} onRemove={() => undefined} />);
+		const { container } = renderChips([]);
 		expect(container.textContent).toBe("");
 	});
 });

@@ -1,6 +1,7 @@
 import type { CompareRunConfigsResponse, RunConfigMetrics } from "@/client/api/api.types.ts";
 
 import { ConfigChips } from "./config-chips.tsx";
+import { splitConfigFacets } from "./config-facets.ts";
 import { HeatGrid } from "./heat-grid.tsx";
 import { rankedMetricRows } from "./heat-scale.ts";
 import { makeRunConfigMetrics } from "./test-utils.ts";
@@ -89,13 +90,16 @@ function comparison(): CompareRunConfigsResponse {
 }
 
 const data = comparison();
+// The real derivation, not a hand-built map: a fixture that fakes the facet
+// split can't show the label degradation it exists to exercise.
+const facets = splitConfigFacets(data.groups);
 
 function AllGrids() {
 	return (
 		<div className="mx-auto max-w-6xl space-y-8 p-8">
-			<ConfigChips groups={data.groups} onRemove={() => undefined} />
+			<ConfigChips groups={data.groups} facets={facets} onRemove={() => undefined} />
 			{rankedMetricRows().map((row) => (
-				<HeatGrid key={row.key} comparison={data} row={row} />
+				<HeatGrid key={row.key} comparison={data} row={row} facets={facets} />
 			))}
 		</div>
 	);
@@ -103,16 +107,44 @@ function AllGrids() {
 
 const passRow = rankedMetricRows()[0];
 
+/**
+ * No names, and a model string long enough that the shared prefix alone
+ * overflows a column. This is the state the labels are built for: with the full
+ * config summary every header truncated to the same characters, so the grid
+ * showed four columns nothing on screen could tell apart.
+ */
+const unnamed: CompareRunConfigsResponse = {
+	...data,
+	groups: data.groups.map((group, g) => ({
+		...group,
+		name: null,
+		config: {
+			ai_model: "openai_gpt5_6_luna_preview_2026_07_14_high_reasoning",
+			region: "eu-central-1",
+			temperature: ["0.2", "0.4", "0.7", "1.0"][g] ?? "0.5",
+		},
+	})),
+};
+const unnamedFacets = splitConfigFacets(unnamed.groups);
+
 export default {
 	"chips + every grid": <AllGrids />,
+	"unnamed configs, shared prefix": (
+		<div className="mx-auto max-w-6xl space-y-8 p-8">
+			<ConfigChips groups={unnamed.groups} facets={unnamedFacets} onRemove={() => undefined} />
+			{passRow === undefined ? null : (
+				<HeatGrid comparison={unnamed} row={passRow} facets={unnamedFacets} />
+			)}
+		</div>
+	),
 	"one grid": (
 		<div className="mx-auto max-w-6xl p-8">
-			{passRow === undefined ? null : <HeatGrid comparison={data} row={passRow} />}
+			{passRow === undefined ? null : <HeatGrid comparison={data} row={passRow} facets={facets} />}
 		</div>
 	),
 	"chips only": (
 		<div className="mx-auto max-w-6xl p-8">
-			<ConfigChips groups={data.groups} onRemove={() => undefined} />
+			<ConfigChips groups={data.groups} facets={facets} onRemove={() => undefined} />
 		</div>
 	),
 };

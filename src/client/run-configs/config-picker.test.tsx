@@ -45,14 +45,24 @@ describe("ConfigPicker", () => {
 		render(picker());
 		// The ran/total split is the part worth surfacing before opening: it says
 		// how much of the list can actually contribute a column.
-		expect(screen.getByRole("button", { name: "Choose configs to compare" }).textContent).toContain(
+		expect(screen.getByRole("button", { name: /Choose configs to compare/ }).textContent).toContain(
 			"1 ran · 2 total",
 		);
 	});
 
+	it("puts the counts in the accessible name, not just on screen", () => {
+		// An `aria-label` on the trigger replaces its contents for the accessible
+		// name, so the ran/total split reached sighted users only. The trigger's
+		// own text already names it, which is what makes the label removable.
+		render(picker());
+		expect(
+			screen.getByRole("button", { name: /Choose configs to compare\s*1 ran · 2 total/ }),
+		).toBeDefined();
+	});
+
 	it("opens the chooser on click", () => {
 		render(picker());
-		fireEvent.click(screen.getByRole("button", { name: "Choose configs to compare" }));
+		fireEvent.click(screen.getByRole("button", { name: /Choose configs to compare/ }));
 
 		expect(screen.getByLabelText("Filter configs")).toBeDefined();
 		expect(screen.getByRole("button", { name: /baseline/ })).toBeDefined();
@@ -61,7 +71,7 @@ describe("ConfigPicker", () => {
 	it("reports a config chosen from the open list", () => {
 		const toggled: string[] = [];
 		render(picker([], (hash) => toggled.push(hash)));
-		fireEvent.click(screen.getByRole("button", { name: "Choose configs to compare" }));
+		fireEvent.click(screen.getByRole("button", { name: /Choose configs to compare/ }));
 		fireEvent.click(screen.getByRole("button", { name: /baseline/ }));
 
 		expect(toggled).toEqual([A]);

@@ -1,8 +1,20 @@
-import type { RunConfigSummary } from "@/client/api/api.types.ts";
 import { shortHash } from "@/client/format.ts";
 
 import type { RunConfigPair } from "./run-config-label.ts";
 import { runConfigPairs } from "./run-config-label.ts";
+
+/**
+ * All a facet split needs: an identity and a config to read pairs from.
+ *
+ * Structural rather than `RunConfigSummary` because both wire shapes carrying a
+ * config get split — `RunConfigSummary` for the picker's full list, and
+ * `RunConfigGroupResult` for the columns of a comparison, whose facets are
+ * computed over the selected few and so differ from the picker's.
+ */
+export interface ConfigIdentity {
+	readonly hash: string;
+	readonly config: unknown;
+}
 
 export interface ConfigFacets {
 	/** Pairs every config carries identically — true of the set, not of any one row. */
@@ -24,7 +36,7 @@ export interface ConfigFacets {
  * With a single config there is nothing to agree with, so its pairs stay whole:
  * a lone row factored down to nothing would show no label at all.
  */
-export function splitConfigFacets(items: readonly RunConfigSummary[]): ConfigFacets {
+export function splitConfigFacets(items: readonly ConfigIdentity[]): ConfigFacets {
 	const pairsByHash = new Map<string, readonly RunConfigPair[]>(
 		items.map((item) => [item.hash, runConfigPairs(item.config)]),
 	);
@@ -66,7 +78,7 @@ export function facetLabelText(
 }
 
 function collectSharedKeys(
-	items: readonly RunConfigSummary[],
+	items: readonly ConfigIdentity[],
 	pairsByHash: ReadonlyMap<string, readonly RunConfigPair[]>,
 ): ReadonlySet<string> {
 	const [first, ...rest] = items;

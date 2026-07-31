@@ -168,12 +168,77 @@ export interface EvaluationSample {
 	readonly judgesTotal: number;
 }
 
-export interface AggregateInput {
-	/** The replays that count — already filtered by `selectIncludedReplays`. */
-	readonly replays: readonly IncludableReplay[];
+/** The three derived tables, for whatever set of replays the holder means. */
+export interface DerivedSamples {
 	readonly turnMetrics: readonly TurnMetricSample[];
 	readonly modelUsage: readonly ModelUsageSample[];
 	readonly evaluations: readonly EvaluationSample[];
+}
+
+export interface AggregateInput extends DerivedSamples {
+	/** The replays that count — already filtered by `selectIncludedReplays`. */
+	readonly replays: readonly IncludableReplay[];
+}
+
+/**
+ * Bucket the derived rows by replay id, once per request.
+ *
+ * `buildMetrics` filters whatever it is handed down to its own replay set, so a
+ * caller *may* pass one unfiltered fetch per table and let it sort out what
+ * counts — and for a single call that is the cheapest thing available. The
+ * per-conversation cells are where that stops being true: each cell re-walks
+ * every row in the whole request, so a comparison of C configs over V
+ * conversations costs C·V·|rows|. Under `all` selection over a long run history
+ * that is the difference between a page load and a stalled event loop, and the
+ * process serving it is also serving the SPA and the OTLP receiver.
+ *
+ * Bucketing once up front makes the same total work linear in |rows|, because
+ * every row lands in exactly one replay's bucket and each cell then reads only
+ * its own.
+ */
+export function indexDerivedByReplay(derived: DerivedSamples): ReadonlyMap<string, DerivedSamples> {
+	const index = new Map<string, MutableDerivedSamples>();
+	const bucket = (replayId: string): MutableDerivedSamples => {
+		const existing = index.get(replayId);
+		if (existing !== undefined) return existing;
+		const created: MutableDerivedSamples = { turnMetrics: [], modelUsage: [], evaluations: [] };
+		index.set(replayId, created);
+		return created;
+	};
+	for (const row of derived.turnMetrics) bucket(row.replayId).turnMetrics.push(row);
+	for (const row of derived.modelUsage) bucket(row.replayId).modelUsage.push(row);
+	for (const row of derived.evaluations) bucket(row.replayId).evaluations.push(row);
+	return index;
+}
+
+interface MutableDerivedSamples {
+	readonly turnMetrics: TurnMetricSample[];
+	readonly modelUsage: ModelUsageSample[];
+	readonly evaluations: EvaluationSample[];
+}
+
+/**
+ * The derived rows belonging to exactly these replays, out of the index.
+ *
+ * A replay with no entry contributes nothing rather than failing: a replay can
+ * be `completed` with an empty `model_usage` (an agent that emits no GenAI
+ * spans) or no turns at all, and that is an absent sample, not an error.
+ */
+export function derivedForReplays(
+	index: ReadonlyMap<string, DerivedSamples>,
+	replays: readonly IncludableReplay[],
+): DerivedSamples {
+	const turnMetrics: TurnMetricSample[] = [];
+	const modelUsage: ModelUsageSample[] = [];
+	const evaluations: EvaluationSample[] = [];
+	for (const replay of replays) {
+		const rows = index.get(replay.id);
+		if (rows === undefined) continue;
+		turnMetrics.push(...rows.turnMetrics);
+		modelUsage.push(...rows.modelUsage);
+		evaluations.push(...rows.evaluations);
+	}
+	return { turnMetrics, modelUsage, evaluations };
 }
 
 /**

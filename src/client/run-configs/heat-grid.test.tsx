@@ -1,4 +1,6 @@
 import { registerHappyDom } from "../test-happy-dom.ts";
+// Type-only, so it is erased before happy-dom has to be registered below.
+import type { RankedMetricRow } from "./heat-scale.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
@@ -8,6 +10,7 @@ const { makeCompareResponse, makeRunConfigGroupResult, makeRunConfigMetrics } = 
 	"./test-utils.ts"
 );
 const { rankedMetricRows } = await import("./heat-scale.ts");
+const { splitConfigFacets } = await import("./config-facets.ts");
 
 afterEach(() => cleanup());
 
@@ -61,9 +64,18 @@ function comparison() {
 	});
 }
 
+/**
+ * Facets always come from the groups being compared, exactly as `CompareBody`
+ * derives them — a test that hand-built them could pass on a split the app
+ * never produces.
+ */
+function renderGrid(data: ReturnType<typeof makeCompareResponse>, row: RankedMetricRow) {
+	return render(<HeatGrid comparison={data} row={row} facets={splitConfigFacets(data.groups)} />);
+}
+
 describe("HeatGrid", () => {
 	it("puts a conversation on every row and a config on every column", () => {
-		render(<HeatGrid comparison={comparison()} row={passRow()} />);
+		renderGrid(comparison(), passRow());
 
 		expect(screen.getByRole("rowheader", { name: "alpha" })).toBeDefined();
 		expect(screen.getByRole("rowheader", { name: "bravo" })).toBeDefined();
@@ -72,7 +84,7 @@ describe("HeatGrid", () => {
 	});
 
 	it("shows the measured value in each cell", () => {
-		render(<HeatGrid comparison={comparison()} row={passRow()} />);
+		renderGrid(comparison(), passRow());
 
 		const cells = screen.getAllByRole("cell");
 		expect(cells.map((c) => c.textContent)).toEqual(["100%", "50%", "0%", "—"]);
@@ -81,15 +93,60 @@ describe("HeatGrid", () => {
 	it("marks a conversation a config never ran as a gap, not a zero", () => {
 		// fast-follow has no bravo cell. Rendering 0% there would claim a
 		// measurement that was never taken.
-		render(<HeatGrid comparison={comparison()} row={passRow()} />);
+		renderGrid(comparison(), passRow());
 
 		const gap = screen.getByRole("cell", { name: "not run" });
 		expect(gap.textContent).toBe("—");
 	});
 
 	it("names the metric it is showing", () => {
-		render(<HeatGrid comparison={comparison()} row={passRow()} />);
+		renderGrid(comparison(), passRow());
 		expect(screen.getByRole("table").getAttribute("aria-label")).toContain("Replay pass rate");
+	});
+
+	it("heads each column with what distinguishes that config, not a shared prefix", () => {
+		// A column is 6rem wide and truncates. `runConfigLabel` joins every pair
+		// alphabetically and cuts at 64 chars, so configs that share a long prefix
+		// all rendered the same visible string — the exact failure the picker's
+		// facet split exists to prevent, reintroduced one component over.
+		const shared = "openai_gpt5_6_luna_preview_2026_07_14_high_reasoning";
+		const unnamed = makeCompareResponse({
+			conversations: [{ hash: ALPHA, name: "alpha" }],
+			groups: [
+				makeRunConfigGroupResult({
+					hash: A,
+					config: { ai_model: shared, temperature: "0.2" },
+					conversations: [
+						{
+							conversation_hash: ALPHA,
+							replay_id: "r-a",
+							metrics: makeRunConfigMetrics({ pass: { passed: 1, total: 1 } }),
+						},
+					],
+				}),
+				makeRunConfigGroupResult({
+					hash: B,
+					config: { ai_model: shared, temperature: "0.9" },
+					conversations: [
+						{
+							conversation_hash: ALPHA,
+							replay_id: "r-b",
+							metrics: makeRunConfigMetrics({ pass: { passed: 0, total: 1 } }),
+						},
+					],
+				}),
+			],
+		});
+		renderGrid(unnamed, passRow());
+
+		expect(screen.getByRole("columnheader", { name: "temperature=0.2" })).toBeDefined();
+		expect(screen.getByRole("columnheader", { name: "temperature=0.9" })).toBeDefined();
+	});
+
+	it("keeps the full config on the column for a reader who wants all of it", () => {
+		renderGrid(comparison(), passRow());
+		const header = screen.getByRole("columnheader", { name: /baseline/ });
+		expect(header.querySelector("[title]")?.getAttribute("title")).toBe("baseline");
 	});
 
 	it("renders nothing when the metric was never measured", () => {
@@ -97,12 +154,12 @@ describe("HeatGrid", () => {
 		// nothing was recorded, which the absence of the grid says just as well.
 		const unmeasured = rankedMetricRows().find((r) => r.key === "model_latency_ms");
 		if (unmeasured === undefined) throw new Error("model_latency_ms row is missing");
-		const { container } = render(<HeatGrid comparison={comparison()} row={unmeasured} />);
+		const { container } = renderGrid(comparison(), unmeasured);
 		expect(container.textContent).toBe("");
 	});
 
 	it("renders nothing when no conversation is in scope", () => {
-		const { container } = render(<HeatGrid comparison={makeCompareResponse()} row={passRow()} />);
+		const { container } = renderGrid(makeCompareResponse(), passRow());
 		expect(container.textContent).toBe("");
 	});
 });
