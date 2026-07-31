@@ -82,6 +82,8 @@ Cosmos runs in **custom-bundler mode**: it serves the playground UI, and `cosmos
 
 App code must never import a fixture file — fixtures may import devDependencies that a production install doesn't have. `.dockerignore` keeps `*.fixture.tsx` out of the image so that stays true even though the runtime stage copies `src/` wholesale.
 
+`react-cosmos` pins its own server deps (`express`, `glob`, `http-proxy-middleware`, `ws`) to exact versions, several of which carry open advisories that no release of react-cosmos itself resolves — so four `overrides` entries in [`pnpm-workspace.yaml`](./pnpm-workspace.yaml) force patched versions to keep `pnpm audit` honest rather than suppressed. Each carries its GHSA and its reasoning; drop the corresponding entry when react-cosmos bumps that pin. If you upgrade react-cosmos, re-run `pnpm audit --audit-level=moderate` **and** start `pnpm cosmos` once — the `glob` override crosses three majors, so the fixture scan is verified by behaviour, not by semver.
+
 `pnpm docker:smoke` is the **single most important** local check — it builds the production image, runs it, and waits for the container's `HEALTHCHECK` (which probes `/healthz`) to report healthy. CI runs the same script in the `smoke` job of `build.yml` on every PR and push. If it passes locally, it passes in CI.
 
 ## Parallel worktrees
