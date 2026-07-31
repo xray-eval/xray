@@ -49,6 +49,7 @@ Install `uv` if you don't have it (`curl -LsSf https://astral.sh/uv/install.sh |
 
 ```bash
 pnpm dev              # Single Bun container serving SPA + API on :8080 with HMR
+pnpm cosmos           # Component workbench on :5050 (renderer on :5051)
 pnpm typecheck        # tsc --noEmit
 pnpm check            # biome check (lint + format)
 pnpm check:fix        # biome check --write
@@ -61,6 +62,25 @@ pnpm docker:smoke     # build the image, run it, wait for the container HEALTHCH
 ### TDD
 
 Every behavior lands red → green → refactor. The failing test goes in *first*, runs (and fails for the right reason), then the production code makes it green. See [`.claude/rules/tdd.md`](./.claude/rules/tdd.md). The CI `test` workflow runs `pnpm test:coverage` and fails the build if coverage drops below the thresholds in `bunfig.toml`.
+
+### Component workbench
+
+`pnpm cosmos` starts [React Cosmos](https://reactcosmos.org) on `:5050`. It renders components against fixture files in isolation, which is how you reach states that are tedious to produce against real data — forty run configs, an empty result, a metric nothing measured.
+
+A fixture is a `*.fixture.tsx` file next to the component and its test:
+
+```
+src/client/run-configs/
+  config-picker.tsx
+  config-picker.test.tsx
+  config-picker.fixture.tsx    ← default-exports one element, or an object of named states
+```
+
+Cosmos runs in **custom-bundler mode**: it serves the playground UI, and `cosmos/serve-renderer.ts` serves the component renderer on `:5051` using Bun's HTML bundler — the same bundler that builds production. There is deliberately no Vite or webpack in this path; see [`.claude/rules/one-bundler.md`](./.claude/rules/one-bundler.md).
+
+`cosmos/cosmos.imports.ts` is generated on every start and gitignored — it is derived entirely from which fixture files exist. Because it is generated, the `cosmos/` directory is excluded from the root `tsconfig.json`, so a fresh clone typechecks before anyone has run the workbench. `pnpm typecheck:cosmos` typechecks the harness itself and needs a prior `pnpm cosmos` run.
+
+App code must never import a fixture file — fixtures may import devDependencies that a production install doesn't have. `.dockerignore` keeps `*.fixture.tsx` out of the image so that stays true even though the runtime stage copies `src/` wholesale.
 
 `pnpm docker:smoke` is the **single most important** local check — it builds the production image, runs it, and waits for the container's `HEALTHCHECK` (which probes `/healthz`) to report healthy. CI runs the same script in the `smoke` job of `build.yml` on every PR and push. If it passes locally, it passes in CI.
 

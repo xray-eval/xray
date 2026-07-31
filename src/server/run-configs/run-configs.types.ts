@@ -82,6 +82,11 @@ export const RunConfigMetricsSchema = v.object({
 	interruption: InterruptionAggregateSchema,
 	tokens: TokenAggregateSchema,
 	pass: PassAggregateSchema,
+	// Split out from `pass` because they answer different questions: a replay
+	// can fail its verdict on one assertion out of ten, and "1 of 10 checks
+	// failed" is a different finding from "the run failed".
+	assertions: PassAggregateSchema,
+	judges: PassAggregateSchema,
 });
 export type RunConfigMetrics = v.InferOutput<typeof RunConfigMetricsSchema>;
 
@@ -124,14 +129,38 @@ export const CompareRunConfigsRequestSchema = v.object({
 });
 export type CompareRunConfigsRequest = v.InferOutput<typeof CompareRunConfigsRequestSchema>;
 
+/**
+ * One (config, conversation) cell. Absent rather than zeroed when the config
+ * completed nothing for that conversation — a grid has to be able to render
+ * "never ran this" differently from "ran it and scored nothing".
+ */
+export const RunConfigCompareCellSchema = v.object({
+	conversation_hash: ConversationHashSchema,
+	// Newest included replay for the cell, so a number can be opened in the
+	// inspector. Under `all` selection the metrics span more replays than this.
+	replay_id: v.string(),
+	metrics: RunConfigMetricsSchema,
+});
+export type RunConfigCompareCell = v.InferOutput<typeof RunConfigCompareCellSchema>;
+
 export const RunConfigGroupResultSchema = v.object({
 	hash: v.string(),
 	name: v.nullable(v.string()),
 	config: v.unknown(),
 	coverage: RunConfigCoverageSchema,
 	metrics: RunConfigMetricsSchema,
+	conversations: v.array(RunConfigCompareCellSchema),
 });
 export type RunConfigGroupResult = v.InferOutput<typeof RunConfigGroupResultSchema>;
+
+/** A conversation in scope, named once for the whole comparison. */
+export const RunConfigComparedConversationSchema = v.object({
+	hash: ConversationHashSchema,
+	name: v.string(),
+});
+export type RunConfigComparedConversation = v.InferOutput<
+	typeof RunConfigComparedConversationSchema
+>;
 
 export const CompareRunConfigsResponseSchema = v.object({
 	replay_selection: ReplaySelectionSchema,
@@ -141,6 +170,9 @@ export const CompareRunConfigsResponseSchema = v.object({
 	// the two numbers is what makes an unfair comparison visible.
 	union_conversations: v.number(),
 	intersection_conversations: v.number(),
+	// The grid's rows: every conversation in scope, named and ordered once so
+	// each group's cells align without the client re-deriving the row set.
+	conversations: v.array(RunConfigComparedConversationSchema),
 	groups: v.array(RunConfigGroupResultSchema),
 });
 export type CompareRunConfigsResponse = v.InferOutput<typeof CompareRunConfigsResponseSchema>;

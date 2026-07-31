@@ -32,6 +32,8 @@ export type {
 	ListRunConfigsResponse,
 	MetricAggregate,
 	ReplaySelection,
+	RunConfigCompareCell,
+	RunConfigComparedConversation,
 	RunConfigConversationRow,
 	RunConfigDetailResponse,
 	RunConfigGroupResult,

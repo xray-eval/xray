@@ -15,6 +15,8 @@ const { makeRunConfigMetrics } = await import("./test-utils.ts");
 
 afterEach(() => cleanup());
 
+const CONV_ALPHA = "1".repeat(64);
+const CONV_BRAVO = "2".repeat(64);
 const BASELINE = "a".repeat(64);
 const FAST = "b".repeat(64);
 
@@ -56,6 +58,10 @@ function mockApi(options: CompareOptions = {}) {
 				conversation_scope: body.conversation_scope,
 				union_conversations: union,
 				intersection_conversations: options.intersectionConversations ?? 1,
+				conversations: [
+					{ hash: CONV_ALPHA, name: "alpha" },
+					{ hash: CONV_BRAVO, name: "bravo" },
+				],
 				groups: body.config_hashes.map((hash) => ({
 					hash,
 					name: hash === BASELINE ? "baseline" : "fast-follow",
@@ -71,6 +77,20 @@ function mockApi(options: CompareOptions = {}) {
 								? { avg: 400, p50: 380, p95: 900, n: 10 }
 								: { avg: 180, p50: 170, p95: 300, n: 10 },
 					}),
+					conversations: [
+						{
+							conversation_hash: CONV_ALPHA,
+							replay_id: `${hash.slice(0, 6)}-alpha`,
+							metrics: makeRunConfigMetrics({ pass: { passed: 1, total: 1 } }),
+						},
+						{
+							conversation_hash: CONV_BRAVO,
+							replay_id: `${hash.slice(0, 6)}-bravo`,
+							metrics: makeRunConfigMetrics({
+								pass: { passed: hash === BASELINE ? 0 : 1, total: 1 },
+							}),
+						},
+					],
 				})),
 			});
 		}),
@@ -106,16 +126,34 @@ function mockManyConfigs(count: number) {
 				conversation_scope: body.conversation_scope,
 				union_conversations: 1,
 				intersection_conversations: 1,
+				conversations: [{ hash: CONV_ALPHA, name: "alpha" }],
 				groups: body.config_hashes.map((hash) => ({
 					hash,
 					name: `config-${hashes.indexOf(hash) + 1}`,
 					config: { model: "m" },
 					coverage: { conversations: 1, replays: 1, failed_replays: 0 },
 					metrics: makeRunConfigMetrics(),
+					conversations: [
+						{
+							conversation_hash: CONV_ALPHA,
+							replay_id: `${hash.slice(0, 6)}-alpha`,
+							metrics: makeRunConfigMetrics(),
+						},
+					],
 				})),
 			});
 		}),
 	);
+}
+
+/** The chooser is a dropdown now — rows only exist once it's open. */
+async function openChooser() {
+	const trigger = await waitFor(() =>
+		screen.getByRole("button", { name: "Choose configs to compare" }),
+	);
+	await act(async () => {
+		fireEvent.click(trigger);
+	});
 }
 
 describe("RunConfigsCompare", () => {
@@ -265,6 +303,7 @@ describe("RunConfigsCompare", () => {
 		const ids = manyHashes(9).slice(0, 8).join(",");
 		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${ids}`] });
 		render(ui);
+		await openChooser();
 
 		await waitFor(() =>
 			expect(screen.getByText(/Comparing the maximum of 8 configs/)).toBeTruthy(),
@@ -311,6 +350,7 @@ describe("RunConfigsCompare", () => {
 		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
 		render(ui);
 
+		await openChooser();
 		const card = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}`) });
 		await waitFor(() => expect(card("baseline").getAttribute("aria-pressed")).toBe("true"));
 
@@ -365,5 +405,86 @@ describe("RunConfigsCompare", () => {
 		render(ui);
 
 		await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+	});
+
+	it("pins the current comparison above the list", async () => {
+		mockApi();
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
+		render(ui);
+
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: "Remove baseline from comparison" })).toBeTruthy(),
+		);
+		expect(screen.getByRole("button", { name: "Remove fast-follow from comparison" })).toBeTruthy();
+	});
+
+	it("drops a config from the URL when it is removed from the pinned comparison", async () => {
+		mockApi();
+		const { ui, router } = renderWithRouter({
+			initialEntries: [`/configs?ids=${BASELINE},${FAST}`],
+		});
+		render(ui);
+
+		const remove = await waitFor(() =>
+			screen.getByRole("button", { name: "Remove baseline from comparison" }),
+		);
+		await act(async () => {
+			fireEvent.click(remove);
+		});
+
+		await waitFor(() => expect(router.state.location.search.ids).toBe(FAST));
+	});
+
+	it("keeps a selected config pinned even when the filter hides it from the list", async () => {
+		mockApi();
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
+		render(ui);
+
+		await openChooser();
+		const filter = await waitFor(() => screen.getByLabelText("Filter configs"));
+		await act(async () => {
+			fireEvent.change(filter, { target: { value: "fast" } });
+		});
+
+		// Gone from the list…
+		expect(screen.queryByRole("button", { name: /^baseline/ })).toBeNull();
+		// …but still visibly part of the comparison, and still removable.
+		expect(screen.getByRole("button", { name: "Remove baseline from comparison" })).toBeTruthy();
+	});
+
+	it("does not open on a config nothing has ever run under", async () => {
+		// Sorted newest-first by `last_run_at ?? created_at`, so a group created
+		// moments ago and never run leads the list — and would otherwise become a
+		// default column of nulls.
+		const FRESH = "c".repeat(64);
+		// The compare handler too: the chips that name the selection are rendered
+		// from the comparison result, not from the list.
+		mockApi();
+		server.use(
+			http.get("http://localhost/v1/run-configs", () =>
+				HttpResponse.json({
+					items: [
+						{
+							hash: FRESH,
+							name: "just-created",
+							config: { model: "gpt-5" },
+							created_at: "2026-07-09T00:00:00.000Z",
+							last_run_at: null,
+							coverage: { conversations: 0, replays: 0, failed_replays: 0 },
+						},
+						...GROUPS,
+					],
+				}),
+			),
+		);
+		const { ui } = renderWithRouter({ initialEntries: ["/configs"] });
+		render(ui);
+
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: "Remove fast-follow from comparison" }),
+			).toBeTruthy(),
+		);
+		expect(screen.queryByRole("button", { name: /Remove just-created/ })).toBeNull();
 	});
 });

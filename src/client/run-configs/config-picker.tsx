@@ -1,63 +1,58 @@
+import { ChevronsUpDownIcon } from "lucide-react";
+import { useState } from "react";
+
 import type { RunConfigSummary } from "@/client/api/api.types.ts";
-import { cn } from "@/client/lib/utils.ts";
+import { Popover, PopoverContent, PopoverTrigger } from "@/client/components/ui/popover.tsx";
 
-import { MAX_COMPARE } from "./compare-selection.ts";
-import { runConfigLabel } from "./run-config-label.ts";
+import type { ConfigFacets } from "./config-facets.ts";
+import { partitionByActivity } from "./config-filter.ts";
+import { ConfigList } from "./config-list.tsx";
 
-/** The card grid that picks which config groups the matrix compares. */
+/**
+ * Picks which config groups the matrix compares.
+ *
+ * A dropdown rather than an inline list: at forty-odd configs an inline list
+ * costs several hundred pixels of every visit, and it is above the comparison
+ * — so the page pushes its own answer off the screen to show a chooser that is
+ * mostly not being used. Collapsed, this is one row. What's currently selected
+ * stays visible in the rail, which is the part worth permanent space.
+ */
 export function ConfigPicker({
 	items,
+	facets,
 	selected,
 	onToggle,
 }: {
 	items: readonly RunConfigSummary[];
+	facets: ConfigFacets;
 	selected: readonly string[];
 	onToggle: (hash: string) => void;
 }) {
-	const atCapacity = selected.length >= MAX_COMPARE;
+	const [open, setOpen] = useState(false);
+	const { active } = partitionByActivity(items);
+
 	return (
-		<div className="space-y-2">
-			<ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-				{items.map((item) => {
-					const isSelected = selected.includes(item.hash);
-					const atCap = !isSelected && atCapacity;
-					return (
-						<li key={item.hash}>
-							<button
-								type="button"
-								aria-pressed={isSelected}
-								disabled={atCap}
-								onClick={() => onToggle(item.hash)}
-								className={cn(
-									"w-full rounded-lg border px-4 py-3 text-left transition-colors",
-									"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-									isSelected
-										? "border-foreground/30 bg-muted/50"
-										: "border-border/60 hover:border-border hover:bg-muted/20",
-									atCap && "cursor-not-allowed opacity-50",
-								)}
-							>
-								<span className="block truncate text-sm font-medium">
-									{runConfigLabel(item.name, item.config, item.hash)}
-								</span>
-								<span className="mt-1 block font-mono text-[11px] tabular-nums text-muted-foreground">
-									{item.coverage.conversations} conversation
-									{item.coverage.conversations === 1 ? "" : "s"} · {item.coverage.replays} replay
-									{item.coverage.replays === 1 ? "" : "s"}
-									{item.coverage.failed_replays > 0 && ` · ${item.coverage.failed_replays} failed`}
-								</span>
-							</button>
-						</li>
-					);
-				})}
-			</ul>
-			{/* Without this, hitting the cap just greys out every remaining card,
-			    which reads as a broken page rather than a limit. */}
-			{atCapacity && (
-				<p role="status" className="text-[11px] text-muted-foreground">
-					Comparing the maximum of {MAX_COMPARE} configs. Deselect one to swap another in.
-				</p>
-			)}
-		</div>
+		<Popover open={open} onOpenChange={setOpen}>
+			<PopoverTrigger
+				aria-label="Choose configs to compare"
+				className="flex w-full items-center justify-between gap-2 rounded-md border border-border/60 bg-transparent px-3 py-2 text-left text-sm transition-colors hover:border-border hover:bg-muted/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+			>
+				<span className="text-muted-foreground">Choose configs to compare</span>
+				<span className="flex items-center gap-2">
+					<span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
+						{active.length} ran · {items.length} total
+					</span>
+					<ChevronsUpDownIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+				</span>
+			</PopoverTrigger>
+			<PopoverContent
+				align="start"
+				// Match the trigger so rows get the full page width to lay their
+				// distinguishing pairs out in.
+				className="w-[var(--radix-popover-trigger-width)] p-2"
+			>
+				<ConfigList items={items} facets={facets} selected={selected} onToggle={onToggle} />
+			</PopoverContent>
+		</Popover>
 	);
 }

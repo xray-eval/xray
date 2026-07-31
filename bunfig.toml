@@ -26,6 +26,7 @@ coverageReporter = ["text", "lcov"]
 coverageSkipTestFiles = true
 coveragePathIgnorePatterns = [
   "**/test-utils.ts",
+  "**/*.fixture.tsx",
   "**/types.ts",
   "src/client/main.tsx",
   "src/test-server.ts",

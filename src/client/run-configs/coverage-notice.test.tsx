@@ -6,29 +6,25 @@ import { afterEach, describe, expect, it } from "bun:test";
 registerHappyDom();
 const { cleanup, fireEvent, render, screen } = await import("@testing-library/react");
 const { CoverageNotice } = await import("./coverage-notice.tsx");
-const { makeRunConfigMetrics } = await import("./test-utils.ts");
+const { makeCompareResponse, makeRunConfigGroupResult } = await import("./test-utils.ts");
 
 afterEach(() => cleanup());
 
 function group(conversations: number): RunConfigGroupResult {
-	return {
+	return makeRunConfigGroupResult({
 		hash: "a".repeat(64),
 		name: "baseline",
-		config: { model: "gpt-4o" },
 		coverage: { conversations, replays: conversations, failed_replays: 0 },
-		metrics: makeRunConfigMetrics(),
-	};
+	});
 }
 
 function comparison(over: Partial<CompareRunConfigsResponse> = {}): CompareRunConfigsResponse {
-	return {
-		replay_selection: "latest",
-		conversation_scope: "union",
+	return makeCompareResponse({
 		union_conversations: 3,
 		intersection_conversations: 2,
 		groups: [group(3), group(2)],
 		...over,
-	};
+	});
 }
 
 describe("CoverageNotice", () => {

@@ -7,7 +7,7 @@ import {
 	conversationScopeFilter,
 	selectIncludedReplays,
 } from "./run-configs.aggregate.ts";
-import type { GroupedReplayRow } from "./run-configs.queries.ts";
+import type { DerivedRows, GroupedReplayRow } from "./run-configs.queries.ts";
 import {
 	conversationNames,
 	fetchDerivedRows,
@@ -21,6 +21,8 @@ import type {
 	CompareRunConfigsResponse,
 	ListRunConfigsResponse,
 	ReplaySelection,
+	RunConfigCompareCell,
+	RunConfigComparedConversation,
 	RunConfigConversationRow,
 	RunConfigCoverage,
 	RunConfigDetailResponse,
@@ -182,6 +184,7 @@ export function compareRunConfigs(
 			// `buildMetrics` keys off `included`, so rows belonging to another
 			// group's replays drop out here — no need to pre-partition by hash.
 			metrics: buildMetrics({ replays: included, ...derived }),
+			conversations: cellsFor(included, derived),
 		};
 	});
 
@@ -190,8 +193,55 @@ export function compareRunConfigs(
 		conversation_scope: req.conversation_scope,
 		union_conversations: scope.unionCount,
 		intersection_conversations: scope.intersectionCount,
+		conversations: comparedConversations(store, perGroupScoped),
 		groups: groupResults,
 	};
+}
+
+/**
+ * One cell per conversation this group completed, over the replays already
+ * narrowed by selection and scope. Conversations the group never completed are
+ * simply absent — the grid renders that as a gap, which is a different claim
+ * from a measured zero.
+ */
+function cellsFor(
+	included: readonly IncludableReplay[],
+	derived: DerivedRows,
+): RunConfigCompareCell[] {
+	const byConversation = new Map<string, IncludableReplay[]>();
+	for (const replay of included) {
+		const existing = byConversation.get(replay.conversationHash);
+		if (existing === undefined) byConversation.set(replay.conversationHash, [replay]);
+		else existing.push(replay);
+	}
+	return [...byConversation].map(([conversationHash, replays]) => ({
+		conversation_hash: conversationHash,
+		replay_id: newestOf(replays).id,
+		metrics: buildMetrics({ replays, ...derived }),
+	}));
+}
+
+function newestOf(replays: readonly IncludableReplay[]): IncludableReplay {
+	return replays.reduce((newest, replay) =>
+		replay.startedAt > newest.startedAt ? replay : newest,
+	);
+}
+
+/**
+ * The grid's row set: every conversation any group contributed a cell for,
+ * named once and sorted so row order doesn't depend on which config ran what.
+ */
+function comparedConversations(
+	store: Store,
+	perGroupScoped: readonly (readonly IncludableReplay[])[],
+): RunConfigComparedConversation[] {
+	const hashes = [
+		...new Set(perGroupScoped.flatMap((included) => included.map((r) => r.conversationHash))),
+	];
+	const names = conversationNames(store, hashes);
+	return hashes
+		.map((hash) => ({ hash, name: names.get(hash) ?? hash.slice(0, 12) }))
+		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**

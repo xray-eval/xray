@@ -4,6 +4,8 @@ import {
 	COMPARE_CONFIGS_MIN,
 } from "@/server/run-configs/run-configs.types.ts";
 
+import { partitionByActivity } from "./config-filter.ts";
+
 /**
  * Re-exported from the server's schema rather than restated here. The picker
  * enforces the same bounds `POST /v1/run-configs/compare` validates, so a
@@ -31,7 +33,15 @@ export function resolveSelection(
 	raw: string | undefined,
 	items: readonly RunConfigSummary[],
 ): string[] {
-	const fallback = () => items.slice(0, MIN_COMPARE).map((item) => item.hash);
+	// Groups that ran come first. The list is ordered by `last_run_at ??
+	// created_at`, so a group created moments ago and never run sorts above
+	// everything with data — taking the top two blind would open the page on a
+	// comparison whose every metric is null. Never-run groups still pad the
+	// selection when too few have run, because two columns beat one.
+	const fallback = () => {
+		const { active, neverRun } = partitionByActivity(items);
+		return [...active, ...neverRun].slice(0, MIN_COMPARE).map((item) => item.hash);
+	};
 	if (raw === undefined) return fallback();
 	if (raw.trim().length === 0) return [];
 	const known = new Set(items.map((item) => item.hash));

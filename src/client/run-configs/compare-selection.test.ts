@@ -5,6 +5,17 @@ import { describe, expect, it } from "bun:test";
 
 const BASELINE = "a".repeat(64);
 const FAST = "b".repeat(64);
+const FRESH = "c".repeat(64);
+
+/** Newest by sort order, but nothing has ever run under it. */
+const NEVER_RUN = {
+	hash: FRESH,
+	name: "just-created",
+	config: { model: "gpt-5" },
+	created_at: "2026-07-09T00:00:00.000Z",
+	last_run_at: null,
+	coverage: { conversations: 0, replays: 0, failed_replays: 0 },
+} satisfies RunConfigSummary;
 
 const GROUPS = [
 	{
@@ -50,6 +61,27 @@ describe("resolveSelection", () => {
 		// Distinct from `undefined`: the user clicked the last card off. Falling
 		// back here would re-select the cards they just deselected.
 		expect(resolveSelection("", GROUPS)).toEqual([]);
+	});
+
+	it("skips never-run groups when picking the default comparison", () => {
+		// The list is sorted by `last_run_at ?? created_at`, so a group created
+		// moments ago and never run sorts above every group with data — and would
+		// otherwise open the page comparing a column of nulls.
+		const withFresh = [NEVER_RUN, ...GROUPS] satisfies RunConfigSummary[];
+		expect(resolveSelection(undefined, withFresh)).toEqual([FAST, BASELINE]);
+	});
+
+	it("falls back to never-run groups only when there aren't enough that ran", () => {
+		const [, baseline] = GROUPS;
+		if (baseline === undefined) throw new Error("fixture is empty");
+		const oneActive = [baseline, NEVER_RUN] satisfies RunConfigSummary[];
+		expect(resolveSelection(undefined, oneActive)).toEqual([BASELINE, FRESH]);
+	});
+
+	it("still honours a URL that names a never-run group", () => {
+		// The user asked for it explicitly; that outranks our preference.
+		const withFresh = [NEVER_RUN, ...GROUPS] satisfies RunConfigSummary[];
+		expect(resolveSelection(`${FRESH},${BASELINE}`, withFresh)).toEqual([FRESH, BASELINE]);
 	});
 });
 

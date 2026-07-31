@@ -139,7 +139,14 @@ export function fetchDerivedRows(store: Store, replayIds: readonly string[]): De
 
 		evaluations.push(
 			...store.db
-				.select({ replayId: replayEvaluations.replayId, passed: replayEvaluations.passed })
+				.select({
+					replayId: replayEvaluations.replayId,
+					passed: replayEvaluations.passed,
+					assertionsPassed: replayEvaluations.assertionsPassed,
+					assertionsTotal: replayEvaluations.assertionsTotal,
+					judgesPassed: replayEvaluations.judgesPassed,
+					judgesTotal: replayEvaluations.judgesTotal,
+				})
 				.from(replayEvaluations)
 				.where(inArray(replayEvaluations.replayId, ids))
 				.all(),

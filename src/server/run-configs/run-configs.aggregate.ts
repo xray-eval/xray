@@ -162,6 +162,10 @@ export interface ModelUsageSample {
 export interface EvaluationSample {
 	readonly replayId: string;
 	readonly passed: boolean;
+	readonly assertionsPassed: number;
+	readonly assertionsTotal: number;
+	readonly judgesPassed: number;
+	readonly judgesTotal: number;
 }
 
 export interface AggregateInput {
@@ -201,7 +205,23 @@ export function buildMetrics(input: AggregateInput): RunConfigMetrics {
 		interruption: buildInterruption(agentTurns),
 		tokens: buildTokens(modelUsage),
 		pass: buildPass(evaluations),
+		assertions: sumTally(evaluations, (row) => [row.assertionsPassed, row.assertionsTotal]),
+		judges: sumTally(evaluations, (row) => [row.judgesPassed, row.judgesTotal]),
 	};
+}
+
+/** Sums a per-replay (passed, total) pair across every included replay. */
+function sumTally(
+	evaluations: readonly EvaluationSample[],
+	read: (row: EvaluationSample) => readonly [number, number],
+): { passed: number; total: number } {
+	return evaluations.reduce(
+		(tally, row) => {
+			const [passed, total] = read(row);
+			return { passed: tally.passed + passed, total: tally.total + total };
+		},
+		{ passed: 0, total: 0 },
+	);
 }
 
 function buildInterruption(agentTurns: readonly TurnMetricSample[]): InterruptionAggregate {

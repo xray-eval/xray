@@ -1,4 +1,9 @@
-import type { RunConfigMetrics, RunConfigSummary } from "@/client/api/api.types.ts";
+import type {
+	CompareRunConfigsResponse,
+	RunConfigGroupResult,
+	RunConfigMetrics,
+	RunConfigSummary,
+} from "@/client/api/api.types.ts";
 
 /**
  * Fixture builders for this slice's wire types. Every metric defaults to
@@ -15,6 +20,35 @@ export function makeRunConfigMetrics(over: Partial<RunConfigMetrics> = {}): RunC
 		interruption: { interrupted_turns: 0, agent_turns: 0 },
 		tokens: { avg_input: null, avg_output: null, avg_total: null, n: 0 },
 		pass: { passed: 0, total: 0 },
+		assertions: { passed: 0, total: 0 },
+		judges: { passed: 0, total: 0 },
+		...over,
+	};
+}
+
+export function makeRunConfigGroupResult(
+	over: Partial<RunConfigGroupResult> & { hash: string },
+): RunConfigGroupResult {
+	return {
+		name: null,
+		config: { model: "gpt-4o" },
+		coverage: { conversations: 1, replays: 1, failed_replays: 0 },
+		metrics: makeRunConfigMetrics(),
+		conversations: [],
+		...over,
+	};
+}
+
+export function makeCompareResponse(
+	over: Partial<CompareRunConfigsResponse> = {},
+): CompareRunConfigsResponse {
+	return {
+		replay_selection: "latest",
+		conversation_scope: "union",
+		union_conversations: 1,
+		intersection_conversations: 1,
+		conversations: [],
+		groups: [],
 		...over,
 	};
 }

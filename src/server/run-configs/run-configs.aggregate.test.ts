@@ -576,8 +576,22 @@ describe("buildMetrics", () => {
 					replay({ id: "r3", conversationHash: "c3" }),
 				],
 				evaluations: [
-					{ replayId: "r1", passed: true },
-					{ replayId: "r2", passed: false },
+					{
+						replayId: "r1",
+						passed: true,
+						assertionsPassed: 1,
+						assertionsTotal: 1,
+						judgesPassed: 0,
+						judgesTotal: 0,
+					},
+					{
+						replayId: "r2",
+						passed: false,
+						assertionsPassed: 0,
+						assertionsTotal: 1,
+						judgesPassed: 0,
+						judgesTotal: 0,
+					},
 				],
 			}),
 		);
@@ -605,8 +619,22 @@ describe("buildMetrics", () => {
 					},
 				],
 				evaluations: [
-					{ replayId: "r1", passed: true },
-					{ replayId: "excluded", passed: false },
+					{
+						replayId: "r1",
+						passed: true,
+						assertionsPassed: 1,
+						assertionsTotal: 1,
+						judgesPassed: 0,
+						judgesTotal: 0,
+					},
+					{
+						replayId: "excluded",
+						passed: false,
+						assertionsPassed: 0,
+						assertionsTotal: 1,
+						judgesPassed: 0,
+						judgesTotal: 0,
+					},
 				],
 			}),
 		);
@@ -620,5 +648,59 @@ describe("buildMetrics", () => {
 		expect(metrics.agent_response_ms.avg).toBeNull();
 		expect(metrics.interruption).toEqual({ interrupted_turns: 0, agent_turns: 0 });
 		expect(metrics.pass).toEqual({ passed: 0, total: 0 });
+	});
+});
+
+describe("assertion and judge tallies", () => {
+	test("counts assertions and judges separately from the replay verdict", () => {
+		// A replay can fail overall while most of its assertions passed — the
+		// split is what says whether a config is broadly wrong or narrowly wrong.
+		const metrics = buildMetrics({
+			replays: [replay({ id: "r1" }), replay({ id: "r2", conversationHash: "c2" })],
+			turnMetrics: [],
+			modelUsage: [],
+			evaluations: [
+				{
+					replayId: "r1",
+					passed: false,
+					assertionsPassed: 3,
+					assertionsTotal: 4,
+					judgesPassed: 0,
+					judgesTotal: 1,
+				},
+				{
+					replayId: "r2",
+					passed: true,
+					assertionsPassed: 4,
+					assertionsTotal: 4,
+					judgesPassed: 1,
+					judgesTotal: 1,
+				},
+			],
+		});
+
+		expect(metrics.pass).toEqual({ passed: 1, total: 2 });
+		expect(metrics.assertions).toEqual({ passed: 7, total: 8 });
+		expect(metrics.judges).toEqual({ passed: 1, total: 2 });
+	});
+
+	test("reports zero totals when a config declared neither", () => {
+		const metrics = buildMetrics({
+			replays: [replay({ id: "r1" })],
+			turnMetrics: [],
+			modelUsage: [],
+			evaluations: [
+				{
+					replayId: "r1",
+					passed: true,
+					assertionsPassed: 0,
+					assertionsTotal: 0,
+					judgesPassed: 0,
+					judgesTotal: 0,
+				},
+			],
+		});
+		expect(metrics.assertions).toEqual({ passed: 0, total: 0 });
+		expect(metrics.judges).toEqual({ passed: 0, total: 0 });
 	});
 });

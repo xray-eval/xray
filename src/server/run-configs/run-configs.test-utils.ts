@@ -37,6 +37,10 @@ export interface SeedGroupedReplayInput {
 		readonly totalTokens?: number | null;
 	}[];
 	readonly passed?: boolean;
+	/** Per-replay assertion tally. Defaults to one, matching `passed`. */
+	readonly assertions?: { readonly passed: number; readonly total: number };
+	/** Per-replay judge tally. Defaults to none declared. */
+	readonly judges?: { readonly passed: number; readonly total: number };
 }
 
 /**
@@ -144,10 +148,10 @@ export function seedGroupedReplay(store: Store, input: SeedGroupedReplayInput): 
 			.values({
 				replayId: input.id,
 				passed: input.passed,
-				assertionsTotal: 1,
-				assertionsPassed: input.passed ? 1 : 0,
-				judgesTotal: 0,
-				judgesPassed: 0,
+				assertionsTotal: input.assertions?.total ?? 1,
+				assertionsPassed: input.assertions?.passed ?? (input.passed ? 1 : 0),
+				judgesTotal: input.judges?.total ?? 0,
+				judgesPassed: input.judges?.passed ?? 0,
 				evaluatedAt: input.startedAt,
 			})
 			.run();
