@@ -80,7 +80,10 @@ overrides:
   # already declares (`esbuild ^0.25.4`), so this adds zero new versions —
   # pinning ^0.28.1 here would instead add a third copy for no audit gain, since
   # 0.25.x carries no open advisory. Remove once drizzle-kit drops
-  # `@esbuild-kit/*`. Added 2026-05-16, re-verified 2026-07-29.
+  # `@esbuild-kit/*`. Added 2026-05-16, re-verified 2026-07-31: drizzle-kit
+  # 0.31.10 is still the newest release and still depends on
+  # `@esbuild-kit/esm-loader`, and dropping this entry re-raises
+  # GHSA-67mh-4wv8-2f99 on `pnpm audit --audit-level=moderate`.
   "@esbuild-kit/core-utils>esbuild": "^0.25.0"
   # GHSA-fx2h-pf6j-xcff / GHSA-4w7w-66w2-5vf9 / GHSA-v6wh-96g9-6wx3 — vite
   # <=6.4.2 has a `server.fs.deny` bypass via Windows alternate paths, a path
@@ -108,6 +111,16 @@ overrides:
   # `transformWithEsbuild`, which is why this pins the 7.x line, not 8.x.
   # Exact-pinned, not caret: a vite major that vitepress does not sanction must
   # move on a deliberate, re-verified bump, never by drifting on `pnpm update`.
-  # Remove once vitepress ships a stable release on vite >=6.4.3 (its 2.x line;
-  # only a 2.0.0-alpha exists today). Added 2026-07-29.
+  # Remove once vitepress ships a stable release on vite >=6.4.3. Added
+  # 2026-07-29, re-verified 2026-07-31: vitepress `latest` is still 1.6.4 and
+  # the only 2.x is 2.0.0-alpha.18, so the chain still cannot reach a patched
+  # vite on its own. 7.3.6 is also still the newest 7.x — the next release is
+  # 8.0.0, which is the deprecation-warning line described above.
+  #
+  # Second, independent reason this entry is load-bearing: with it removed the
+  # install does not merely fail the audit, it fails outright with
+  # ERR_PNPM_TRUST_DOWNGRADE on vite@5.4.21 (an earlier 5.x published with a
+  # trusted publisher, 5.4.21 with only a provenance attestation) — our
+  # `trustPolicy: no-downgrade` rejects it. So the vite 5 chain is unreachable
+  # under this repo's own supply-chain settings regardless of the advisories.
   vite: "7.3.6"
