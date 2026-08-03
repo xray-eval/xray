@@ -159,6 +159,15 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Checkout
+        # Only here to resolve the previous release tag from git ancestry (see
+        # the changelog comment below). fetch-depth: 0 because `git describe`
+        # walks the commit graph — a shallow clone can't see prior tags.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -179,7 +188,23 @@ jobs:
           # gh's --generate-notes lives only on `create`, so an edit-path re-run
           # would silently drop the changelog; generate it via the same API and
           # append it ourselves instead.
-          CHANGELOG="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq '.body' 2>/dev/null || true)"
+          # Baseline the changelog on the previous tag by *ancestry*. Left to
+          # itself, generate-notes picks the newest prior release by
+          # `published_at` — and that ordering is permanently wrong here:
+          # alpha.3's Release was backfilled two seconds after alpha.4's, so
+          # alpha.3 looks newer forever and every changelog replays alpha.4's
+          # PRs. Ancestry can't be reordered by a backfill.
+          # `git tag --sort=-v:refname` is the obvious alternative and is a
+          # trap: it sorts v0.1.0-alpha.1 ABOVE v0.1.0 unless versionsort.suffix
+          # is configured, so it would break on the first stable release.
+          # No predecessor (the very first tag) => omit the field and let
+          # generate-notes fall back to its own default.
+          PREV="$(git describe --tags --abbrev=0 --match 'v*.*.*' "$TAG^" 2>/dev/null || true)"
+          NOTES_ARGS=(-f tag_name="$TAG")
+          if [ -n "$PREV" ]; then
+            NOTES_ARGS+=(-f previous_tag_name="$PREV")
+          fi
+          CHANGELOG="$(gh api "repos/$GH_REPO/releases/generate-notes" "${NOTES_ARGS[@]}" --jq '.body' 2>/dev/null || true)"
           BODY="$NOTES"
           if [ -n "$CHANGELOG" ]; then
             BODY="$NOTES"$'\n\n'"$CHANGELOG"
