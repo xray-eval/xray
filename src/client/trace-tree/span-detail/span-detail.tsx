@@ -73,8 +73,8 @@ export function SpanDetailPanel({
 			    wide as the tree, and a single column would stretch every attribute
 			    value across the whole card. The drawer itself takes its height from
 			    its content (the tree above already caps, so the card stays
-			    navigable); only an unparsed raw attribute bag keeps a scroll box of
-			    its own, in `RawAttributes`. */}
+			    navigable); an unparsed raw attribute bag is the one thing left that
+			    caps its own height, in `RawAttributes`. */}
 			<div className="grid lg:grid-cols-[19rem_minmax(0,1fr)]">
 				<div className="divide-y divide-border/50 lg:border-r lg:border-border/50">
 					<SpanFactsSection detail={detail} />
