@@ -71,9 +71,10 @@ export function SpanDetailPanel({
 			<SpanDetailHeader span={detail.span} durationMs={detail.durationMs} onClose={onClose} />
 			{/* Fixed rail for the facts, the rest for attributes — the drawer is as
 			    wide as the tree, and a single column would stretch every attribute
-			    value across the whole card. Height is left to the content: the tree
-			    above already caps, and an inner scrollbar here is the thing this
-			    layout exists to get rid of. */}
+			    value across the whole card. The drawer itself takes its height from
+			    its content (the tree above already caps, so the card stays
+			    navigable); only an unparsed raw attribute bag keeps a scroll box of
+			    its own, in `RawAttributes`. */}
 			<div className="grid lg:grid-cols-[19rem_minmax(0,1fr)]">
 				<div className="divide-y divide-border/50 lg:border-r lg:border-border/50">
 					<SpanFactsSection detail={detail} />
@@ -347,7 +348,10 @@ function AttributeRow({ entry }: { entry: AttributeEntry }) {
 				)}
 				<span className="text-foreground/70">{entry.leaf}</span>
 			</div>
-			<div className="pl-2 font-mono text-[11px] leading-relaxed">
+			{/* Scrolls rather than clips: a container value (a JSON tree, indented per
+			    level) can outrun a grid cell, and the host card is `overflow-hidden`,
+			    so without this an unbroken token is simply unreachable. */}
+			<div className="overflow-x-auto pl-2 font-mono text-[11px] leading-relaxed">
 				<AttributeValue value={entry.value} />
 			</div>
 		</li>

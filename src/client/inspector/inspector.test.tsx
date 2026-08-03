@@ -125,6 +125,9 @@ describe("Inspector header", () => {
 		render(ui);
 
 		await waitFor(() => screen.getByRole("heading", { level: 2, name: "Test conversation" }));
+		// The eyebrow is the only other "Replay" on the page, and it's a <p> — so
+		// finding it here proves the label rendered alongside the name, not instead.
+		expect(screen.getByText("Replay").tagName).toBe("P");
 		expect(screen.getByText(REPLAY_ID)).toBeTruthy();
 	});
 
@@ -139,13 +142,21 @@ describe("Inspector header", () => {
 				HttpResponse.json({ error: "not_found" }, { status: 404 }),
 			),
 		);
-		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
+		const { ui, queryClient } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
 		render(ui);
 
-		// The 404 leaves `conversation.data` undefined for good, so once the replay
-		// itself has rendered the title can no longer change out from under us.
-		await waitFor(() => screen.getByText(REPLAY_ID));
-		expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Replay");
+		// Wait on the query itself, not on rendered markup: the fallback title is
+		// byte-identical to the not-yet-loaded title, and the replay id paints
+		// before either request settles — so any DOM anchor here passes against a
+		// broken fallback too.
+		await waitFor(() =>
+			expect(
+				queryClient.getQueryState(["conversations", { hash: replay.conversation_hash }])?.status,
+			).toBe("error"),
+		);
+		const generic = screen.getAllByText("Replay");
+		expect(generic).toHaveLength(1);
+		expect(generic[0]?.tagName).toBe("H2");
 	});
 
 	it("shows the lifecycle state as a status badge", async () => {

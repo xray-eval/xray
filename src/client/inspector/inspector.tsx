@@ -97,11 +97,13 @@ export function Inspector() {
 					    legible. Both collapse to a bare "Replay" when the conversation
 					    can't be read. */}
 					<div className="space-y-1">
-						{conversationName !== null && (
-							<p className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground/55">
-								Replay
-							</p>
-						)}
+						{/* Fixed-height slot, empty until the name lands: the conversation is
+						    a second serial round-trip (its hash comes from the replay), so
+						    growing a line in later would shove the whole page down on every
+						    deep-linked load. */}
+						<p className="h-4 font-mono text-[10px] uppercase leading-4 tracking-[0.3em] text-muted-foreground/55">
+							{conversationName !== null && "Replay"}
+						</p>
 						<div className="flex flex-wrap items-center gap-3">
 							<h2 className="text-2xl font-semibold tracking-tight">
 								{conversationName ?? "Replay"}
@@ -246,9 +248,10 @@ function hasRunDetails(replay: ReplayDetailResponse): boolean {
 }
 
 /**
- * Sidebar column, deliberately unbounded in height: every section is expanded
- * so the whole run reads as one vertical scan next to the tree, instead of
- * hiding behind an inner scrollbar.
+ * Sidebar column, deliberately unbounded in height: every section is expanded so
+ * the whole run reads as one vertical scan next to the tree, rather than behind
+ * a scrollbar on the card. The run-config blob keeps its own `max-h-64` box —
+ * an arbitrary dev-supplied JSON shouldn't be able to stretch the page.
  */
 function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
 	const hasConfig = replay.run_config !== null && replay.run_config !== undefined;
