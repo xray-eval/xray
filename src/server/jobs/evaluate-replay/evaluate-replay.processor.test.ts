@@ -1,8 +1,9 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { Assertion } from "@/server/assertions/assertions.types.ts";
 import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import type { ConversationTurn } from "@/server/conversations/conversations.types.ts";
+import { makeRecordingJudgeProvider } from "@/server/judges/judges.test-utils.ts";
 import type { Judge } from "@/server/judges/judges.types.ts";
 import type {
 	ReplayEvaluationCompleteEvent,
@@ -647,6 +648,105 @@ describe("evaluate-replay processor", () => {
 			const { status, message } = await runAndGetTtft(ctx);
 			expect(status).toBe("errored");
 			expect(message).toContain("no recording anchor");
+		});
+	});
+
+	describe("judge evidence", () => {
+		const RECORDING_T0 = "2026-05-26T14:31:31.023Z";
+		const atOffset = (ms: number) => new Date(Date.parse(RECORDING_T0) + ms).toISOString();
+
+		async function runWithJudge(recordingStartedAt: string | null) {
+			const ctx = await setupReplay({
+				turns: [
+					{ role: "user", assertions: [] },
+					{ role: "agent", assertions: [] },
+				],
+				judges: [{ kind: "text_match", reference: "looks up the balance", pass_score: 70 }],
+			});
+			ctx.store.db
+				.update(replays)
+				.set({ recordingStartedAt })
+				.where(eq(replays.id, ctx.replayId))
+				.run();
+			return ctx;
+		}
+
+		it("puts tool evidence in the judge prompt, under the agent turn that made the call", async () => {
+			const ctx = await runWithJudge(RECORDING_T0);
+			ctx.store.db
+				.insert(toolCalls)
+				.values({
+					replayId: ctx.replayId,
+					spanId: "s1",
+					name: "lookup_balance",
+					argsJson: '{"account_id":"chk-991"}',
+					resultJson: '{"balance":1204.5}',
+					// offset 1500 ∈ the agent turn's window [1000, 2500)
+					startedAt: atOffset(1500),
+					endedAt: atOffset(1740),
+					latencyMs: 240,
+				})
+				.run();
+			const judge = makeRecordingJudgeProvider();
+			await makeEvaluateReplayProcessor(
+				ctx.store,
+				makeReplayEvents(),
+				judge,
+			)({
+				replayId: ctx.replayId,
+			});
+			expect(judge.userPrompt).toContain("[tool] lookup_balance latency=240ms");
+			expect(judge.userPrompt).toContain('args: {"account_id":"chk-991"}');
+			expect(judge.userPrompt.indexOf("[turn 1]")).toBeLessThan(
+				judge.userPrompt.indexOf("[tool] lookup_balance"),
+			);
+			ctx.store.close();
+		});
+
+		it("renders a VAD turn whose transcription is missing as (no transcript) rather than dropping it", async () => {
+			const ctx = await runWithJudge(RECORDING_T0);
+			ctx.store.db
+				.delete(turnTranscripts)
+				.where(and(eq(turnTranscripts.replayId, ctx.replayId), eq(turnTranscripts.turnIdx, 1)))
+				.run();
+			const judge = makeRecordingJudgeProvider();
+			await makeEvaluateReplayProcessor(
+				ctx.store,
+				makeReplayEvents(),
+				judge,
+			)({
+				replayId: ctx.replayId,
+			});
+			expect(judge.userPrompt).toContain("[turn 1] [agent]: (no transcript)");
+			ctx.store.close();
+		});
+
+		it("tells the judge evidence is unavailable when the replay has no recording anchor", async () => {
+			const ctx = await runWithJudge(null);
+			ctx.store.db
+				.insert(toolCalls)
+				.values({
+					replayId: ctx.replayId,
+					spanId: "s1",
+					name: "lookup_balance",
+					argsJson: null,
+					resultJson: null,
+					startedAt: atOffset(1500),
+					endedAt: atOffset(1740),
+					latencyMs: 240,
+				})
+				.run();
+			const judge = makeRecordingJudgeProvider();
+			await makeEvaluateReplayProcessor(
+				ctx.store,
+				makeReplayEvents(),
+				judge,
+			)({
+				replayId: ctx.replayId,
+			});
+			expect(judge.userPrompt).toContain("no recording anchor");
+			expect(judge.userPrompt).not.toContain("[tool]");
+			ctx.store.close();
 		});
 	});
 });

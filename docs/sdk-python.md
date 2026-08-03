@@ -171,9 +171,21 @@ To do that mapping, xray needs a recording anchor: the wall-clock time of the fi
 Judge.text_match(reference: str, *, rubric: str | None = None, pass_score: int = 70) -> Judge
 ```
 
-A judge is a conversation-level LLM evaluator. It scores the whole transcript, not a single turn.
+A judge is a conversation-level LLM evaluator. It scores the whole conversation, not a single turn.
 
-Here is how `text_match` works. The server asks the configured judge model to score the full transcript against `reference`. You can optionally guide the scoring with `rubric`. The score is on a 0 to 100 scale. The judge passes only when `score >= pass_score`.
+Here is how `text_match` works. The server asks the configured judge model to score the conversation against `reference`. You can optionally guide the scoring with `rubric`. The score is on a 0 to 100 scale. The judge passes only when `score >= pass_score`.
+
+The judge sees more than the transcript. Under each turn it also gets that turn's **evidence**, so it can score what the agent *did*, not only what it said:
+
+- `[tool]` lines — each tool call attributed to the turn: name, latency, `args`, `result`.
+- `[model]` lines — each LLM call: model id and time-to-first-chunk.
+- `[metrics]` lines — response delay, whether the turn was interrupted, and how long it kept talking afterwards.
+
+This is always on; there is nothing to enable, and it does not change the Conversation hash. Three consequences worth knowing:
+
+- Tool and model evidence is attributed to turns on the audio timeline, so it needs the same recording anchor the tool assertions need. Without an anchor the judge is told the evidence is unavailable rather than being shown an empty turn — otherwise it would read silence as inaction. The same caveat applies per row: a call whose timestamp falls outside every turn's window is not shown, so absent evidence means "could not be attributed", not "did not happen". The judge is told this.
+- Evidence is capped so one big payload cannot blow the judge's context. Tool `args` / `result` values are truncated with a `[truncated N of M chars]` marker (tool names and model ids get a tighter cap), a turn with many calls renders `+N more ... omitted`, and a turn whose evidence would exceed the overall budget renders `[evidence omitted: ...]` instead of its block. The judge is told what each marker means. **The transcript itself is never truncated** — the caps apply to evidence only.
+- A turn the transcription stage produced no text for still appears, as `(no transcript)`, so the judge sees the turn happened instead of silently missing it.
 
 `text_match` is the only judge kind in v1.
 

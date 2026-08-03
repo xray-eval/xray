@@ -1,15 +1,15 @@
 import * as v from "valibot";
 
-import type { TurnTranscriptRow } from "@/server/store/types.ts";
-
 export const MAX_JUDGE_REFERENCE = 8192;
 export const MAX_JUDGE_RUBRIC = 2048;
 export const MAX_JUDGES = 8;
 
 const TextMatchJudgeSchema = v.object({
 	kind: v.literal("text_match"),
-	// Natural-language description of the behavior the agent should exhibit;
-	// the LLM judge compares the concatenated transcript against it.
+	// Natural-language description of the behavior the agent should exhibit; the
+	// LLM judge scores the rendered conversation against it. Because the render
+	// carries per-turn evidence as well as speech, a reference may describe what
+	// the agent DID (tool calls, latency), not only what it said.
 	reference: v.pipe(v.string(), v.nonEmpty(), v.maxLength(MAX_JUDGE_REFERENCE)),
 	rubric: v.optional(v.pipe(v.string(), v.maxLength(MAX_JUDGE_RUBRIC))),
 	// Threshold on the 0..100 score the judge returns: score >= pass_score →
@@ -18,18 +18,17 @@ const TextMatchJudgeSchema = v.object({
 });
 
 /**
- * Conversation-level judge. Runs once per replay against the full transcript
- * (concatenated `turn_transcripts` rows in order with role prefixes).
+ * Conversation-level judge. Runs once per replay against every turn of the
+ * replay — walked from `replay_turns`, so a turn whose transcription failed
+ * still appears — each rendered with a role prefix and followed by that turn's
+ * tool / model / timing evidence. See `judges.evidence.ts` for the projection
+ * and the caps.
  */
 export const JudgeSchema = v.variant("kind", [TextMatchJudgeSchema]);
 export type Judge = v.InferOutput<typeof JudgeSchema>;
 export type JudgeKind = Judge["kind"];
 
 export const JudgesArraySchema = v.pipe(v.array(JudgeSchema), v.maxLength(MAX_JUDGES));
-
-export interface JudgeContext {
-	readonly transcripts: readonly TurnTranscriptRow[];
-}
 
 export interface JudgeOutcome {
 	readonly status: "passed" | "failed" | "errored";

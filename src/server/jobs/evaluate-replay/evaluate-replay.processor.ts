@@ -6,7 +6,8 @@ import { evaluateAssertion } from "@/server/assertions/assertions.evaluator.ts";
 import type { AssertionContext } from "@/server/assertions/assertions.types.ts";
 import { getConversationSpec } from "@/server/conversations/conversations.service.ts";
 import { JudgeError } from "@/server/judges/judges.errors.ts";
-import type { JudgeTranscriptTurn } from "@/server/judges/judges.text-match.ts";
+import type { JudgeEvidence } from "@/server/judges/judges.evidence.ts";
+import { buildJudgeEvidence } from "@/server/judges/judges.evidence.ts";
 import { runTextMatchJudge } from "@/server/judges/judges.text-match.ts";
 import type { Judge, JudgeOutcome, JudgeProvider } from "@/server/judges/judges.types.ts";
 import type { ReplayEvents } from "@/server/replays/replays.events.ts";
@@ -212,11 +213,19 @@ export function makeEvaluateReplayProcessor(
 
 			const judgeRows: JudgeResultInsert[] = [];
 			const judgeOutcomes: JudgeOutcomeResponse[] = [];
-			const judgeTurns = buildJudgeTurns(turnRows, transcripts);
+			const judgeEvidence = buildJudgeEvidence({
+				turnRows,
+				transcripts,
+				metricRows,
+				toolRows,
+				usageRows,
+				windowByIdx,
+				recordingStartedAt: replay.recordingStartedAt,
+			});
 			for (let k = 0; k < spec.judges.length; k++) {
 				const judge = spec.judges[k];
 				if (judge === undefined) continue;
-				const outcome = await runOneJudge(judge, judgeTurns, judgeProvider);
+				const outcome = await runOneJudge(judge, judgeEvidence, judgeProvider);
 				judgeRows.push({
 					replayId,
 					judgeIdx: k,
@@ -401,23 +410,9 @@ function earliestTtftMs(
 	return earliestTtft;
 }
 
-function buildJudgeTurns(
-	turnRows: readonly ReplayTurnRow[],
-	transcripts: readonly TurnTranscriptRow[],
-): JudgeTranscriptTurn[] {
-	const roleByTurnIdx = new Map(turnRows.map((r) => [r.idx, r.role]));
-	const out: JudgeTranscriptTurn[] = [];
-	for (const t of transcripts) {
-		const role = roleByTurnIdx.get(t.turnIdx);
-		if (role === undefined) continue;
-		out.push({ turnIdx: t.turnIdx, role, text: t.text });
-	}
-	return out;
-}
-
 async function runOneJudge(
 	judge: Judge,
-	transcripts: readonly JudgeTranscriptTurn[],
+	evidence: JudgeEvidence,
 	provider: JudgeProvider,
 ): Promise<JudgeOutcome> {
 	try {
@@ -425,7 +420,7 @@ async function runOneJudge(
 			.with({ kind: "text_match" }, (j) =>
 				runTextMatchJudge(
 					{ reference: j.reference, rubric: j.rubric ?? null, passScore: j.pass_score },
-					transcripts,
+					evidence,
 					provider,
 				),
 			)

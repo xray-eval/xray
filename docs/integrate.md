@@ -232,7 +232,7 @@ For Cartesia or 11Labs, synthesize the audio yourself and pass the output as `Re
 
 - `passed: bool`. This is `True` only if every assertion *and* every judge ran to a `passed` status. An `errored` status counts as not-passed.
 - `assertions: tuple[AssertionOutcome, ...]`. There is one entry per declared assertion, in the order they appear on each turn. Each one carries `turn_idx`, `assertion_idx`, `kind`, `status` (`passed`, `failed`, or `errored`), and `message` (the reason, set when the status is not passed).
-- `judges: tuple[JudgeOutcome, ...]`. There is one entry per declared judge. Each one carries `judge_idx`, `kind`, `status`, the LLM's 0..100 `score`, and the LLM's natural-language `reason`.
+- `judges: tuple[JudgeOutcome, ...]`. There is one entry per declared judge. Each one carries `judge_idx`, `kind`, `status`, the LLM's 0..100 `score`, and the LLM's natural-language `reason`. A judge scores the transcript together with each turn's tool calls, model calls, and timing metrics, so a reference like "looks up the balance before quoting it" is checked against what the agent actually did. See [Judges](./sdk-python.md#judges).
 - `metrics: tuple[TurnMetrics, ...]`. These are per-turn timings computed server-side: `agent_response_ms`, `interrupted`, and `yield_ms` (how long an interrupted turn kept talking after a barge-in began; `None` otherwise). (TTFT means time to first token. Model TTFT is a per-call attribute on the replay's `model_usage` rows. It is populated when the agent's instrumentation emits `gen_ai.response.time_to_first_chunk`. It is not a per-turn metric.)
 - `replay_id` and `conversation_hash`. These point back to the server-side rows for follow-up inspection.
 
