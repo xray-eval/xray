@@ -4,9 +4,9 @@
 
 Open-source replay/eval framework for LiveKit voice agents. One Docker image, one SQLite file, one Python SDK.
 
-![xray replay inspector — per-assertion/judge evaluation, stereo user/agent audio timeline, span tree with per-turn attribution](docs/public/inspector-replay.png)
+![xray replay inspector — server-side assertion evaluation, stereo user/agent audio with a barge-in, OTLP span tree attributed to turns, and the span inspector open on a model call](docs/public/inspector-replay.png)
 
-*One replay of the [example voice agent](examples/livekit-voice-agent): declarative assertions + an LLM judge evaluated server-side, the stereo audio timeline (user left, agent right), and the OTLP span tree attributed to turns.*
+*The replay inspector on a barge-in conversation: declarative assertions evaluated server-side, the stereo audio timeline (user left, agent right) showing the interruption and the 330 ms yield, the OTLP span tree attributed to turns, and the span inspector open on one model call. Run the [example voice agent](examples/livekit-voice-agent) to produce a replay of your own.*
 
 > **Alpha.** The wire and SDK API can break between minor versions. **Upgrading from a previous release wipes your data: delete `/data/xray.db` before starting the new container.** Issues and feedback are the most useful contribution right now.
 
