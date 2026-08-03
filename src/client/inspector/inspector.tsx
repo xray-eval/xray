@@ -20,7 +20,7 @@ import {
 import { shortHash } from "@/client/format.ts";
 import { isJsonContainer } from "@/client/lib/json.ts";
 import { cn } from "@/client/lib/utils.ts";
-import { SpanDetailAside } from "@/client/trace-tree/span-detail/span-detail.tsx";
+import { SpanDetailDrawer } from "@/client/trace-tree/span-detail/span-detail.tsx";
 import { SpanSelectionProvider } from "@/client/trace-tree/span-selection.tsx";
 import { TraceTree, ZoomControls } from "@/client/trace-tree/trace-tree.tsx";
 
@@ -55,9 +55,9 @@ export function Inspector() {
 				? skipToken
 				: ({ signal }) => getConversation(conversationHash, signal),
 	});
+	const conversationName = conversation.data?.name ?? null;
 	const conversationLabel =
-		conversation.data?.name ??
-		(conversationHash !== undefined ? `${shortHash(conversationHash)}…` : null);
+		conversationName ?? (conversationHash !== undefined ? `${shortHash(conversationHash)}…` : null);
 
 	return (
 		<section className="space-y-10">
@@ -92,9 +92,22 @@ export function Inspector() {
 					)}
 				</div>
 				<div className="space-y-2">
-					<div className="flex flex-wrap items-center gap-3">
-						<h2 className="text-2xl font-semibold tracking-tight">Replay</h2>
-						{query.data && <RunStatusBadge replay={query.data} />}
+					{/* A replay has no name of its own, so it's titled after the
+					    conversation it runs; the eyebrow keeps "which page is this"
+					    legible. Both collapse to a bare "Replay" when the conversation
+					    can't be read. */}
+					<div className="space-y-1">
+						{conversationName !== null && (
+							<p className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground/55">
+								Replay
+							</p>
+						)}
+						<div className="flex flex-wrap items-center gap-3">
+							<h2 className="text-2xl font-semibold tracking-tight">
+								{conversationName ?? "Replay"}
+							</h2>
+							{query.data && <RunStatusBadge replay={query.data} />}
+						</div>
 					</div>
 					<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-xs text-muted-foreground tabular-nums">
 						<span>{replayId}</span>
@@ -141,25 +154,21 @@ export function Inspector() {
 function ReplayBody({ replay }: { replay: ReplayDetailResponse }) {
 	// Advances a replay opened mid-analysis without a manual reload; no-op once terminal.
 	useReplayLiveUpdates(replay.id, replay.lifecycle_state);
+	const showRunDetails = hasRunDetails(replay);
 	return (
 		<PlayerProvider>
 			<SpanSelectionProvider>
 				<div className="space-y-6">
 					<AnalysisProgress replay={replay} />
 					<EvaluationPanel replayId={replay.id} lifecycleState={replay.lifecycle_state} />
-					<div className="grid gap-6 lg:grid-cols-3">
-						<div className="lg:col-span-2 lg:col-start-1 lg:row-start-1">
+					{/* `items-start` keeps Run details at its content height instead of
+					    stretching it to match the taller audio + span-tree column. */}
+					<div className={cn("grid gap-6 lg:items-start", showRunDetails && "lg:grid-cols-3")}>
+						<div className={cn("space-y-6", showRunDetails && "lg:col-span-2")}>
 							<AudioSection replay={replay} />
-						</div>
-						<div className="lg:col-span-2 lg:col-start-1 lg:row-start-2">
 							<TraceCard replay={replay} />
 						</div>
-						<div className="relative lg:col-start-3 lg:row-start-1">
-							<RunDetailsCard replay={replay} />
-						</div>
-						<aside className="relative lg:col-start-3 lg:row-start-2">
-							<SpanDetailAside replay={replay} />
-						</aside>
+						{showRunDetails && <RunDetailsCard replay={replay} />}
 					</div>
 					<TranscriptCard replay={replay} />
 				</div>
@@ -217,30 +226,43 @@ function TraceCard({ replay }: { replay: ReplayDetailResponse }) {
 					{replay.spans.length > 0 && <ZoomControls zoom={zoom} onChange={setZoom} />}
 				</div>
 			</CardHeader>
-			<CardContent className="h-[560px] px-0 py-0">
+			<CardContent className="max-h-[560px] px-0 py-0">
 				<TraceTree turns={replay.turns} spans={replay.spans} zoom={zoom} />
 			</CardContent>
+			{/* The inspector belongs to the tree, so it drops out of the bottom of
+			    this card rather than living in its own column. */}
+			<SpanDetailDrawer replay={replay} />
 		</Card>
 	);
 }
 
-function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
-	const hasMetrics = replay.turn_metrics.length > 0;
-	const hasUsage = replay.model_usage.length > 0;
-	const hasTools = replay.tool_calls.length > 0;
-	const hasConfig = replay.run_config !== null && replay.run_config !== undefined;
-	if (!hasMetrics && !hasUsage && !hasTools && !hasConfig) return null;
+function hasRunDetails(replay: ReplayDetailResponse): boolean {
 	return (
-		<Card className="gap-0 overflow-hidden p-0 lg:absolute lg:inset-0 lg:flex lg:flex-col">
-			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4 lg:shrink-0">
+		replay.turn_metrics.length > 0 ||
+		replay.model_usage.length > 0 ||
+		replay.tool_calls.length > 0 ||
+		(replay.run_config !== null && replay.run_config !== undefined)
+	);
+}
+
+/**
+ * Sidebar column, deliberately unbounded in height: every section is expanded
+ * so the whole run reads as one vertical scan next to the tree, instead of
+ * hiding behind an inner scrollbar.
+ */
+function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
+	const hasConfig = replay.run_config !== null && replay.run_config !== undefined;
+	return (
+		<Card className="gap-0 overflow-hidden p-0">
+			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
 				<CardTitle className="text-base font-semibold tracking-tight text-foreground">
 					Run details
 				</CardTitle>
 			</CardHeader>
-			<CardContent className="scroll-panel divide-y divide-border/50 p-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
-				{hasMetrics && <TurnMetricsSection turns={replay.turn_metrics} />}
-				{hasUsage && <ModelUsageSection usage={replay.model_usage} />}
-				{hasTools && <ToolCallsSection toolCalls={replay.tool_calls} />}
+			<CardContent className="divide-y divide-border/50 p-0">
+				<TurnMetricsSection turns={replay.turn_metrics} />
+				{replay.model_usage.length > 0 && <ModelUsageSection usage={replay.model_usage} />}
+				{replay.tool_calls.length > 0 && <ToolCallsSection toolCalls={replay.tool_calls} />}
 				{hasConfig && <RunConfigSection runConfig={replay.run_config} />}
 			</CardContent>
 		</Card>

@@ -7,7 +7,7 @@ import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
-const { cleanup, render, screen, waitFor } = await import("@testing-library/react");
+const { act, cleanup, render, screen, waitFor } = await import("@testing-library/react");
 const { renderWithRouter } = await import("../test-utils.tsx");
 
 afterEach(() => cleanup());
@@ -117,6 +117,37 @@ describe("Inspector empty states", () => {
 });
 
 describe("Inspector header", () => {
+	// A replay has no name of its own — the conversation it runs is the only
+	// human-readable identity, so it headlines the page instead of the id.
+	it("headlines the conversation name, keeping the id in the meta line", async () => {
+		mockReplay(buildReplay());
+		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
+		render(ui);
+
+		await waitFor(() => screen.getByRole("heading", { level: 2, name: "Test conversation" }));
+		expect(screen.getByText(REPLAY_ID)).toBeTruthy();
+	});
+
+	it("falls back to a generic title when the conversation cannot be loaded", async () => {
+		const replay = buildReplay();
+		server.use(
+			http.get(`http://localhost/v1/replays/${replay.id}`, () => HttpResponse.json(replay)),
+			http.get(`http://localhost/v1/replays/${replay.id}/result`, () =>
+				HttpResponse.json(buildResult(replay)),
+			),
+			http.get(`http://localhost/v1/conversations/${replay.conversation_hash}`, () =>
+				HttpResponse.json({ error: "not_found" }, { status: 404 }),
+			),
+		);
+		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
+		render(ui);
+
+		// The 404 leaves `conversation.data` undefined for good, so once the replay
+		// itself has rendered the title can no longer change out from under us.
+		await waitFor(() => screen.getByText(REPLAY_ID));
+		expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Replay");
+	});
+
 	it("shows the lifecycle state as a status badge", async () => {
 		mockReplay(buildReplay({ lifecycle_state: "failed", failure_reason: "driver_aborted" }));
 		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
@@ -174,31 +205,48 @@ describe("Inspector TurnsCard", () => {
 	});
 });
 
+const SPAN = {
+	id: 1,
+	trace_id: "trace",
+	span_id: "s-1",
+	parent_span_id: null,
+	name: "stt.transcribe",
+	vocabulary: "xray" as const,
+	started_at: "2026-05-25T10:00:00.200Z",
+	ended_at: "2026-05-25T10:00:01.400Z",
+	attributes_json: "{}",
+	audio_offset_ms: 200,
+};
+
+function spanTreeCard(): Element {
+	const card = screen.getByText("Span tree").closest('[data-slot="card"]');
+	if (card === null) throw new Error("span tree card not found");
+	return card;
+}
+
 describe("Inspector TraceCard", () => {
 	it("renders span nodes attributed to their turn", async () => {
-		mockReplay(
-			buildReplay({
-				started_at: "2026-05-25T10:00:00.000Z",
-				spans: [
-					{
-						id: 1,
-						trace_id: "trace",
-						span_id: "s-1",
-						parent_span_id: null,
-						name: "stt.transcribe",
-						vocabulary: "xray",
-						started_at: "2026-05-25T10:00:00.200Z",
-						ended_at: "2026-05-25T10:00:01.400Z",
-						attributes_json: "{}",
-						audio_offset_ms: 200,
-					},
-				],
-			}),
-		);
+		mockReplay(buildReplay({ started_at: "2026-05-25T10:00:00.000Z", spans: [SPAN] }));
 		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
 		render(ui);
 
 		await waitFor(() => screen.getByText(/stt\.transcribe/));
 		expect(screen.getByLabelText(/Inspect xray span stt\.transcribe$/i)).toBeTruthy();
+	});
+
+	// The span inspector is a drawer *inside* the span-tree card, not a separate
+	// column — a span click must reveal it under the tree it came from.
+	it("opens the span inspector inside the span-tree card", async () => {
+		mockReplay(buildReplay({ started_at: "2026-05-25T10:00:00.000Z", spans: [SPAN] }));
+		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
+		render(ui);
+
+		const row = await waitFor(() => screen.getByLabelText(/Inspect xray span stt\.transcribe$/i));
+		expect(spanTreeCard().textContent).toMatch(/select a span/i);
+
+		act(() => row.click());
+
+		const detail = screen.getByLabelText(/^span detail: stt\.transcribe$/i);
+		expect(spanTreeCard().contains(detail)).toBe(true);
 	});
 });

@@ -7,7 +7,7 @@ import type {
 
 import { registerHappyDom } from "../../test-happy-dom.ts";
 import { SpanSelectionProvider, useSpanSelection } from "../span-selection.tsx";
-import { SpanDetailAside, SpanDetailPanel } from "./span-detail.tsx";
+import { SpanDetailDrawer, SpanDetailPanel } from "./span-detail.tsx";
 import type { SpanDetailModel } from "./span-detail.types.ts";
 import { describe, expect, it } from "bun:test";
 
@@ -188,47 +188,59 @@ function replay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetailResp
 	};
 }
 
-function AsideHarness({ replay: r }: { replay: ReplayDetailResponse }) {
+function DrawerHarness({ replay: r }: { replay: ReplayDetailResponse }) {
 	const { select } = useSpanSelection();
 	return (
 		<>
 			<button type="button" onClick={() => select("span-1")}>
 				pick
 			</button>
-			<SpanDetailAside replay={r} />
+			<SpanDetailDrawer replay={r} />
 		</>
 	);
 }
 
-describe("SpanDetailAside", () => {
+describe("SpanDetailDrawer", () => {
 	it("renders nothing when the replay has no spans", () => {
 		render(
 			<SpanSelectionProvider>
-				<SpanDetailAside replay={replay({ spans: [] })} />
+				<SpanDetailDrawer replay={replay({ spans: [] })} />
 			</SpanSelectionProvider>,
 		);
 		expect(screen.queryByText(/select a span/i)).toBeNull();
 		expect(screen.queryByText("agent_turn")).toBeNull();
 	});
 
-	it("prompts the user to select a span before one is chosen", () => {
+	it("collapses to a one-line hint before a span is chosen", () => {
 		render(
 			<SpanSelectionProvider>
-				<SpanDetailAside replay={replay()} />
+				<SpanDetailDrawer replay={replay()} />
 			</SpanSelectionProvider>,
 		);
 		expect(screen.getByText(/select a span/i)).toBeTruthy();
+		expect(screen.queryByLabelText(/^span detail/i)).toBeNull();
 	});
 
 	it("resolves and shows the detail once a span is selected", () => {
 		render(
 			<SpanSelectionProvider>
-				<AsideHarness replay={replay()} />
+				<DrawerHarness replay={replay()} />
 			</SpanSelectionProvider>,
 		);
 		expect(screen.queryByText("agent_turn")).toBeNull();
 		act(() => screen.getByText("pick").click());
+		expect(screen.getByLabelText(/^span detail: agent_turn$/i)).toBeTruthy();
 		expect(screen.getByText("agent_turn")).toBeTruthy();
 		expect(screen.getByText("get_current_year")).toBeTruthy();
+	});
+
+	it("replaces the hint with the detail — the drawer is one region, not two", () => {
+		render(
+			<SpanSelectionProvider>
+				<DrawerHarness replay={replay()} />
+			</SpanSelectionProvider>,
+		);
+		act(() => screen.getByText("pick").click());
+		expect(screen.queryByText(/select a span/i)).toBeNull();
 	});
 });

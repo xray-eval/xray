@@ -90,7 +90,10 @@ function TraceTreeReady({
 	const virtualWidth = `calc(${STICKY_LEFT_TOTAL_PX}px + (100% - ${STICKY_LEFT_TOTAL_PX}px) * ${zoom})`;
 
 	return (
-		<div className="h-full overflow-auto">
+		// Caps at whatever max-height the host card sets, but shrinks to the rows
+		// when there are few of them — a fixed height would strand dead pane
+		// between the last row and the span detail drawer below it.
+		<div className="max-h-[inherit] overflow-auto">
 			<div className="relative" style={{ width: virtualWidth, minWidth: "100%" }}>
 				<TimeRuler scale={scale} zoom={zoom} />
 				<ol className="divide-y divide-border/30">
@@ -599,7 +602,7 @@ function IndentGuides({ depth }: { depth: number }) {
 
 function TraceTreeEmpty() {
 	return (
-		<div className="relative flex h-full flex-col items-center justify-center overflow-hidden px-8 text-center">
+		<div className="relative flex min-h-[18rem] flex-col items-center justify-center overflow-hidden px-8 text-center">
 			<div
 				aria-hidden="true"
 				className="pointer-events-none absolute inset-0 opacity-[0.05]"
