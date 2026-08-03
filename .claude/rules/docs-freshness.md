@@ -23,6 +23,7 @@ Coarse on purpose (directory / file → doc), so it survives refactors that a li
 | `src/server/store/schema.ts` (tables, `lifecycle_state` / `analysis_step` / `failure_reason` enums) | `docs/architecture.md` (storage ERD + table list), `docs/integrate.md`, `CLAUDE.md` (Storage ¶) |
 | `src/server/otlp/vocabularies/*`                            | `docs/wire-contract.md` (vocabularies), `docs/integrate.md` (vocab section) |
 | `src/server/otlp/otlp.types.ts` (size / span caps, error shapes) | `docs/wire-contract.md` (Limits + status codes)                           |
+| `src/server/judges/*` (what a judge is shown: evidence projection, prompt shape, caps) | `docs/sdk-python.md` (Judges), `docs/integrate.md` (`judges:` in `ReplayResult`) |
 | `src/server/env/env.ts` (`XRAY_*` env vars + defaults)      | `docs/sdk-python.md`, `docs/architecture.md`, `README.md`, `CONTRIBUTING.md` |
 | Control-plane routes (`src/server/**/<slice>.router.ts`)    | `docs/architecture.md` (control-plane list). The OpenAPI at `/docs` self-syncs from `describeRoute` — only the *narrative* needs a human. |
 
