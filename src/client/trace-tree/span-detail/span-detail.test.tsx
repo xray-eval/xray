@@ -137,12 +137,46 @@ describe("SpanDetailPanel", () => {
 		expect(screen.getByText(/4302/)).toBeTruthy();
 	});
 
-	it("renders linked tool calls with name and result", () => {
+	it("summarizes linked tool calls as name + latency, leaving the payload to the attributes", () => {
 		render(
 			<SpanDetailPanel detail={model({ toolCalls: [TOOL_CALL] })} onClose={() => undefined} />,
 		);
 		expect(screen.getByText("get_current_year")).toBeTruthy();
-		expect(screen.getByText("2026")).toBeTruthy();
+		expect(screen.getByText(/7ms/)).toBeTruthy();
+		// The rail is a summary: args/result live in the attribute bag beside it.
+		expect(screen.queryByText("2026")).toBeNull();
+	});
+
+	// The rail and the attribute column sit side by side in the drawer, and a
+	// tool call is only ever linked to the span that emitted it — so rendering
+	// its args/result in both places showed the same JSON twice at once.
+	it("shows a tool call's result once, not once per panel", () => {
+		render(
+			<SpanDetailPanel
+				detail={model({
+					toolCalls: [TOOL_CALL],
+					attributes: {
+						kind: "parsed",
+						entries: [
+							{
+								key: "gen_ai.tool.name",
+								namespace: "gen_ai",
+								leaf: "tool.name",
+								value: "get_current_year",
+							},
+							{
+								key: "gen_ai.tool.result",
+								namespace: "gen_ai",
+								leaf: "tool.result",
+								value: '{"year":2026}',
+							},
+						],
+					},
+				})}
+				onClose={() => undefined}
+			/>,
+		);
+		expect(screen.getAllByText("2026")).toHaveLength(1);
 	});
 
 	it("falls back to raw text when the attribute bag isn't a JSON object", () => {

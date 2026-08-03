@@ -7,7 +7,7 @@ import type {
 	SpanResponse,
 	ToolCallResponse,
 } from "@/client/api/api.types.ts";
-import { JsonOrText, JsonTree, jsonTreeOrNull } from "@/client/components/json-tree.tsx";
+import { JsonTree, jsonTreeOrNull } from "@/client/components/json-tree.tsx";
 import { formatClockSeconds, formatDurationMs } from "@/client/format.ts";
 import { isJsonContainer } from "@/client/lib/json.ts";
 import { cn } from "@/client/lib/utils.ts";
@@ -257,46 +257,34 @@ function TokenBar({ input, output }: { input: number | null; output: number | nu
 	);
 }
 
+/**
+ * Summary only — name and latency, no args/result. A tool call is linked by
+ * `span_id` (see `resolveSpanDetail`), so every row here was emitted by the span
+ * on screen, and both vocabularies keep the attributes they extracted the
+ * payload from. Rendering the JSON here too would print it twice side by side
+ * with the attribute column, which is what the pre-drawer layout got away with
+ * only because it stacked the two.
+ */
 function LinkedToolSection({ toolCalls }: { toolCalls: readonly ToolCallResponse[] }) {
 	return (
 		<section className="space-y-3 px-5 py-4">
 			<SectionLabel label="Tool calls" meta={`${toolCalls.length}`} />
-			<ul className="space-y-2.5">
+			<ul className="space-y-2">
 				{toolCalls.map((tc) => (
-					<ToolRow key={tc.id} toolCall={tc} />
+					<li
+						key={tc.id}
+						className="flex items-baseline justify-between gap-3 font-mono text-[11px]"
+					>
+						<span className="truncate font-medium text-foreground">{tc.name}</span>
+						{tc.latency_ms !== null && (
+							<span className="shrink-0 tabular-nums text-muted-foreground">
+								{formatDurationMs(tc.latency_ms)}
+							</span>
+						)}
+					</li>
 				))}
 			</ul>
 		</section>
-	);
-}
-
-function ToolRow({ toolCall: tc }: { toolCall: ToolCallResponse }) {
-	return (
-		<li className="font-mono text-[11px]">
-			<div className="flex items-baseline justify-between gap-3">
-				<span className="truncate font-medium text-foreground">{tc.name}</span>
-				{tc.latency_ms !== null && (
-					<span className="shrink-0 tabular-nums text-muted-foreground">{tc.latency_ms}ms</span>
-				)}
-			</div>
-			{(tc.args_json !== null || tc.result_json !== null) && (
-				<dl className="mt-1 space-y-1 border-l border-border/40 pl-2.5 text-muted-foreground">
-					{tc.args_json !== null && <JsonField label="args" raw={tc.args_json} />}
-					{tc.result_json !== null && <JsonField label="result" raw={tc.result_json} />}
-				</dl>
-			)}
-		</li>
-	);
-}
-
-function JsonField({ label, raw }: { label: string; raw: string }) {
-	return (
-		<div className="flex gap-2">
-			<dt className="shrink-0 text-muted-foreground/60">{label}</dt>
-			<dd className="min-w-0 flex-1 overflow-auto">
-				<JsonOrText raw={raw} />
-			</dd>
-		</div>
 	);
 }
 
