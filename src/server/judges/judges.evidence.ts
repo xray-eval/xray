@@ -181,11 +181,7 @@ export function renderTranscriptWithEvidence(evidence: JudgeEvidence): string {
 
 	let spent = 0;
 	for (const turn of sorted) {
-		// Escaped but never truncated: the transcript is what SYSTEM_PROMPT calls
-		// authoritative for "what was said", and it carried no cap before evidence
-		// existed. The evidence budget bounds evidence, not speech.
-		const text = turn.text === null ? "(no transcript)" : escapeLineBreaks(turn.text);
-		lines.push(`[turn ${turn.turnIdx}] [${turn.role}]: ${text}`);
+		lines.push(`[turn ${turn.turnIdx}] [${turn.role}]: ${transcriptLine(turn.text)}`);
 		const block = renderEvidenceBlock(turn, evidence.hasRecordingAnchor);
 		if (block.length === 0) continue;
 		const cost = block.reduce((sum, line) => sum + line.length + 1, 0);
@@ -202,6 +198,26 @@ export function renderTranscriptWithEvidence(evidence: JudgeEvidence): string {
 		lines.push(...block);
 	}
 	return lines.join("\n");
+}
+
+/**
+ * The turn's speech, or the marker that stands in for it.
+ *
+ * Whitespace-only text collapses to the same marker as a missing
+ * `turn_transcripts` row, because to a judge they are one fact: the turn
+ * happened and no words are available for it. The transcription stage writes the
+ * provider's `text` unguarded, so a VAD turn that carried only background noise
+ * persists as an empty string — rendered verbatim that leaves a bare
+ * `[turn N] [role]: `, a third state the judge cannot tell apart from a
+ * formatting bug.
+ *
+ * Escaped but never truncated: the transcript is what SYSTEM_PROMPT calls
+ * authoritative for "what was said", and it carried no cap before evidence
+ * existed. The evidence budget bounds evidence, not speech.
+ */
+function transcriptLine(text: string | null): string {
+	if (text === null || text.trim().length === 0) return "(no transcript)";
+	return escapeLineBreaks(text);
 }
 
 function renderEvidenceBlock(turn: JudgeEvidenceTurn, hasRecordingAnchor: boolean): string[] {
@@ -280,10 +296,14 @@ function renderMetricsLine(metrics: JudgeEvidenceMetrics | null): string | null 
  * get both.
  */
 function escapeLineBreaks(raw: string): string {
-	// U+2028 / U+2029 / U+0085 are line terminators to plenty of parsers and
-	// tokenizers, so they are the same spoofing vector as \n and get the same
-	// treatment.
-	return raw.replace(/\r\n|[\n\r\u2028\u2029\u0085]/g, "\\n");
+	// Everything past \n / \r is a mandatory line break in Unicode's own terms
+	// (UAX #14 class BK) and a line terminator to plenty of parsers and
+	// tokenizers, so all of them are the same spoofing vector and get the same
+	// treatment. \v and \f are only reachable through an identifier: args and
+	// result are `JSON.stringify`-ed at ingest (`safeJsonString`), which escapes
+	// every C0 char, while `tool_calls.name` / `model_usage.model` are stored
+	// verbatim from the span attribute.
+	return raw.replace(/\r\n|[\n\r\v\f\u2028\u2029\u0085]/g, "\\n");
 }
 
 /**
