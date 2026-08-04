@@ -33,6 +33,11 @@ export function rankedMetricRows(): RankedMetricRow[] {
 export interface HeatRange {
 	readonly min: number;
 	readonly max: number;
+	/**
+	 * How many cells were measured. Travels with the span because a zero-width
+	 * range means two different things — see `heatIntensity`.
+	 */
+	readonly n: number;
 }
 
 /**
@@ -44,10 +49,11 @@ export function heatRange(values: readonly (number | null)[]): HeatRange | null 
 	const measured = values.filter((value): value is number => value !== null);
 	const [first] = measured;
 	if (first === undefined) return null;
-	return measured.reduce<HeatRange>(
+	const span = measured.reduce(
 		(range, value) => ({ min: Math.min(range.min, value), max: Math.max(range.max, value) }),
 		{ min: first, max: first },
 	);
+	return { ...span, n: measured.length };
 }
 
 /**
@@ -60,6 +66,12 @@ export function heatRange(values: readonly (number | null)[]): HeatRange | null 
  */
 export function heatIntensity(value: number | null, range: HeatRange, better: RankedDirection) {
 	if (value === null) return null;
+	// One measured cell is a zero-width span for the same arithmetic reason a
+	// tie is, and the two must not render alike: full intensity on the only
+	// config whose agent emitted the metric reads as a win it never contested.
+	// `bestCellIndex` withholds its marker on exactly this data for exactly this
+	// reason — shading is a weaker claim than "best", but it points the same way.
+	if (range.n < 2) return null;
 	// Every cell tied. Dimming them all against a zero-width span would read as
 	// "no data" rather than "no difference".
 	if (range.max === range.min) return 1;

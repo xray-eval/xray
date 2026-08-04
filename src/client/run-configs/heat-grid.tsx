@@ -1,10 +1,12 @@
+import { Link } from "@tanstack/react-router";
+
 import type { CompareRunConfigsResponse, RunConfigCompareCell } from "@/client/api/api.types.ts";
 import { cn } from "@/client/lib/utils.ts";
 
 import { accentAt } from "./column-accents.ts";
 import type { ConfigFacets } from "./config-facets.ts";
 import { facetLabelText } from "./config-facets.ts";
-import type { RankedMetricRow } from "./heat-scale.ts";
+import type { HeatRange, RankedMetricRow } from "./heat-scale.ts";
 import { heatIntensity, heatRange } from "./heat-scale.ts";
 import { runConfigLabel } from "./run-config-label.ts";
 
@@ -109,6 +111,7 @@ export function HeatGrid({
 								<HeatCell
 									key={groups[idx]?.hash ?? idx}
 									cell={cells.get(conv.hash)}
+									conversationName={conv.name}
 									row={row}
 									range={range}
 								/>
@@ -123,12 +126,14 @@ export function HeatGrid({
 
 function HeatCell({
 	cell,
+	conversationName,
 	row,
 	range,
 }: {
 	cell: RunConfigCompareCell | undefined;
+	conversationName: string;
 	row: RankedMetricRow;
-	range: ReturnType<typeof heatRange>;
+	range: HeatRange;
 }) {
 	if (cell === undefined) {
 		return (
@@ -140,11 +145,25 @@ function HeatCell({
 		);
 	}
 	const measured = row.read(cell.metrics);
-	const intensity = range === null ? null : heatIntensity(measured.value, range, row.better);
+	const intensity = heatIntensity(measured.value, range, row.better);
 	return (
 		<td className="py-0.5 pl-1">
-			<div
-				className="rounded-sm px-2 py-1 text-center font-mono text-[11px] tabular-nums"
+			{/* Spotting a bad cell is only half the loop — the other half is going and
+			    listening to the run that produced it, and the cell's own replay is the
+			    only thing that identifies which one that was. */}
+			<Link
+				to="/replays/$replayId"
+				params={{ replayId: cell.replay_id }}
+				// The bare number is a useless link name outside the table's row and
+				// column context, and a reader listing every link would get "50%"
+				// once per cell with nothing telling them apart.
+				aria-label={`${conversationName}: ${measured.display} — open this replay`}
+				className="block rounded-sm px-2 py-1 text-center font-mono text-[11px] tabular-nums transition-shadow hover:ring-1 hover:ring-border focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+				// Mirrors the inline background as an assertable value: happy-dom
+				// drops `color-mix(...)` on assignment, so the style attribute never
+				// reaches the DOM under test and a broken scale would look exactly
+				// like a working one.
+				data-intensity={intensity ?? undefined}
 				// Inline because the value is continuous — a Tailwind class per
 				// bucket would quantise the very gradient the grid exists to show.
 				style={
@@ -156,7 +175,7 @@ function HeatCell({
 				}
 			>
 				{measured.display}
-			</div>
+			</Link>
 		</td>
 	);
 }

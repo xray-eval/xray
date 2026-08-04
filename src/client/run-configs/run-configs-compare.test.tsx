@@ -165,8 +165,10 @@ describe("RunConfigsCompare", () => {
 		render(ui);
 
 		await waitFor(() => expect(screen.getByLabelText("Run config comparison")).toBeTruthy());
-		expect(screen.getByRole("link", { name: "baseline" })).toBeTruthy();
-		expect(screen.getByRole("link", { name: "fast-follow" })).toBeTruthy();
+		// Two surfaces name each config now — the always-visible card and the
+		// aggregate table's column header — so count rather than expecting one.
+		expect(screen.getAllByRole("link", { name: "baseline" }).length).toBeGreaterThan(0);
+		expect(screen.getAllByRole("link", { name: "fast-follow" }).length).toBeGreaterThan(0);
 	});
 
 	it("marks the winning cell only where a direction means better", async () => {
@@ -287,15 +289,48 @@ describe("RunConfigsCompare", () => {
 		await waitFor(() => expect(screen.getByLabelText("Run config comparison")).toBeTruthy());
 	});
 
-	it("links each column header to that config's drill-down", async () => {
+	it("routes every surface that names a config to that config's drill-down", async () => {
 		mockApi();
 		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
 		render(ui);
 
-		const link = await waitFor(() => screen.getByRole("link", { name: "baseline" }));
-		// The comparison's replay selection rides along, so the drill-down explains
-		// the same number the user just clicked.
-		expect(link.getAttribute("href")).toBe(`/configs/${BASELINE}?replays=latest`);
+		const links = await waitFor(() => screen.getAllByRole("link", { name: "baseline" }));
+		// Both the card and the column header link there, and they must not
+		// disagree — the comparison's replay selection rides along either way, so
+		// the drill-down explains the same number the user just clicked.
+		expect(links.length).toBe(2);
+		for (const link of links) {
+			expect(link.getAttribute("href")).toBe(`/configs/${BASELINE}?replays=latest`);
+		}
+	});
+
+	it("keeps the drill-down reachable without opening the aggregate table", async () => {
+		// The table moved behind a collapsed disclosure, so it stopped being a
+		// route anywhere for anyone who doesn't expand it.
+		mockApi();
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
+		const { container } = render(ui);
+
+		await waitFor(() => expect(screen.getByLabelText("Run config comparison")).toBeTruthy());
+		const outsideDetails = [...container.querySelectorAll('a[href^="/configs/"]')].filter(
+			(a) => a.closest("details") === null,
+		);
+		expect(outsideDetails.length).toBe(2);
+	});
+
+	it("opens the exact replay behind a cell in the grid", async () => {
+		// The per-cell replay id is the only thing that says which run produced a
+		// number; without a link it is a payload nothing consumes.
+		mockApi();
+		const { ui } = renderWithRouter({ initialEntries: [`/configs?ids=${BASELINE},${FAST}`] });
+		render(ui);
+
+		// bravo is where the two configs differ (0% vs 100%), so the name is
+		// unambiguous — both scored 100% on alpha.
+		const cell = await waitFor(() =>
+			screen.getByRole("link", { name: "bravo: 0% — open this replay" }),
+		);
+		expect(cell.getAttribute("href")).toBe(`/replays/${BASELINE.slice(0, 6)}-bravo`);
 	});
 
 	it("says why the remaining configs went un-clickable at the selection cap", async () => {

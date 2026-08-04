@@ -148,7 +148,15 @@ function CompareBody({
 						const comparedFacets = splitConfigFacets(q.data.groups);
 						return (
 							<div className="space-y-8">
-								<ConfigChips groups={q.data.groups} facets={comparedFacets} onRemove={toggle} />
+								<ConfigChips
+									groups={q.data.groups}
+									facets={comparedFacets}
+									// The selection the server computed these numbers under, so the
+									// drill-down explains the number on the card rather than
+									// recomputing a different one.
+									replaySelection={q.data.replay_selection}
+									onRemove={toggle}
+								/>
 								<CoverageNotice
 									comparison={q.data}
 									scope={scope}

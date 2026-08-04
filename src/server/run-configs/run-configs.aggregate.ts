@@ -223,6 +223,12 @@ interface MutableDerivedSamples {
  * A replay with no entry contributes nothing rather than failing: a replay can
  * be `completed` with an empty `model_usage` (an agent that emits no GenAI
  * spans) or no turns at all, and that is an absent sample, not an error.
+ *
+ * Keyed on distinct ids, not on list entries, so this matches `buildMetrics`'s
+ * own set semantics — it filters through a `Set` of ids and is therefore
+ * idempotent in the replay list. Collecting per entry would make a repeated
+ * replay count twice here and once there: two routes to the same numbers that
+ * disagree, which is exactly what the index must never become.
  */
 export function derivedForReplays(
 	index: ReadonlyMap<string, DerivedSamples>,
@@ -231,7 +237,10 @@ export function derivedForReplays(
 	const turnMetrics: TurnMetricSample[] = [];
 	const modelUsage: ModelUsageSample[] = [];
 	const evaluations: EvaluationSample[] = [];
+	const collected = new Set<string>();
 	for (const replay of replays) {
+		if (collected.has(replay.id)) continue;
+		collected.add(replay.id);
 		const rows = index.get(replay.id);
 		if (rows === undefined) continue;
 		turnMetrics.push(...rows.turnMetrics);

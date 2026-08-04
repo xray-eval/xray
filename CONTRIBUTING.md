@@ -51,6 +51,7 @@ Install `uv` if you don't have it (`curl -LsSf https://astral.sh/uv/install.sh |
 pnpm dev              # Single Bun container serving SPA + API on :8080 with HMR
 pnpm cosmos           # Component workbench on :5050 (renderer on :5051)
 pnpm typecheck        # tsc --noEmit
+pnpm typecheck:cosmos # tsc -p cosmos --noEmit (the workbench harness)
 pnpm check            # biome check (lint + format)
 pnpm check:fix        # biome check --write
 pnpm test             # bun test --isolate
@@ -78,7 +79,7 @@ src/client/run-configs/
 
 Cosmos runs in **custom-bundler mode**: it serves the playground UI, and `cosmos/serve-renderer.ts` serves the component renderer on `:5051` using Bun's HTML bundler — the same bundler that builds production. There is deliberately no Vite or webpack in this path; see [`.claude/rules/one-bundler.md`](./.claude/rules/one-bundler.md).
 
-`cosmos/cosmos.imports.ts` is generated on every start and gitignored — it is derived entirely from which fixture files exist. Because it is generated, the `cosmos/` directory is excluded from the root `tsconfig.json`, so a fresh clone typechecks before anyone has run the workbench. `pnpm typecheck:cosmos` typechecks the harness itself and needs a prior `pnpm cosmos` run.
+`cosmos/cosmos.imports.ts` is generated on every start and gitignored — it is derived entirely from which fixture files exist. Because it is generated, the `cosmos/` directory is excluded from the root `tsconfig.json`, so a fresh clone typechecks before anyone has run the workbench. `pnpm typecheck:cosmos` covers the harness as its own project; `cosmos/tsconfig.json` excludes the generated map and the renderer entry that imports it, so it runs on a fresh clone and in CI alongside `pnpm typecheck`.
 
 App code must never import a fixture file — fixtures may import devDependencies that a production install doesn't have. `.dockerignore` keeps `*.fixture.tsx` out of the image so that stays true even though the runtime stage copies `src/` wholesale.
 

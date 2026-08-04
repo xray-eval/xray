@@ -1,6 +1,7 @@
+import { Link } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
 
-import type { RunConfigGroupResult } from "@/client/api/api.types.ts";
+import type { ReplaySelection, RunConfigGroupResult } from "@/client/api/api.types.ts";
 import { formatDurationMs } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
 
@@ -21,10 +22,13 @@ import { runConfigLabel } from "./run-config-label.ts";
 export function ConfigChips({
 	groups,
 	facets,
+	replaySelection,
 	onRemove,
 }: {
 	groups: readonly RunConfigGroupResult[];
 	facets: ConfigFacets;
+	/** Carried into the drill-down so it explains the number shown here. */
+	replaySelection: ReplaySelection;
 	onRemove: (hash: string) => void;
 }) {
 	if (groups.length === 0) return null;
@@ -49,12 +53,20 @@ export function ConfigChips({
 						<span className={cn("h-full w-0.5 shrink-0 self-stretch", accentAt(idx))} aria-hidden />
 						<div className="min-w-0 flex-1 space-y-1.5">
 							<div className="flex items-baseline justify-between gap-2">
-								<span
-									className="truncate text-xs font-medium"
+								{/* The card is the only per-config surface that is always on
+								    screen, so it owns the drill-down. The aggregate table's column
+								    header links there too, but that table now sits behind a
+								    collapsed disclosure — a route to the page where a run can
+								    actually be listened to can't depend on opening it. */}
+								<Link
+									to="/configs/$configHash"
+									params={{ configHash: group.hash }}
+									search={{ replays: replaySelection }}
+									className="truncate rounded-sm text-xs font-medium underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 									title={runConfigLabel(group.name, group.config, group.hash)}
 								>
 									{label}
-								</span>
+								</Link>
 								<button
 									type="button"
 									aria-label={`Remove ${label} from comparison`}

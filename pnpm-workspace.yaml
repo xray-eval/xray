@@ -7,6 +7,16 @@ minimumReleaseAge: 10080
 # Fail loudly when a target version is too new — never silently downgrade.
 minimumReleaseAgeStrict: true
 
+# Temporary, delete on 2026-08-06. brace-expansion 5.0.9 (GHSA-rgw5-rvv9-x895,
+# high) is 5 days old; on that date `minimatch`'s `^5.0.5` reaches it unaided.
+# NOT the `auditConfig.ignoreGhsas` disposition used below: that only silences
+# `pnpm audit`. `dependency-review-action` reads GitHub's advisory DB directly
+# and flags every NEWLY ADDED vulnerable package regardless — and glob 13 adds
+# brace-expansion to this tree for the first time, so the only thing that turns
+# the Supply-chain check green is installing the patched version.
+minimumReleaseAgeExclude:
+  - brace-expansion
+
 # Default-deny lifecycle scripts. Audit before adding entries here.
 allowBuilds:
   # lefthook (Evil Martians) — postinstall resolves the prebuilt Go binary out of
@@ -174,6 +184,10 @@ overrides:
   # deliberate re-verified bump, never by drifting on `pnpm update`.
   # Added 2026-07-31.
   "react-cosmos>glob": "13.0.6"
+  # GHSA-rgw5-rvv9-x895 (high) — landed after the glob 13 pin above, against the
+  # 5.0.8 its `minimatch ^10.2.2 > brace-expansion ^5.0.5` chain resolves.
+  # Delete on 2026-08-06 with the `minimumReleaseAgeExclude` entry above.
+  "minimatch>brace-expansion": "5.0.9"
 
 # VEX-style "not affected" dispositions. Both entries below exist for the SAME
 # structural reason, and it is not "we'd rather not upgrade": every patched

@@ -1,22 +1,42 @@
+import type { ReplaySelection } from "@/client/api/api.types.ts";
+
 import { registerHappyDom } from "../test-happy-dom.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 
 registerHappyDom();
-const { cleanup, fireEvent, render, screen } = await import("@testing-library/react");
+const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
+const { withRouter } = await import("../test-utils.tsx");
 const { ConfigChips } = await import("./config-chips.tsx");
 const { makeRunConfigGroupResult, makeRunConfigMetrics } = await import("./test-utils.ts");
 const { splitConfigFacets } = await import("./config-facets.ts");
 
 afterEach(() => cleanup());
 
-/** Facets from the groups under comparison, the way `CompareBody` derives them. */
-function renderChips(
+/**
+ * Facets from the groups under comparison, the way `CompareBody` derives them.
+ *
+ * Each card links to its config's page, so this needs a router — and TanStack
+ * Router mounts asynchronously. Awaiting the slot rather than a card is what
+ * lets the empty case prove the router mounted *and* rendered no cards.
+ */
+async function renderChips(
 	groups: readonly ReturnType<typeof makeRunConfigGroupResult>[],
 	onRemove: (hash: string) => void = () => undefined,
+	replaySelection: ReplaySelection = "latest",
 ) {
-	return render(
-		<ConfigChips groups={groups} facets={splitConfigFacets(groups)} onRemove={onRemove} />,
+	render(
+		withRouter(
+			<div data-testid="chips-slot">
+				<ConfigChips
+					groups={groups}
+					facets={splitConfigFacets(groups)}
+					replaySelection={replaySelection}
+					onRemove={onRemove}
+				/>
+			</div>,
+		),
 	);
+	return await waitFor(() => screen.getByTestId("chips-slot"));
 }
 
 const A = "a".repeat(64);
@@ -43,8 +63,8 @@ const GROUPS = [
 ];
 
 describe("ConfigChips", () => {
-	it("carries each config's headline numbers, so the row is readable without the grids", () => {
-		renderChips(GROUPS);
+	it("carries each config's headline numbers, so the row is readable without the grids", async () => {
+		await renderChips(GROUPS);
 
 		const baseline = screen.getByRole("listitem", { name: /baseline/ });
 		// Judge and assertion rates side by side: a config can pass every
@@ -55,13 +75,13 @@ describe("ConfigChips", () => {
 		expect(baseline.textContent).toContain("800ms");
 	});
 
-	it("reports how many replays a number rests on", () => {
-		renderChips(GROUPS);
+	it("reports how many replays a number rests on", async () => {
+		await renderChips(GROUPS);
 		expect(screen.getByRole("listitem", { name: /baseline/ }).textContent).toContain("4");
 	});
 
-	it("flags a config with failed replays, which the pass rate alone hides", () => {
-		renderChips(GROUPS);
+	it("flags a config with failed replays, which the pass rate alone hides", async () => {
+		await renderChips(GROUPS);
 
 		expect(screen.getByRole("listitem", { name: /baseline/ }).textContent).toContain("1 failed");
 		expect(screen.getByRole("listitem", { name: /fast-follow/ }).textContent).not.toContain(
@@ -69,15 +89,15 @@ describe("ConfigChips", () => {
 		);
 	});
 
-	it("reports the config the user dropped", () => {
+	it("reports the config the user dropped", async () => {
 		const removed: string[] = [];
-		renderChips(GROUPS, (hash) => removed.push(hash));
+		await renderChips(GROUPS, (hash) => removed.push(hash));
 		fireEvent.click(screen.getByRole("button", { name: "Remove baseline from comparison" }));
 
 		expect(removed).toEqual([A]);
 	});
 
-	it("tells two unnamed configs apart by what actually differs between them", () => {
+	it("tells two unnamed configs apart by what actually differs between them", async () => {
 		// The regression this guards: `runConfigLabel` joins every pair and cuts at
 		// 64 chars, so configs sharing a long prefix all rendered the same string —
 		// and the remove buttons all got the same accessible name, leaving no way
@@ -87,7 +107,7 @@ describe("ConfigChips", () => {
 			makeRunConfigGroupResult({ hash: A, config: { ai_model: shared, temperature: "0.2" } }),
 			makeRunConfigGroupResult({ hash: B, config: { ai_model: shared, temperature: "0.9" } }),
 		];
-		renderChips(groups);
+		await renderChips(groups);
 
 		expect(
 			screen.getByRole("button", { name: "Remove temperature=0.2 from comparison" }),
@@ -97,25 +117,44 @@ describe("ConfigChips", () => {
 		).toBeDefined();
 	});
 
-	it("keeps the dev's name when there is one, since that outranks any derived label", () => {
-		renderChips(GROUPS);
+	it("keeps the dev's name when there is one, since that outranks any derived label", async () => {
+		await renderChips(GROUPS);
 		expect(screen.getByRole("button", { name: "Remove baseline from comparison" })).toBeDefined();
 	});
 
-	it("falls back to the hash when two configs are distinguished by nothing", () => {
+	it("falls back to the hash when two configs are distinguished by nothing", async () => {
 		// Same config content under two group hashes shouldn't happen (the hash is
 		// derived from the content), but a label of "" would be unclickable.
 		const groups = [
 			makeRunConfigGroupResult({ hash: A, config: { model: "gpt-5" } }),
 			makeRunConfigGroupResult({ hash: B, config: { model: "gpt-5" } }),
 		];
-		renderChips(groups);
+		await renderChips(groups);
 
 		expect(screen.getAllByRole("button", { name: /^Remove \w+ from comparison$/ })).toHaveLength(2);
 	});
 
-	it("renders nothing when nothing is selected", () => {
-		const { container } = renderChips([]);
-		expect(container.textContent).toBe("");
+	it("opens the config's own page from the card", async () => {
+		// The card is the always-visible per-config surface, so it has to carry the
+		// drill-down. The aggregate table's column header used to be the only route
+		// there, and it now sits behind a collapsed disclosure.
+		await renderChips(GROUPS);
+		expect(screen.getByRole("link", { name: "baseline" }).getAttribute("href")).toBe(
+			`/configs/${A}?replays=latest`,
+		);
+	});
+
+	it("carries the replay selection into the drill-down", async () => {
+		// Landing on a page that recomputed the number under a different selection
+		// silently changes the number being explained.
+		await renderChips(GROUPS, () => undefined, "all");
+		expect(screen.getByRole("link", { name: "baseline" }).getAttribute("href")).toBe(
+			`/configs/${A}?replays=all`,
+		);
+	});
+
+	it("renders nothing when nothing is selected", async () => {
+		const slot = await renderChips([]);
+		expect(slot.textContent).toBe("");
 	});
 });

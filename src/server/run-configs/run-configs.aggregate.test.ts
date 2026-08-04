@@ -772,6 +772,22 @@ describe("indexDerivedByReplay", () => {
 		expect(collected.evaluations).toEqual([evaluation("r1")]);
 	});
 
+	test("counts a replay once even if the caller lists it twice", () => {
+		// `buildMetrics` keys off a Set of ids, so it is idempotent in the replay
+		// list. Collecting rows per list *entry* instead of per distinct replay
+		// would make the indexed route double-count where the unindexed one
+		// doesn't — two answers to the same question.
+		const index = indexDerivedByReplay({
+			turnMetrics: [turn("r1")],
+			modelUsage: [usage("r1")],
+			evaluations: [evaluation("r1")],
+		});
+
+		expect(derivedForReplays(index, [replay({ id: "r1" }), replay({ id: "r1" })])).toEqual(
+			derivedForReplays(index, [replay({ id: "r1" })]),
+		);
+	});
+
 	test("a replay with nothing derived contributes no rows rather than throwing", () => {
 		const index = indexDerivedByReplay({
 			turnMetrics: [turn("r1")],

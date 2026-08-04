@@ -22,7 +22,7 @@ describe("rankedMetricRows", () => {
 
 describe("heatRange", () => {
 	it("spans the values present, ignoring gaps", () => {
-		expect(heatRange([1, null, 5, null, 3])).toEqual({ min: 1, max: 5 });
+		expect(heatRange([1, null, 5, null, 3])).toEqual({ min: 1, max: 5, n: 3 });
 	});
 
 	it("is null when nothing was measured, so callers render no scale at all", () => {
@@ -31,12 +31,16 @@ describe("heatRange", () => {
 	});
 
 	it("handles a single measured value", () => {
-		expect(heatRange([42, null])).toEqual({ min: 42, max: 42 });
+		expect(heatRange([42, null])).toEqual({ min: 42, max: 42, n: 1 });
+	});
+
+	it("counts the measured cells, so callers can tell a tie from a lone sample", () => {
+		expect(heatRange([7, 7, null])?.n).toBe(2);
 	});
 });
 
 describe("heatIntensity", () => {
-	const range = { min: 0, max: 100 };
+	const range = { min: 0, max: 100, n: 4 };
 
 	it("puts the best value at full intensity and the worst at none", () => {
 		expect(heatIntensity(100, range, "higher")).toBe(1);
@@ -61,8 +65,17 @@ describe("heatIntensity", () => {
 
 	it("puts a flat range at full intensity rather than dividing by zero", () => {
 		// Every config scored the same — nothing to rank, so nothing is dimmed.
-		expect(heatIntensity(7, { min: 7, max: 7 }, "higher")).toBe(1);
-		expect(heatIntensity(7, { min: 7, max: 7 }, "lower")).toBe(1);
+		expect(heatIntensity(7, { min: 7, max: 7, n: 3 }, "higher")).toBe(1);
+		expect(heatIntensity(7, { min: 7, max: 7, n: 3 }, "lower")).toBe(1);
+	});
+
+	it("shades nothing when only one cell was measured", () => {
+		// A lone sample is a flat range for the same arithmetic reason a tie is,
+		// and shading it full would read as "won" — rewarding the config whose
+		// agent happened to emit the metric. `bestCellIndex` already refuses to
+		// mark a winner on the same data; the two must agree.
+		expect(heatIntensity(500, { min: 500, max: 500, n: 1 }, "lower")).toBeNull();
+		expect(heatIntensity(500, { min: 500, max: 500, n: 1 }, "higher")).toBeNull();
 	});
 
 	it("clamps values outside the range instead of overshooting", () => {

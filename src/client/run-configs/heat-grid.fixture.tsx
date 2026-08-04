@@ -97,7 +97,12 @@ const facets = splitConfigFacets(data.groups);
 function AllGrids() {
 	return (
 		<div className="mx-auto max-w-6xl space-y-8 p-8">
-			<ConfigChips groups={data.groups} facets={facets} onRemove={() => undefined} />
+			<ConfigChips
+				groups={data.groups}
+				facets={facets}
+				replaySelection="latest"
+				onRemove={() => undefined}
+			/>
 			{rankedMetricRows().map((row) => (
 				<HeatGrid key={row.key} comparison={data} row={row} facets={facets} />
 			))}
@@ -131,7 +136,12 @@ export default {
 	"chips + every grid": <AllGrids />,
 	"unnamed configs, shared prefix": (
 		<div className="mx-auto max-w-6xl space-y-8 p-8">
-			<ConfigChips groups={unnamed.groups} facets={unnamedFacets} onRemove={() => undefined} />
+			<ConfigChips
+				groups={unnamed.groups}
+				facets={unnamedFacets}
+				replaySelection="latest"
+				onRemove={() => undefined}
+			/>
 			{passRow === undefined ? null : (
 				<HeatGrid comparison={unnamed} row={passRow} facets={unnamedFacets} />
 			)}
@@ -144,7 +154,12 @@ export default {
 	),
 	"chips only": (
 		<div className="mx-auto max-w-6xl p-8">
-			<ConfigChips groups={data.groups} facets={facets} onRemove={() => undefined} />
+			<ConfigChips
+				groups={data.groups}
+				facets={facets}
+				replaySelection="latest"
+				onRemove={() => undefined}
+			/>
 		</div>
 	),
 };
