@@ -61,6 +61,35 @@ const TOOL_ARGS_BY_TURN: Readonly<Record<ConversationKey, Readonly<Record<number
 const SPAN_ID_HEX_CHARS = 16;
 const TRACE_ID_HEX_CHARS = 32;
 
+/**
+ * How many `model_usage` / `tool_calls` rows this script SHOULD leave behind
+ * once the receiver has run: one model call per agent turn, one tool call per
+ * agent turn that commits to a destination.
+ *
+ * Derived from the script, deliberately NOT from the spans `buildSeededTrace`
+ * emits. An expectation read off the emitted attributes moves in lockstep with
+ * the thing it's policing: rename `gen_ai.operation.name` on the chat span and
+ * both expected and actual drop to zero, so the fixture ships with an empty
+ * MODEL USAGE section and every gate still green. The chat span has no
+ * span-name fallback in the GenAI matcher (it's named `agent_turn`, not
+ * `chat …`), so that one attribute is the only thing standing between the
+ * fixture and silence.
+ */
+export function expectedExtractions(
+	conversation: ScriptedConversation,
+	script: readonly ScriptedTurn[],
+): { readonly modelUsage: number; readonly toolCalls: number } {
+	const agentTurns = script
+		.map((turn, turnIdx) => ({ turn, turnIdx }))
+		.filter(({ turn }) => turn.role === "agent");
+	return {
+		modelUsage: agentTurns.length,
+		toolCalls: agentTurns.filter(
+			({ turnIdx }) => TOOL_ARGS_BY_TURN[conversation.key][turnIdx] !== undefined,
+		).length,
+	};
+}
+
 /** `openai` / `google-gemini` from the variant's model id — no cast, no guessing. */
 function providerFor(model: string): "openai" | "google-gemini" {
 	if (model.startsWith("gpt")) return "openai";

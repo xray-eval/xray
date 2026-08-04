@@ -2,8 +2,7 @@
  * What the committed fixture contains: the two conversations a developer would
  * have authored, the five run configs they were run under, and the seven
  * replays that pairing produces — plus the lookups the seeder resolves them
- * through. Pure data; nothing here touches the store, the audio or the spans,
- * so every number a reader might want to check sits in one file.
+ * through. Pure data; nothing here touches the store, the audio or the spans.
  */
 
 import { TOOL_BY_CONVERSATION } from "./seed-snapshot.trace.ts";
@@ -153,6 +152,13 @@ const RUN_VARIANTS: readonly RunVariant[] = [
 	},
 ];
 
+export interface SeedReplay {
+	readonly replayId: string;
+	readonly variantKey: string;
+	readonly conversationKey: ConversationKey;
+	readonly startedAt: string;
+}
+
 /**
  * One row per replay, with a hand-assigned id so the fixture stays stable across
  * regenerations. Only two configs ran the barge-in conversation: that partial
@@ -161,15 +167,9 @@ const RUN_VARIANTS: readonly RunVariant[] = [
  *
  * `...0001` is the barge-in run this fixture has always held and its WAV is
  * byte-identical — the inspector's canonical example is unchanged. `...0002` is
- * new: a second run of that same conversation under `fast-follow`, so the
- * barge-in conversation has more than one config to compare.
+ * a second run of that same conversation under `fast-follow`, so the barge-in
+ * conversation has more than one config to compare.
  */
-export interface SeedReplay {
-	readonly replayId: string;
-	readonly variantKey: string;
-	readonly conversationKey: ConversationKey;
-	readonly startedAt: string;
-}
 
 export const SEED_REPLAYS: readonly SeedReplay[] = [
 	{

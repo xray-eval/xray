@@ -9,19 +9,24 @@
  * and see an authentic interruption without a live agent or any provider API
  * keys.
  *
- * Nothing here is random or clock-dependent, so re-running on the pinned
- * toolchain produces a byte-identical fixture. Two things have to be forced for
- * that to hold: the wall-clock columns the job processors stamp
- * (`pinGeneratedTimestamps`) and SQLite's own file change counter
- * (`promoteDeterministicDb`). Verify with two runs and `shasum
- * snapshot/xray.db`; a binary diff in a PR that didn't touch this script is a
- * real signal, not noise.
+ * Nothing here is random or clock-dependent, so the fixture's CONTENT is
+ * reproducible anywhere: `sqlite3 snapshot/xray.db .dump | shasum` is stable
+ * across machines. Two things had to be forced for even that much — the
+ * wall-clock columns the job processors stamp (`pinGeneratedTimestamps`) and
+ * SQLite's own file change counter (`promoteDeterministicDb`).
  *
- * "Pinned" is load-bearing: the header records the writing library's
- * `SQLITE_VERSION_NUMBER` and its reserved-bytes-per-page, so a different
- * SQLite build writes different bytes for identical rows (Apple's `sqlite3` CLI
- * and `bun:sqlite` already disagree). The version in `.tool-versions` is what
- * makes the hash comparable; a Bun bump legitimately changes it.
+ * The BYTES are only stable per platform, and this is measured, not assumed:
+ * the header records the writing library's `SQLITE_VERSION_NUMBER` and its
+ * reserved-bytes-per-page, and `bun:sqlite` links the OS SQLite on macOS
+ * (3.51.0) while bundling its own on Linux (3.53.0). The same pinned Bun on the
+ * two platforms produces ~9.5KB of differing bytes for a `.dump`-identical
+ * fixture — so regenerating inside the dev container and regenerating on a Mac
+ * host legitimately disagree.
+ *
+ * So: a `snapshot/xray.db` diff in a PR that didn't touch this script is worth
+ * looking at, but check `.dump` before calling it a real change — a whole-file
+ * hash difference on its own may only mean the author regenerated on a
+ * different OS.
  * Run: `bun run scripts/seed-snapshot.ts`.
  *
  * The one concession to "authentic": transcripts are scripted rather than
@@ -70,8 +75,7 @@ import {
 	requireVariant,
 	SEED_REPLAYS,
 } from "./seed-snapshot.fixture.ts";
-import type { SeededSpan } from "./seed-snapshot.trace.ts";
-import { buildSeededTrace, otlpRequestFor } from "./seed-snapshot.trace.ts";
+import { buildSeededTrace, expectedExtractions, otlpRequestFor } from "./seed-snapshot.trace.ts";
 import type { ScriptedConversation } from "./seed-snapshot.types.ts";
 import { assertExtractedRows, assertReplayIsGreen } from "./seed-snapshot.verify.ts";
 
@@ -81,11 +85,6 @@ const DB_PATH = join(SNAPSHOT_DIR, "xray.db");
 // the working file and renamed over it once the run is complete.
 const DB_TMP_PATH = join(SNAPSHOT_DIR, "xray.db.tmp");
 const AUDIO_ROOT = join(SNAPSHOT_DIR, "audio");
-
-/** Spans declaring a given `gen_ai.operation.name` — one extracted row each. */
-function countOperations(trace: readonly SeededSpan[], operation: string): number {
-	return trace.filter((span) => span.attributes["gen_ai.operation.name"] === operation).length;
-}
 
 /**
  * Maps a turn's audio slice back to its scripted line by peak amplitude — each
@@ -194,7 +193,8 @@ async function promoteDeterministicDb(): Promise<void> {
 		copy.close();
 	}
 	// Only the siblings are removed: `rename` replaces the main file atomically,
-	// so there's never a moment where the fixture is missing from disk.
+	// so this step never leaves the fixture missing from disk. (The run as a whole
+	// still does — `main` unlinks it up front to start from a clean slate.)
 	for (const path of [DB_PATH, DB_TMP_PATH]) {
 		for (const suffix of ["-shm", "-wal"]) {
 			await rm(`${path}${suffix}`, { force: true });
@@ -252,14 +252,15 @@ async function seedReplay(
 			`seed-snapshot: ${replayId} expected ${trace.length} spans persisted, got ${result.persistedSpans} (rejected ${result.rejectedSpans})`,
 		);
 	}
-	// Recognized isn't the same as extracted — the expected row counts come from
-	// the operation each span declares, which is exactly what the GenAI matcher
-	// keys on.
+	// Recognized isn't the same as extracted. The expected counts never come from
+	// the spans just built, so a drifted attribute can't move the expectation
+	// along with the extraction it broke. (`modelUsage` is the script's agent
+	// turns; `toolCalls` is the trace builder's per-turn argument table, so a
+	// deleted entry there does move both — `fixture.test.ts` pins those counts.)
 	assertExtractedRows(store.db, {
 		replayId,
 		spans: trace.length,
-		modelUsage: countOperations(trace, "chat"),
-		toolCalls: countOperations(trace, "execute_tool"),
+		...expectedExtractions(conversation, script),
 	});
 
 	// Drive the three chain stages in order. Each normally enqueues the next

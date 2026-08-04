@@ -1,7 +1,13 @@
-import { projectRequest } from "@/server/otlp/otlp.service.ts";
-import { SPAN_VOCABULARIES } from "@/server/otlp/vocabularies/registry.ts";
+import { ingestOtlpTraces, projectRequest } from "@/server/otlp/otlp.service.ts";
+import * as schema from "@/server/store/schema.ts";
+import { makeTempStore } from "@/server/store/test-utils.ts";
 
-import { buildSeededTrace, otlpRequestFor, TOOL_BY_CONVERSATION } from "./seed-snapshot.trace.ts";
+import {
+	buildSeededTrace,
+	expectedExtractions,
+	otlpRequestFor,
+	TOOL_BY_CONVERSATION,
+} from "./seed-snapshot.trace.ts";
 import type { RunVariant, ScriptedConversation, ScriptedTurn } from "./seed-snapshot.types.ts";
 import { describe, expect, it } from "bun:test";
 
@@ -81,21 +87,47 @@ describe("buildSeededTrace", () => {
 		}
 	});
 
-	// Vocabulary identity comes from the attributes, not the span name, so this
-	// runs the built spans through the registry the receiver itself uses — the
-	// fixture's promise is that a fresh clone shows all three.
-	it("is recognized as all three vocabularies by the real registry", () => {
-		const spans = buildSeededTrace(CONVERSATION, VARIANT, SCRIPT, 1);
-		const projected = projectRequest(otlpRequestFor("r", 1, "2026-07-01T12:00:00.000Z", spans));
-		const claimed = projected.map((p) => {
-			for (const matcher of SPAN_VOCABULARIES) {
-				const extraction = matcher(p.span, p.resource);
-				if (extraction !== null) return extraction.vocabulary;
-			}
-			return "unrecognized";
-		});
-		expect(new Set(claimed)).toEqual(new Set(["xray", "gen_ai", "langfuse"]));
-		expect(claimed).not.toContain("unrecognized");
+	// Vocabulary identity comes from the attributes, not the span name — and it's
+	// the receiver that decides, so this ingests for real and reads the column it
+	// wrote rather than re-implementing its dispatch.
+	it("is stored as all three vocabularies by the real receiver", () => {
+		const store = makeTempStore();
+		try {
+			store.db
+				.insert(schema.conversations)
+				.values({
+					hash: "d".repeat(64),
+					name: "fixture",
+					turnsJson: "[]",
+					createdAt: "2026-07-01T12:00:00.000Z",
+					lastRunAt: "2026-07-01T12:00:00.000Z",
+				})
+				.run();
+			store.db
+				.insert(schema.replays)
+				.values({
+					id: "replay-1",
+					conversationHash: "d".repeat(64),
+					lifecycleState: "completed",
+					startedAt: "2026-07-01T12:00:00.000Z",
+				})
+				.run();
+
+			const built = buildSeededTrace(CONVERSATION, VARIANT, SCRIPT, 1);
+			const { result } = ingestOtlpTraces(
+				store,
+				otlpRequestFor("replay-1", 1, "2026-07-01T12:00:00.000Z", built),
+			);
+			expect(result.rejectedSpans).toBe(0);
+			expect(result.persistedSpans).toBe(built.length);
+
+			const stored = store.db.select().from(schema.spans).all();
+			expect(new Set(stored.map((s) => s.vocabulary))).toEqual(
+				new Set(["xray", "gen_ai", "langfuse"]),
+			);
+		} finally {
+			store.close();
+		}
 	});
 
 	// Pins the offset the turn-attribution argument in `seed-snapshot.trace.ts`
@@ -116,6 +148,40 @@ describe("buildSeededTrace", () => {
 		expect(() => buildSeededTrace(CONVERSATION, unconfigured, SCRIPT, 1)).toThrow(
 			/no string model/,
 		);
+	});
+});
+
+describe("expectedExtractions", () => {
+	it("counts one model call per agent turn and one tool call per committing turn", () => {
+		expect(expectedExtractions(CONVERSATION, SCRIPT)).toEqual({ modelUsage: 2, toolCalls: 2 });
+	});
+
+	// The expectation is deliberately blind to the spans (that's what stops it
+	// moving in lockstep with a drifted attribute), so nothing keeps the two in
+	// step automatically — this is the test that does. It counts the operations
+	// the built spans declare, which is what the receiver keys on, and holds the
+	// script-derived expectation to it.
+	it("agrees with what the built spans actually declare", () => {
+		const built = buildSeededTrace(CONVERSATION, VARIANT, SCRIPT, 1);
+		const declared = (operation: string): number =>
+			built.filter((span) => span.attributes["gen_ai.operation.name"] === operation).length;
+		expect(expectedExtractions(CONVERSATION, SCRIPT)).toEqual({
+			modelUsage: declared("chat"),
+			toolCalls: declared("execute_tool"),
+		});
+	});
+
+	it("expects nothing from an all-user script", () => {
+		const users = SCRIPT.filter((t) => t.role === "user");
+		expect(expectedExtractions(CONVERSATION, users)).toEqual({ modelUsage: 0, toolCalls: 0 });
+	});
+
+	it("counts a model call for an agent turn that commits to nothing", () => {
+		// Turn index 2 has no TOOL_ARGS_BY_TURN entry for `barge-in`.
+		const script = [SCRIPT[0], SCRIPT[1], { ...SCRIPT[2], role: "agent" as const }].filter(
+			(t): t is (typeof SCRIPT)[number] => t !== undefined,
+		);
+		expect(expectedExtractions(CONVERSATION, script)).toEqual({ modelUsage: 2, toolCalls: 1 });
 	});
 });
 
