@@ -47,6 +47,16 @@
 **/commitlint.config.mjs
 **/biome.json
 
+# Component workbench — dev-only.
+cosmos
+cosmos.config.json
+# Fixtures live under src/, which the runtime stage COPYs wholesale. Nothing
+# imports them so they never enter the bundle, but they may legitimately import
+# devDependencies (react-cosmos/client for prop controls) that a production
+# install doesn't have — keep them out of the image rather than relying on them
+# staying unreachable.
+**/*.fixture.tsx
+
 # Compose files are operator-side, not image-side.
 **/compose.yaml
 **/compose.dev.yaml

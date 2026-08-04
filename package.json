@@ -16,6 +16,8 @@
 		"format": "biome format --write",
 		"lint": "biome lint",
 		"typecheck": "tsc --noEmit",
+		"typecheck:cosmos": "tsc -p cosmos --noEmit",
+		"cosmos": "bun cosmos/dev.ts",
 		"dev": "UID=$(id -u) GID=$(id -g) docker compose -f compose.dev.yaml up --build",
 		"dev:down": "docker compose -f compose.dev.yaml down -v",
 		"build": "bun run scripts/build.ts",
@@ -47,6 +49,9 @@
 		"lefthook": "2.1.9",
 		"mermaid": "11.16.0",
 		"msw": "2.14.6",
+		"react-cosmos": "7.3.0",
+		"react-cosmos-core": "7.3.0",
+		"react-cosmos-dom": "7.3.0",
 		"typescript": "6.0.3",
 		"vitepress": "1.6.4",
 		"vitepress-plugin-mermaid": "2.0.17"

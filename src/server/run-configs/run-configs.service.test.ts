@@ -303,6 +303,73 @@ describe("compareRunConfigs", () => {
 			}),
 		).toThrow(RunConfigNotFoundError);
 	});
+
+	test("names every conversation in scope once, so a grid has stable rows", () => {
+		const { baseline, fast } = seedTwoConfigs();
+		const result = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "union",
+		});
+		// Sorted by name so row order doesn't depend on which config ran what.
+		expect(result.conversations.map((c) => c.name)).toEqual(["alpha", "bravo"]);
+		expect(result.conversations.map((c) => c.hash)).toEqual([CONV_A, CONV_B]);
+	});
+
+	test("breaks each group down per conversation, for a cell per row and column", () => {
+		const { baseline, fast } = seedTwoConfigs();
+		const result = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "union",
+		});
+		const baselineCells = result.groups[0]?.conversations ?? [];
+		const alpha = baselineCells.find((c) => c.conversation_hash === CONV_A);
+		const bravo = baselineCells.find((c) => c.conversation_hash === CONV_B);
+		// baseline's alpha replay had agent turns at 400ms and 600ms.
+		expect(alpha?.metrics.agent_response_ms.avg).toBe(500);
+		expect(alpha?.metrics.pass).toEqual({ passed: 1, total: 1 });
+		// bravo's single replay failed its evaluation.
+		expect(bravo?.metrics.pass).toEqual({ passed: 0, total: 1 });
+	});
+
+	test("omits a cell for a conversation the config never completed", () => {
+		// The grid has to distinguish "ran it and scored zero" from "never ran
+		// it" — a missing cell is not a zero.
+		const { baseline, fast } = seedTwoConfigs();
+		const result = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "union",
+		});
+		const fastCells = result.groups[1]?.conversations ?? [];
+		expect(fastCells.map((c) => c.conversation_hash).includes(CONV_C)).toBe(false);
+	});
+
+	test("narrows the conversation list to the shared set under the intersection scope", () => {
+		const { baseline, fast } = seedTwoConfigs();
+		const result = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "intersection",
+		});
+		// charlie is baseline-only and failed, so it is not shared workload.
+		expect(result.conversations.map((c) => c.name)).toEqual(["alpha", "bravo"]);
+		for (const group of result.groups) {
+			expect(group.conversations).toHaveLength(2);
+		}
+	});
+
+	test("carries a replay id per cell so a number can be listened to", () => {
+		const { baseline, fast } = seedTwoConfigs();
+		const result = compareRunConfigs(store, {
+			config_hashes: [baseline, fast],
+			replay_selection: "latest",
+			conversation_scope: "union",
+		});
+		const alpha = result.groups[0]?.conversations.find((c) => c.conversation_hash === CONV_A);
+		expect(alpha?.replay_id).toBe("base-a");
+	});
 });
 
 describe("getRunConfigDetail", () => {

@@ -10,6 +10,7 @@ import { Badge } from "@/client/components/ui/badge.tsx";
 import { shortHash } from "@/client/format.ts";
 import { cn } from "@/client/lib/utils.ts";
 
+import { accentAt } from "./column-accents.ts";
 import { MetricCell } from "./metric-cell.tsx";
 import { bestCellIndex, METRIC_ROWS } from "./metric-rows.ts";
 import { runConfigLabel } from "./run-config-label.ts";
@@ -76,17 +77,6 @@ export function MetricsMatrix({ comparison }: { comparison: CompareRunConfigsRes
 	);
 }
 
-// Chart tokens are used only as a per-column identity stripe, never on the
-// numbers themselves — the data stays achromatic so `best` is the only visual
-// ranking signal in the table.
-const COLUMN_ACCENTS = [
-	"bg-chart-1",
-	"bg-chart-2",
-	"bg-chart-3",
-	"bg-chart-4",
-	"bg-chart-5",
-] as const;
-
 function ConfigColumnHeader({
 	group,
 	unionConversations,
@@ -112,10 +102,7 @@ function ConfigColumnHeader({
 			: `ran ${group.coverage.conversations}/${unionConversations}`;
 	return (
 		<th scope="col" className="min-w-56 pb-3 text-left align-bottom">
-			<div
-				className={cn("mb-2 h-0.5 w-8", COLUMN_ACCENTS[accentIndex % COLUMN_ACCENTS.length])}
-				aria-hidden
-			/>
+			<div className={cn("mb-2 h-0.5 w-8", accentAt(accentIndex))} aria-hidden />
 			{/* Carry the replay selection through: clicking a column to hear the run
 			    behind a number, and landing on a page that recomputed it under a
 			    different selection, silently changes the number being explained. */}

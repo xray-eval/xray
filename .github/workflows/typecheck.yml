@@ -1,4 +1,5 @@
-# TypeScript typecheck gate — `tsc --noEmit` over the whole project.
+# TypeScript typecheck gate — `tsc --noEmit` over the root project, plus the
+# `cosmos/` workbench harness, which is a separate tsconfig project.
 #
 # lefthook.yml runs this in pre-commit, but a `git commit --no-verify` or a
 # fork PR whose author never installed the hook can still push type drift.
@@ -70,3 +71,11 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      # Separate project: `cosmos/` sits outside the root tsconfig because its
+      # fixture map is generated and gitignored. Without this step the workbench
+      # harness is the one directory of TypeScript in the repo that nothing
+      # typechecks — `pnpm typecheck` doesn't include it, and the pre-commit hook
+      # only runs the root project.
+      - name: Typecheck the component workbench
+        run: pnpm typecheck:cosmos

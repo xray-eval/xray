@@ -1,0 +1,6 @@
+{
+	"port": 5050,
+	"rendererUrl": "http://localhost:5051",
+	"exposeImports": "cosmos/cosmos.imports.ts",
+	"watchDirs": ["src/client"]
+}

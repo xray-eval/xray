@@ -7,7 +7,9 @@ registerHappyDom();
 const { cleanup, render, screen, waitFor } = await import("@testing-library/react");
 const { withRouter } = await import("../test-utils.tsx");
 const { MetricsMatrix } = await import("./metrics-matrix.tsx");
-const { makeRunConfigMetrics } = await import("./test-utils.ts");
+const { makeCompareResponse, makeRunConfigGroupResult, makeRunConfigMetrics } = await import(
+	"./test-utils.ts"
+);
 
 afterEach(() => cleanup());
 
@@ -18,29 +20,27 @@ function comparison(
 	over: Partial<CompareRunConfigsResponse> = {},
 	scope: ConversationScope = "union",
 ): CompareRunConfigsResponse {
-	return {
-		replay_selection: "latest",
+	return makeCompareResponse({
 		conversation_scope: scope,
 		union_conversations: 3,
 		intersection_conversations: 2,
 		groups: [
-			{
+			makeRunConfigGroupResult({
 				hash: BASELINE,
 				name: "baseline",
-				config: { model: "gpt-4o" },
 				coverage: { conversations: 3, replays: 3, failed_replays: 1 },
 				metrics: makeRunConfigMetrics({ ttft_ms: { avg: 400, p50: 380, p95: 900, n: 10 } }),
-			},
-			{
+			}),
+			makeRunConfigGroupResult({
 				hash: FAST,
 				name: "fast-follow",
 				config: { model: "gemini-2.5-flash" },
 				coverage: { conversations: 2, replays: 2, failed_replays: 0 },
 				metrics: makeRunConfigMetrics({ ttft_ms: { avg: 180, p50: 170, p95: 300, n: 10 } }),
-			},
+			}),
 		],
 		...over,
-	};
+	});
 }
 
 /**

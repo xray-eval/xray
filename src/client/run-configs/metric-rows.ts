@@ -122,8 +122,22 @@ export const METRIC_ROWS: readonly MetricRow[] = [
 		},
 	},
 	{
+		key: "assertions",
+		label: "Assertion pass rate",
+		unit: "deterministic checks — tool calls, content, latency bounds",
+		better: "higher",
+		read: (m) => ratioCell(m.assertions.passed, m.assertions.total, "assertions"),
+	},
+	{
+		key: "judges",
+		label: "Judge pass rate",
+		unit: "model-graded checks over the conversation",
+		better: "higher",
+		read: (m) => ratioCell(m.judges.passed, m.judges.total, "judges"),
+	},
+	{
 		key: "pass",
-		label: "Pass rate",
+		label: "Replay pass rate",
 		unit: "replays whose assertions and judges all passed",
 		better: "higher",
 		read: (m) => ratioCell(m.pass.passed, m.pass.total, "replays"),

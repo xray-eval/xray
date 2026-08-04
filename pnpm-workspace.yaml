@@ -7,6 +7,16 @@ minimumReleaseAge: 10080
 # Fail loudly when a target version is too new — never silently downgrade.
 minimumReleaseAgeStrict: true
 
+# Temporary, delete on 2026-08-06. brace-expansion 5.0.9 (GHSA-rgw5-rvv9-x895,
+# high) is 5 days old; on that date `minimatch`'s `^5.0.5` reaches it unaided.
+# NOT the `auditConfig.ignoreGhsas` disposition used below: that only silences
+# `pnpm audit`. `dependency-review-action` reads GitHub's advisory DB directly
+# and flags every NEWLY ADDED vulnerable package regardless — and glob 13 adds
+# brace-expansion to this tree for the first time, so the only thing that turns
+# the Supply-chain check green is installing the patched version.
+minimumReleaseAgeExclude:
+  - brace-expansion
+
 # Default-deny lifecycle scripts. Audit before adding entries here.
 allowBuilds:
   # lefthook (Evil Martians) — postinstall resolves the prebuilt Go binary out of
@@ -111,6 +121,73 @@ overrides:
   # Remove once vitepress ships a stable release on vite >=6.4.3 (its 2.x line;
   # only a 2.0.0-alpha exists today). Added 2026-07-29.
   vite: "7.3.6"
+  # The four entries below all exist for one reason: `react-cosmos` 7.3.0 (the
+  # component workbench, devDependency only — never in the image, see
+  # `.dockerignore`) declares its server-side deps as **exact** versions
+  # (`express: 4.22.1`, `glob: 10.5.0`, `http-proxy-middleware: 3.0.5`,
+  # `ws: 8.19.0`). An exact pin means pnpm cannot reach a patched release on its
+  # own no matter how long we wait, so `pnpm audit --audit-level=moderate`
+  # reports 6 advisories (3 high, 3 moderate) that no upgrade of react-cosmos
+  # itself resolves — 7.3.0 is the newest release. Overriding the four leaves is
+  # the only route that keeps the audit gate honest instead of suppressed.
+  # Remove each one the moment react-cosmos bumps the corresponding pin.
+  #
+  # GHSA-gcq2-9pq2-cxqm (high, multipart/form-data field injection via unescaped
+  # CRLF in `fixRequestBody`, patched 3.0.7) and GHSA-64mm-vxmg-q3vj (moderate,
+  # `router` host+path substring matching allows a Host-header-driven backend
+  # routing bypass, patched 3.0.6). 3.0.7 is therefore the minimum that clears
+  # both, and is the newest 3.x. Caret, not exact: this stays inside
+  # react-cosmos's own major, so patches should keep flowing. Added 2026-07-31.
+  "react-cosmos>http-proxy-middleware": "^3.0.7"
+  # GHSA-96hv-2xvq-fx4p (high, memory exhaustion from tiny fragments and data
+  # chunks, patched 8.21.0) and GHSA-58qx-3vcg-4xpx (moderate, uninitialized
+  # memory disclosure, patched 8.20.1) — so 8.21.0 is the minimum that clears
+  # both. Exact-pinned there rather than `^8.21.0` because happy-dom
+  # already resolves 8.21.0 — this dedupes onto that copy and adds zero new
+  # versions to the tree, where a caret would drift to 8.21.1 and install a
+  # second one for no audit gain (8.21.0 carries no open advisory). Same
+  # dedupe-first reasoning as the `@esbuild-kit/core-utils>esbuild` entry above.
+  # Added 2026-07-31.
+  "react-cosmos>ws": "8.21.0"
+  # GHSA-q8mj-m7cp-5q26 (moderate, `qs.stringify` DoS on null entries in
+  # comma-format arrays, patched 6.15.2). express 4.22.1 declares `qs 6.14.2`,
+  # but its own `body-parser` 1.20.6 already resolves the patched `qs 6.15.3` —
+  # so express ships both a vulnerable and a patched copy, and this override
+  # deletes the vulnerable one by deduping onto the copy already in the tree.
+  # Keyed on `express>qs`, not `qs`, so it can't silently pin an unrelated
+  # future qs consumer; pnpm's override selector takes only one parent level, so
+  # the react-cosmos prefix the three sibling entries carry can't be spelled
+  # here — it would be redundant anyway, since express enters this tree solely
+  # as a react-cosmos dependency and is not a direct dep of ours.
+  # Added 2026-07-31.
+  "express>qs": "6.15.3"
+  # GHSA-mh99-v99m-4gvg (high, unbounded brace expansion → OOM crash), reached
+  # via `glob 10.5.0 > minimatch 9.0.9 > brace-expansion 2.1.2`.
+  #
+  # Deliberately fixed at `glob` rather than at the `brace-expansion` leaf,
+  # which is the obvious-looking move and is wrong: the advisory's only patched
+  # range is `>=5.0.8` (a single `<= 5.0.7` vulnerable range, so the maintainer's
+  # backports to 1.1.17 / 2.1.3 / 3.0.5 do not clear it), and brace-expansion 5.x
+  # changed its CJS entry point from `module.exports = expandTop` to
+  # `exports.expand` — so forcing 5.0.8 under minimatch 9 resolves the audit and
+  # breaks `expand is not a function` at runtime, taking the workbench's fixture
+  # scan with it. glob 13.0.6 instead brings an internally-consistent chain that
+  # is already on the patched line: `minimatch ^10.2.2` → `brace-expansion
+  # ^5.0.5` → 5.0.8, with minimatch 10 written against the named-export API.
+  #
+  # Outside react-cosmos's declared `glob: 10.5.0`, so it is verified by
+  # behaviour rather than by semver: react-cosmos imports only `glob` and
+  # `globSync` (`findUserModulePaths.js`, `findCosmosPluginConfigs.js`), whose
+  # signatures are unchanged across 10 → 13, and `pnpm cosmos` was confirmed to
+  # still discover every `*.fixture.tsx`. Exact-pinned for the same reason as
+  # vite above: a glob major react-cosmos does not sanction must move on a
+  # deliberate re-verified bump, never by drifting on `pnpm update`.
+  # Added 2026-07-31.
+  "react-cosmos>glob": "13.0.6"
+  # GHSA-rgw5-rvv9-x895 (high) — landed after the glob 13 pin above, against the
+  # 5.0.8 its `minimatch ^10.2.2 > brace-expansion ^5.0.5` chain resolves.
+  # Delete on 2026-08-06 with the `minimumReleaseAgeExclude` entry above.
+  "minimatch>brace-expansion": "5.0.9"
 
 # VEX-style "not affected" dispositions. Both entries below exist for the SAME
 # structural reason, and it is not "we'd rather not upgrade": every patched

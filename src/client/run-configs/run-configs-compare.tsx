@@ -8,8 +8,12 @@ import { Skeleton } from "@/client/components/ui/skeleton.tsx";
 import type { ConfigsSearch } from "@/client/router/router.ts";
 
 import { MIN_COMPARE, resolveSelection, toggleSelection } from "./compare-selection.ts";
+import { ConfigChips } from "./config-chips.tsx";
+import { splitConfigFacets } from "./config-facets.ts";
 import { ConfigPicker } from "./config-picker.tsx";
 import { CoverageNotice } from "./coverage-notice.tsx";
+import { HeatGrid } from "./heat-grid.tsx";
+import { rankedMetricRows } from "./heat-scale.ts";
 import { MetricsMatrix } from "./metrics-matrix.tsx";
 import { ModeToggle } from "./mode-toggle.tsx";
 import { runConfigLabel } from "./run-config-label.ts";
@@ -88,13 +92,14 @@ function CompareBody({
 		enabled: selection.length >= MIN_COMPARE,
 	});
 
+	const facets = splitConfigFacets(items);
+	function toggle(hash: string) {
+		setSearch({ ids: toggleSelection(selection, hash).join(",") });
+	}
+
 	return (
 		<>
-			<ConfigPicker
-				items={items}
-				selected={selection}
-				onToggle={(hash) => setSearch({ ids: toggleSelection(selection, hash).join(",") })}
-			/>
+			<ConfigPicker items={items} facets={facets} selected={selection} onToggle={toggle} />
 
 			<div className="flex flex-wrap items-center gap-6 border-y border-border/60 py-3">
 				<ModeToggle
@@ -133,16 +138,47 @@ function CompareBody({
 							Failed to load the comparison.
 						</p>
 					))
-					.with({ status: "success" }, (q) => (
-						<>
-							<CoverageNotice
-								comparison={q.data}
-								scope={scope}
-								onChangeScope={(next) => setSearch({ scope: next })}
-							/>
-							<MetricsMatrix comparison={q.data} />
-						</>
-					))
+					.with({ status: "success" }, (q) => {
+						// Split over the compared groups, not `items`: a column's label
+						// only has to separate it from the other columns on screen, and
+						// what distinguishes four selected configs is usually far shorter
+						// than what distinguishes all forty. Derived once here so the
+						// chips and every grid label the same config the same way —
+						// same reason `ConfigList` takes its facets from this component.
+						const comparedFacets = splitConfigFacets(q.data.groups);
+						return (
+							<div className="space-y-8">
+								<ConfigChips
+									groups={q.data.groups}
+									facets={comparedFacets}
+									// The selection the server computed these numbers under, so the
+									// drill-down explains the number on the card rather than
+									// recomputing a different one.
+									replaySelection={q.data.replay_selection}
+									onRemove={toggle}
+								/>
+								<CoverageNotice
+									comparison={q.data}
+									scope={scope}
+									onChangeScope={(next) => setSearch({ scope: next })}
+								/>
+								{/* Per-conversation first: the aggregate table says which config
+								    won on average, the grids say where it won and where it fell
+								    over — and the second question is the one a debugger is for. */}
+								{rankedMetricRows().map((row) => (
+									<HeatGrid key={row.key} comparison={q.data} row={row} facets={comparedFacets} />
+								))}
+								<details className="group">
+									<summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground hover:text-foreground">
+										All metrics, aggregated
+									</summary>
+									<div className="mt-4">
+										<MetricsMatrix comparison={q.data} />
+									</div>
+								</details>
+							</div>
+						);
+					})
 					.exhaustive()
 			)}
 		</>

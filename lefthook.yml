@@ -13,6 +13,12 @@ pre-commit:
       glob: "*.{ts,tsx}"
       run: pnpm exec tsc --noEmit
 
+    # `cosmos/` is its own project (its fixture map is generated and gitignored,
+    # so the root tsconfig can't include it). Same invocation CI runs.
+    - name: typecheck the component workbench
+      glob: "cosmos/*.{ts,tsx}"
+      run: pnpm exec tsc -p cosmos --noEmit
+
     # Match CI's invocation in .github/workflows/test-python-sdk.yml exactly
     # (project venv binary, not `uvx`) so a passing pre-commit means a passing
     # CI ruff job. Bootstrap one-time via: cd sdk/python && uv venv && uv pip

@@ -8,6 +8,10 @@ Open-source replay/eval framework for LiveKit voice agents. One Docker image, on
 
 *One replay from the committed `snapshot/` fixture — regenerate it with `bun run seed:snapshot`, or run the [example voice agent](examples/livekit-voice-agent) against your own: declarative assertions evaluated server-side, the stereo audio timeline (user left, agent right) showing the barge-in and the 330 ms yield, the OTLP span tree attributed to turns across all three recognized vocabularies, and the span inspector open on one model call.*
 
+![xray run-config comparison — headline judge/assertion rates per config, then a conversation × config grid per metric](docs/public/run-configs-grids.png)
+
+*Comparing four run configs: headline rates per config, then judge and assertion pass rates broken down per conversation. A dashed cell is a conversation that config never ran — distinct from one it ran and scored zero on. Rendered from fixtures in the component workbench, since it needs more runs than the committed snapshot has.*
+
 > **Alpha.** The wire and SDK API can break between minor versions. **Upgrading from a previous release wipes your data: delete `/data/xray.db` before starting the new container.** Issues and feedback are the most useful contribution right now.
 
 ---

@@ -1,10 +1,12 @@
 import type { Store } from "@/server/store/store.ts";
 import type { RunConfigRow } from "@/server/store/types.ts";
 
-import type { IncludableReplay } from "./run-configs.aggregate.ts";
+import type { DerivedSamples, IncludableReplay } from "./run-configs.aggregate.ts";
 import {
 	buildMetrics,
 	conversationScopeFilter,
+	derivedForReplays,
+	indexDerivedByReplay,
 	selectIncludedReplays,
 } from "./run-configs.aggregate.ts";
 import type { GroupedReplayRow } from "./run-configs.queries.ts";
@@ -21,6 +23,8 @@ import type {
 	CompareRunConfigsResponse,
 	ListRunConfigsResponse,
 	ReplaySelection,
+	RunConfigCompareCell,
+	RunConfigComparedConversation,
 	RunConfigConversationRow,
 	RunConfigCoverage,
 	RunConfigDetailResponse,
@@ -161,10 +165,15 @@ export function compareRunConfigs(
 		included.filter((replay) => scope.included.has(replay.conversationHash)),
 	);
 	// Read after selection and scope, so the derived tables are touched only for
-	// replays that actually feed a number.
-	const derived = fetchDerivedRows(
-		store,
-		perGroupScoped.flatMap((included) => included.map((replay) => replay.id)),
+	// replays that actually feed a number. Indexed once here rather than per
+	// caller: the group aggregate and every one of its per-conversation cells
+	// read the same fetch, and re-walking all of it per cell is what makes a
+	// wide comparison quadratic.
+	const derived = indexDerivedByReplay(
+		fetchDerivedRows(
+			store,
+			perGroupScoped.flatMap((included) => included.map((replay) => replay.id)),
+		),
 	);
 
 	// Under `union` every conversation any config completed is in scope, so a
@@ -179,9 +188,8 @@ export function compareRunConfigs(
 			name: group.name,
 			config: parseStoredConfig(group),
 			coverage: coverageOf(narrowToGroup(replayRows, group.hash), included, failureConversations),
-			// `buildMetrics` keys off `included`, so rows belonging to another
-			// group's replays drop out here — no need to pre-partition by hash.
-			metrics: buildMetrics({ replays: included, ...derived }),
+			metrics: buildMetrics({ replays: included, ...derivedForReplays(derived, included) }),
+			conversations: cellsFor(included, derived),
 		};
 	});
 
@@ -190,8 +198,55 @@ export function compareRunConfigs(
 		conversation_scope: req.conversation_scope,
 		union_conversations: scope.unionCount,
 		intersection_conversations: scope.intersectionCount,
+		conversations: comparedConversations(store, perGroupScoped),
 		groups: groupResults,
 	};
+}
+
+/**
+ * One cell per conversation this group completed, over the replays already
+ * narrowed by selection and scope. Conversations the group never completed are
+ * simply absent — the grid renders that as a gap, which is a different claim
+ * from a measured zero.
+ */
+function cellsFor(
+	included: readonly IncludableReplay[],
+	derived: ReadonlyMap<string, DerivedSamples>,
+): RunConfigCompareCell[] {
+	const byConversation = new Map<string, IncludableReplay[]>();
+	for (const replay of included) {
+		const existing = byConversation.get(replay.conversationHash);
+		if (existing === undefined) byConversation.set(replay.conversationHash, [replay]);
+		else existing.push(replay);
+	}
+	return [...byConversation].map(([conversationHash, replays]) => ({
+		conversation_hash: conversationHash,
+		replay_id: newestOf(replays).id,
+		metrics: buildMetrics({ replays, ...derivedForReplays(derived, replays) }),
+	}));
+}
+
+function newestOf(replays: readonly IncludableReplay[]): IncludableReplay {
+	return replays.reduce((newest, replay) =>
+		replay.startedAt > newest.startedAt ? replay : newest,
+	);
+}
+
+/**
+ * The grid's row set: every conversation any group contributed a cell for,
+ * named once and sorted so row order doesn't depend on which config ran what.
+ */
+function comparedConversations(
+	store: Store,
+	perGroupScoped: readonly (readonly IncludableReplay[])[],
+): RunConfigComparedConversation[] {
+	const hashes = [
+		...new Set(perGroupScoped.flatMap((included) => included.map((r) => r.conversationHash))),
+	];
+	const names = conversationNames(store, hashes);
+	return hashes
+		.map((hash) => ({ hash, name: names.get(hash) ?? hash.slice(0, 12) }))
+		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -210,10 +265,13 @@ export function getRunConfigDetail(
 	const group = requireGroup(store, hash);
 	const groupReplays = fetchGroupReplays(store, [hash]);
 	const included = selectIncludedReplays(groupReplays, selection);
-	const derived = fetchDerivedRows(
+	const derivedRows = fetchDerivedRows(
 		store,
 		included.map((replay) => replay.id),
 	);
+	// Same reason as `compareRunConfigs`: one index feeds the group aggregate and
+	// every conversation row, instead of each row re-walking the whole fetch.
+	const derived = indexDerivedByReplay(derivedRows);
 	const names = conversationNames(
 		store,
 		included.map((r) => r.conversationHash),
@@ -226,7 +284,9 @@ export function getRunConfigDetail(
 			replay,
 		]);
 	}
-	const passedById = new Map(derived.evaluations.map((row) => [row.replayId, row.passed] as const));
+	const passedById = new Map(
+		derivedRows.evaluations.map((row) => [row.replayId, row.passed] as const),
+	);
 
 	const conversationRows: RunConfigConversationRow[] = [];
 	for (const [conversationHash, conversationReplays] of byConversation) {
@@ -244,7 +304,10 @@ export function getRunConfigDetail(
 				started_at: replay.startedAt,
 				passed: passedById.get(replay.id) ?? null,
 			})),
-			metrics: buildMetrics({ replays: conversationReplays, ...derived }),
+			metrics: buildMetrics({
+				replays: conversationReplays,
+				...derivedForReplays(derived, conversationReplays),
+			}),
 		});
 	}
 	conversationRows.sort((a, b) => a.conversation_name.localeCompare(b.conversation_name));
@@ -256,7 +319,7 @@ export function getRunConfigDetail(
 		created_at: group.createdAt,
 		replay_selection: selection,
 		coverage: groupCoverageOf(groupReplays),
-		metrics: buildMetrics({ replays: included, ...derived }),
+		metrics: buildMetrics({ replays: included, ...derivedForReplays(derived, included) }),
 		conversations: conversationRows,
 	};
 }
