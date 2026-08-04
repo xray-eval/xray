@@ -34,9 +34,12 @@ __pycache__/
 *.log
 pnpm-debug.log*
 
-# SQLite transient WAL files next to committed snapshot DB
+# SQLite transient WAL files next to committed snapshot DB, plus the
+# `VACUUM INTO` staging copy the seeder renames over xray.db — only left behind
+# by a run that died mid-way.
 snapshot/*.db-shm
 snapshot/*.db-wal
+snapshot/*.db.tmp*
 
 # Editor / OS
 .DS_Store

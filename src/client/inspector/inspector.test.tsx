@@ -169,6 +169,29 @@ describe("Inspector header", () => {
 	});
 });
 
+describe("Inspector RunDetailsCard", () => {
+	// The card's own emptiness check moved out to the grid (so the layout can
+	// drop the third column instead of leaving it blank), which means nothing
+	// inside the card guards it any more.
+	it("hides the card when the replay has no metrics, usage, tool calls or config", async () => {
+		mockReplay(buildReplay());
+		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
+		render(ui);
+
+		await waitFor(() => screen.getByText("Span tree"));
+		expect(screen.queryByText("Run details")).toBeNull();
+	});
+
+	it("shows the card as soon as the replay carries a run config", async () => {
+		mockReplay(buildReplay({ run_config: { model: "gpt-4o" } }));
+		const { ui } = renderWithRouter({ initialEntries: [`/replays/${REPLAY_ID}`] });
+		render(ui);
+
+		await waitFor(() => screen.getByText("Run details"));
+		expect(screen.getByText("Run config")).toBeTruthy();
+	});
+});
+
 describe("Inspector TurnsCard", () => {
 	it("renders the stereo player with the turn count when audio has been uploaded", async () => {
 		mockReplay(

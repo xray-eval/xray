@@ -238,12 +238,16 @@ function TraceCard({ replay }: { replay: ReplayDetailResponse }) {
 	);
 }
 
+function hasRunConfig(replay: ReplayDetailResponse): boolean {
+	return replay.run_config !== null && replay.run_config !== undefined;
+}
+
 function hasRunDetails(replay: ReplayDetailResponse): boolean {
 	return (
 		replay.turn_metrics.length > 0 ||
 		replay.model_usage.length > 0 ||
 		replay.tool_calls.length > 0 ||
-		(replay.run_config !== null && replay.run_config !== undefined)
+		hasRunConfig(replay)
 	);
 }
 
@@ -254,7 +258,6 @@ function hasRunDetails(replay: ReplayDetailResponse): boolean {
  * an arbitrary dev-supplied JSON shouldn't be able to stretch the page.
  */
 function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
-	const hasConfig = replay.run_config !== null && replay.run_config !== undefined;
 	return (
 		<Card className="gap-0 overflow-hidden p-0">
 			<CardHeader className="gap-0 border-b-[1px] border-border/60 px-5 py-4">
@@ -266,7 +269,7 @@ function RunDetailsCard({ replay }: { replay: ReplayDetailResponse }) {
 				<TurnMetricsSection turns={replay.turn_metrics} />
 				{replay.model_usage.length > 0 && <ModelUsageSection usage={replay.model_usage} />}
 				{replay.tool_calls.length > 0 && <ToolCallsSection toolCalls={replay.tool_calls} />}
-				{hasConfig && <RunConfigSection runConfig={replay.run_config} />}
+				{hasRunConfig(replay) && <RunConfigSection runConfig={replay.run_config} />}
 			</CardContent>
 		</Card>
 	);
