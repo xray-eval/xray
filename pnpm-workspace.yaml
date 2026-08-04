@@ -111,3 +111,49 @@ overrides:
   # Remove once vitepress ships a stable release on vite >=6.4.3 (its 2.x line;
   # only a 2.0.0-alpha exists today). Added 2026-07-29.
   vite: "7.3.6"
+
+# VEX-style "not affected" dispositions. Both entries below exist for the SAME
+# structural reason, and it is not "we'd rather not upgrade": every patched
+# release is inside the 7-day `minimumReleaseAge` cooldown, so there is no
+# version pnpm is allowed to install that clears the finding. Bypassing the
+# cooldown with `minimumReleaseAgeExclude` would be the wrong trade — that gate
+# is this repo's primary Shai-Hulud defence (see .claude/rules/supply-chain.md),
+# and neither advisory is reachable here, so suppressing a known-unreachable
+# finding for a few days is strictly safer than installing a package that is
+# days old. Each entry names the date it converts into a real upgrade; on that
+# date, delete the entry and bump. Do not let them outlive those dates.
+auditConfig:
+  ignoreGhsas:
+    # GHSA-7p8r-x3mc-p8w7 (HIGH) — fast-uri mis-parses a backslash as an
+    # authority introducer, so a crafted URI resolves to a different host than
+    # it reads as. NOT AFFECTED:
+    #   • Dev-only. One chain: `@commitlint/cli > @commitlint/load >
+    #     @commitlint/config-validator > ajv > fast-uri`. commitlint is a
+    #     devDependency; the `--prod` image (Dockerfile stage 1) drops it.
+    #   • No untrusted input. ajv uses fast-uri to resolve `$ref` URIs while
+    #     validating OUR commitlint config against OUR schema. No
+    #     attacker-controlled URI reaches it.
+    # Unreachable by upgrade today: the advisory covers *every* release line
+    # (<2.4.4, >=3.0.0 <3.1.5, >=4.0.0 <4.1.2) and all three patched versions
+    # (2.4.4 / 3.1.5 / 4.1.2) were published 2026-07-31 in one coordinated
+    # release — 4 days old, inside the cooldown. ajv@8.20.0 declares
+    # `fast-uri ^3.0.1`, so `pnpm update fast-uri -r` caps at 3.1.4. Overriding
+    # to 4.1.1 was tried and rejected: it is past the cooldown but still inside
+    # the advisory's 4.x range, so it changes nothing.
+    # CONVERT 2026-08-07, when 3.1.5 clears the cooldown: delete this entry and
+    # run `pnpm update fast-uri -r` (in-range, no override needed). Added 2026-08-04.
+    - GHSA-7p8r-x3mc-p8w7
+    # GHSA-8j4g-w8fx-2239 (moderate) — ReDoS in Hono's CORS middleware via a
+    # crafted `Access-Control-Request-Headers`. NOT AFFECTED:
+    #   • We never mount it. The server imports exactly `hono`,
+    #     `hono/body-limit` and `hono/streaming` (plus `hono-openapi`); there is
+    #     no `hono/cors` import anywhere in `src/`, so the vulnerable regex is
+    #     never on a request path. Re-check this claim with
+    #     `grep -rn "hono/cors" src/` before extending the entry.
+    # This is the only advisory that touches the SHIPPED image, which is why it
+    # gets a hard expiry rather than a soft one. Unreachable by upgrade today:
+    # patched 4.12.34 was published 2026-08-03, 1 day old. The newest hono past
+    # the cooldown is 4.12.32, still below the patch floor.
+    # CONVERT 2026-08-10, when 4.12.34 clears the cooldown: delete this entry and
+    # bump the `hono` dependency. Added 2026-08-04.
+    - GHSA-8j4g-w8fx-2239
