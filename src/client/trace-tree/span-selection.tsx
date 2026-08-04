@@ -17,9 +17,9 @@ const SpanSelectionContext = createContext<SpanSelection | null>(null);
 
 /**
  * Holds the id of the span the user is inspecting. Wraps the trace tree and
- * the detail panel so a click in the tree drives the panel without threading
- * `selectedSpanId` through the tree's internal depth — the same context shape
- * the player provider uses to coordinate across the inspector's two columns.
+ * the detail drawer beneath it so a click in the tree drives the drawer without
+ * threading `selectedSpanId` through the tree's internal depth — the same
+ * context shape the player provider uses to coordinate across cards.
  */
 export function SpanSelectionProvider({ children }: { children: ReactNode }) {
 	const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);

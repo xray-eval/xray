@@ -7,7 +7,7 @@ import type {
 
 import { registerHappyDom } from "../../test-happy-dom.ts";
 import { SpanSelectionProvider, useSpanSelection } from "../span-selection.tsx";
-import { SpanDetailAside, SpanDetailPanel } from "./span-detail.tsx";
+import { SpanDetailDrawer, SpanDetailPanel } from "./span-detail.tsx";
 import type { SpanDetailModel } from "./span-detail.types.ts";
 import { describe, expect, it } from "bun:test";
 
@@ -137,12 +137,46 @@ describe("SpanDetailPanel", () => {
 		expect(screen.getByText(/4302/)).toBeTruthy();
 	});
 
-	it("renders linked tool calls with name and result", () => {
+	it("summarizes linked tool calls as name + latency, leaving the payload to the attributes", () => {
 		render(
 			<SpanDetailPanel detail={model({ toolCalls: [TOOL_CALL] })} onClose={() => undefined} />,
 		);
 		expect(screen.getByText("get_current_year")).toBeTruthy();
-		expect(screen.getByText("2026")).toBeTruthy();
+		expect(screen.getByText(/7ms/)).toBeTruthy();
+		// The rail is a summary: args/result live in the attribute bag beside it.
+		expect(screen.queryByText("2026")).toBeNull();
+	});
+
+	// The rail and the attribute column sit side by side in the drawer, and a
+	// tool call is only ever linked to the span that emitted it — so rendering
+	// its args/result in both places showed the same JSON twice at once.
+	it("shows a tool call's result once, not once per panel", () => {
+		render(
+			<SpanDetailPanel
+				detail={model({
+					toolCalls: [TOOL_CALL],
+					attributes: {
+						kind: "parsed",
+						entries: [
+							{
+								key: "gen_ai.tool.name",
+								namespace: "gen_ai",
+								leaf: "tool.name",
+								value: "get_current_year",
+							},
+							{
+								key: "gen_ai.tool.result",
+								namespace: "gen_ai",
+								leaf: "tool.result",
+								value: '{"year":2026}',
+							},
+						],
+					},
+				})}
+				onClose={() => undefined}
+			/>,
+		);
+		expect(screen.getAllByText("2026")).toHaveLength(1);
 	});
 
 	it("falls back to raw text when the attribute bag isn't a JSON object", () => {
@@ -188,47 +222,59 @@ function replay(overrides: Partial<ReplayDetailResponse> = {}): ReplayDetailResp
 	};
 }
 
-function AsideHarness({ replay: r }: { replay: ReplayDetailResponse }) {
+function DrawerHarness({ replay: r }: { replay: ReplayDetailResponse }) {
 	const { select } = useSpanSelection();
 	return (
 		<>
 			<button type="button" onClick={() => select("span-1")}>
 				pick
 			</button>
-			<SpanDetailAside replay={r} />
+			<SpanDetailDrawer replay={r} />
 		</>
 	);
 }
 
-describe("SpanDetailAside", () => {
+describe("SpanDetailDrawer", () => {
 	it("renders nothing when the replay has no spans", () => {
 		render(
 			<SpanSelectionProvider>
-				<SpanDetailAside replay={replay({ spans: [] })} />
+				<SpanDetailDrawer replay={replay({ spans: [] })} />
 			</SpanSelectionProvider>,
 		);
 		expect(screen.queryByText(/select a span/i)).toBeNull();
 		expect(screen.queryByText("agent_turn")).toBeNull();
 	});
 
-	it("prompts the user to select a span before one is chosen", () => {
+	it("collapses to a one-line hint before a span is chosen", () => {
 		render(
 			<SpanSelectionProvider>
-				<SpanDetailAside replay={replay()} />
+				<SpanDetailDrawer replay={replay()} />
 			</SpanSelectionProvider>,
 		);
 		expect(screen.getByText(/select a span/i)).toBeTruthy();
+		expect(screen.queryByLabelText(/^span detail/i)).toBeNull();
 	});
 
 	it("resolves and shows the detail once a span is selected", () => {
 		render(
 			<SpanSelectionProvider>
-				<AsideHarness replay={replay()} />
+				<DrawerHarness replay={replay()} />
 			</SpanSelectionProvider>,
 		);
 		expect(screen.queryByText("agent_turn")).toBeNull();
 		act(() => screen.getByText("pick").click());
+		expect(screen.getByLabelText(/^span detail: agent_turn$/i)).toBeTruthy();
 		expect(screen.getByText("agent_turn")).toBeTruthy();
 		expect(screen.getByText("get_current_year")).toBeTruthy();
+	});
+
+	it("replaces the hint with the detail — the drawer is one region, not two", () => {
+		render(
+			<SpanSelectionProvider>
+				<DrawerHarness replay={replay()} />
+			</SpanSelectionProvider>,
+		);
+		act(() => screen.getByText("pick").click());
+		expect(screen.queryByText(/select a span/i)).toBeNull();
 	});
 });

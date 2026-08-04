@@ -7,8 +7,7 @@ import type {
 	SpanResponse,
 	ToolCallResponse,
 } from "@/client/api/api.types.ts";
-import { JsonOrText, JsonTree, jsonTreeOrNull } from "@/client/components/json-tree.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card.tsx";
+import { JsonTree, jsonTreeOrNull } from "@/client/components/json-tree.tsx";
 import { formatClockSeconds, formatDurationMs } from "@/client/format.ts";
 import { isJsonContainer } from "@/client/lib/json.ts";
 import { cn } from "@/client/lib/utils.ts";
@@ -19,12 +18,13 @@ import type { AttributeEntry, SpanAttributes, SpanDetailModel } from "./span-det
 import { resolveSpanDetail } from "./span-detail-model.ts";
 
 /**
- * Right-column companion to the trace tree: resolves the selected span from the
- * replay and renders its detail (nothing when the replay has no spans, a prompt
- * until the user picks one). Derived at render — no effect, no second source of
- * truth (see no-effect-for-data rule).
+ * Bottom drawer of the span-tree card: resolves the selected span from the
+ * replay and renders its detail directly under the tree row it came from
+ * (nothing when the replay has no spans, a one-line hint until the user picks
+ * one). Derived at render — no effect, no second source of truth (see
+ * no-effect-for-data rule).
  */
-export function SpanDetailAside({ replay }: { replay: ReplayDetailResponse }) {
+export function SpanDetailDrawer({ replay }: { replay: ReplayDetailResponse }) {
 	const { selectedSpanId, clear } = useSpanSelection();
 	if (replay.spans.length === 0) return null;
 	const detail = resolveSpanDetail(selectedSpanId, {
@@ -32,22 +32,21 @@ export function SpanDetailAside({ replay }: { replay: ReplayDetailResponse }) {
 		modelUsage: replay.model_usage,
 		toolCalls: replay.tool_calls,
 	});
-	if (detail === null) return <SpanDetailEmpty />;
+	if (detail === null) return <SpanDetailHint />;
 	// Re-key on the span so switching selection replays the entrance animation.
 	return <SpanDetailPanel key={detail.span.span_id} detail={detail} onClose={clear} />;
 }
 
 /**
- * Scrolls the panel into view on mount below the `lg` breakpoint, where the
- * columns stack and the panel renders far beneath the tree — without this,
- * clicking a span reads as a no-op. On `lg`+ it sits beside the tree, so it
- * stays put. Re-keyed per selection (see `SpanDetailAside`), so it fires on
- * every span click, not just the first.
+ * Nudges the drawer into view on open. The tree above it is a tall fixed-height
+ * pane, so a span picked near its bottom would otherwise reveal the detail
+ * below the fold and read as a no-op. `nearest` scrolls the minimum needed —
+ * nothing at all when the drawer already sits on screen. Re-keyed per selection
+ * (see `SpanDetailDrawer`), so it fires on every span click, not just the first.
  */
-function scrollSpanDetailIntoView(node: HTMLDivElement | null): void {
+function scrollSpanDetailIntoView(node: HTMLElement | null): void {
 	if (node === null) return;
-	if (window.matchMedia("(min-width: 1024px)").matches) return;
-	node.scrollIntoView({ behavior: "smooth", block: "start" });
+	node.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 export function SpanDetailPanel({
@@ -59,86 +58,108 @@ export function SpanDetailPanel({
 }) {
 	const palette = vocabPalette(detail.span.vocabulary);
 	return (
-		<Card
+		<section
 			ref={scrollSpanDetailIntoView}
-			className="relative gap-0 overflow-hidden p-0 animate-in fade-in-0 duration-300 ease-out lg:absolute lg:inset-0 lg:flex lg:flex-col lg:slide-in-from-right-3"
+			aria-label={`Span detail: ${detail.span.name}`}
+			className="relative border-t border-border/60 animate-in fade-in-0 slide-in-from-top-1 duration-300 ease-out"
 		>
 			<div
 				aria-hidden="true"
 				className="absolute inset-x-0 top-0 z-10 h-px"
 				style={{ background: palette.barOutline }}
 			/>
-			<SpanDetailHeader span={detail.span} onClose={onClose} />
-			<CardContent className="scroll-panel divide-y divide-border/50 p-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
-				<SpanTimingGrid detail={detail} />
-				{detail.usage.length > 0 && <LinkedUsageSection usage={detail.usage} />}
-				{detail.toolCalls.length > 0 && <LinkedToolSection toolCalls={detail.toolCalls} />}
-				<AttributesSection attributes={detail.attributes} />
-			</CardContent>
-		</Card>
+			<SpanDetailHeader span={detail.span} durationMs={detail.durationMs} onClose={onClose} />
+			{/* Fixed rail for the facts, the rest for attributes — the drawer is as
+			    wide as the tree, and a single column would stretch every attribute
+			    value across the whole card. The drawer itself takes its height from
+			    its content (the tree above already caps, so the card stays
+			    navigable); an unparsed raw attribute bag is the one thing left that
+			    caps its own height, in `RawAttributes`. */}
+			<div className="grid lg:grid-cols-[19rem_minmax(0,1fr)]">
+				<div className="divide-y divide-border/50 lg:border-r lg:border-border/50">
+					<SpanFactsSection detail={detail} />
+					{detail.usage.length > 0 && <LinkedUsageSection usage={detail.usage} />}
+					{detail.toolCalls.length > 0 && <LinkedToolSection toolCalls={detail.toolCalls} />}
+				</div>
+				<div className="border-t border-border/50 lg:border-t-0">
+					<AttributesSection attributes={detail.attributes} />
+				</div>
+			</div>
+		</section>
 	);
 }
 
-function SpanDetailHeader({ span, onClose }: { span: SpanResponse; onClose: () => void }) {
+function SpanDetailHint() {
+	return (
+		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-border/60 bg-foreground/[0.015] px-5 py-3">
+			<span
+				aria-hidden="true"
+				className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground/45"
+			>
+				◎ inspector
+			</span>
+			<p className="text-xs text-muted-foreground/75">
+				Select a span above to inspect its attributes, timing, and linked model + tool calls.
+			</p>
+		</div>
+	);
+}
+
+function SpanDetailHeader({
+	span,
+	durationMs,
+	onClose,
+}: {
+	span: SpanResponse;
+	durationMs: number;
+	onClose: () => void;
+}) {
 	const palette = vocabPalette(span.vocabulary);
 	return (
-		<CardHeader className="gap-0 border-b border-border/60 px-5 py-4 lg:shrink-0">
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0 space-y-1.5">
-					<div className="flex items-center gap-2">
-						<span
-							aria-hidden="true"
-							className={cn("size-1.5 shrink-0 rounded-full", palette.dotBg)}
-						/>
-						<CardTitle
-							className={cn(
-								"truncate font-mono text-sm font-semibold tracking-tight",
-								palette.text,
-							)}
-						>
-							{span.name}
-						</CardTitle>
-					</div>
-					<div className="flex items-center gap-2 pl-3.5">
-						<span
-							className="inline-flex items-center justify-center rounded border px-1 py-0.5 font-mono text-[9px] uppercase leading-none"
-							style={{ borderColor: palette.barOutline, color: palette.barOutline }}
-						>
-							{vocabShortLabel(span.vocabulary)}
-						</span>
-						<span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground/70">
-							{vocabLabel(span.vocabulary)}
-						</span>
-					</div>
-				</div>
-				<button
-					type="button"
-					onClick={onClose}
-					aria-label="Close span detail"
-					className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
-				>
-					<XIcon className="size-3.5" />
-				</button>
-			</div>
-		</CardHeader>
+		<div className="flex items-center gap-2.5 bg-foreground/[0.015] px-5 py-3">
+			<span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", palette.dotBg)} />
+			<h3
+				className={cn(
+					"min-w-0 truncate font-mono text-sm font-semibold tracking-tight",
+					palette.text,
+				)}
+			>
+				{span.name}
+			</h3>
+			<span
+				className="shrink-0 rounded border px-1 py-0.5 font-mono text-[9px] uppercase leading-none"
+				style={{ borderColor: palette.barOutline, color: palette.barOutline }}
+			>
+				{vocabShortLabel(span.vocabulary)}
+			</span>
+			<span className="hidden shrink-0 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground/70 sm:inline">
+				{vocabLabel(span.vocabulary)}
+			</span>
+			<span className="ml-auto shrink-0 font-mono text-lg font-semibold tabular-nums text-foreground">
+				{formatDurationMs(durationMs)}
+			</span>
+			<button
+				type="button"
+				onClick={onClose}
+				aria-label="Close span detail"
+				className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+			>
+				<XIcon className="size-3.5" />
+			</button>
+		</div>
 	);
 }
 
-function SpanTimingGrid({ detail }: { detail: SpanDetailModel }) {
+function SpanFactsSection({ detail }: { detail: SpanDetailModel }) {
 	const { span } = detail;
 	const isRoot = detail.parentName === null && span.parent_span_id === null;
 	const parent = detail.parentName ?? span.parent_span_id ?? "root";
 	return (
 		<section className="space-y-3 px-5 py-4">
-			<div className="flex items-baseline justify-between gap-3">
-				<span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground/70">
-					Duration
-				</span>
-				<span className="font-mono text-xl font-semibold tabular-nums text-foreground">
-					{formatDurationMs(detail.durationMs)}
-				</span>
-			</div>
-			<dl className="space-y-1.5">
+			<SectionLabel label="Span" />
+			{/* Capped while the drawer is stacked — a right-aligned value a card-width
+			    away from its label is unreadable. In the `lg` rail it's already narrow. */}
+			<dl className="max-w-md space-y-1.5 lg:max-w-none">
 				<FactRow
 					label="Window"
 					value={
@@ -147,7 +168,7 @@ function SpanTimingGrid({ detail }: { detail: SpanDetailModel }) {
 							: `${formatClockSeconds(detail.startOffsetSec)} → ${formatClockSeconds(detail.endOffsetSec)}`
 					}
 				/>
-				<FactRow label="Span" value={span.span_id} />
+				<FactRow label="Id" value={span.span_id} />
 				<FactRow label="Trace" value={span.trace_id} />
 				<FactRow label="Parent" value={parent} dim={isRoot} />
 			</dl>
@@ -236,46 +257,34 @@ function TokenBar({ input, output }: { input: number | null; output: number | nu
 	);
 }
 
+/**
+ * Summary only — name and latency, no args/result. A tool call is linked by
+ * `span_id` (see `resolveSpanDetail`), so every row here was emitted by the span
+ * on screen, and both vocabularies keep the attributes they extracted the
+ * payload from. Rendering the JSON here too would print it twice side by side
+ * with the attribute column, which is what the pre-drawer layout got away with
+ * only because it stacked the two.
+ */
 function LinkedToolSection({ toolCalls }: { toolCalls: readonly ToolCallResponse[] }) {
 	return (
 		<section className="space-y-3 px-5 py-4">
 			<SectionLabel label="Tool calls" meta={`${toolCalls.length}`} />
-			<ul className="space-y-2.5">
+			<ul className="space-y-2">
 				{toolCalls.map((tc) => (
-					<ToolRow key={tc.id} toolCall={tc} />
+					<li
+						key={tc.id}
+						className="flex items-baseline justify-between gap-3 font-mono text-[11px]"
+					>
+						<span className="truncate font-medium text-foreground">{tc.name}</span>
+						{tc.latency_ms !== null && (
+							<span className="shrink-0 tabular-nums text-muted-foreground">
+								{formatDurationMs(tc.latency_ms)}
+							</span>
+						)}
+					</li>
 				))}
 			</ul>
 		</section>
-	);
-}
-
-function ToolRow({ toolCall: tc }: { toolCall: ToolCallResponse }) {
-	return (
-		<li className="font-mono text-[11px]">
-			<div className="flex items-baseline justify-between gap-3">
-				<span className="truncate font-medium text-foreground">{tc.name}</span>
-				{tc.latency_ms !== null && (
-					<span className="shrink-0 tabular-nums text-muted-foreground">{tc.latency_ms}ms</span>
-				)}
-			</div>
-			{(tc.args_json !== null || tc.result_json !== null) && (
-				<dl className="mt-1 space-y-1 border-l border-border/40 pl-2.5 text-muted-foreground">
-					{tc.args_json !== null && <JsonField label="args" raw={tc.args_json} />}
-					{tc.result_json !== null && <JsonField label="result" raw={tc.result_json} />}
-				</dl>
-			)}
-		</li>
-	);
-}
-
-function JsonField({ label, raw }: { label: string; raw: string }) {
-	return (
-		<div className="flex gap-2">
-			<dt className="shrink-0 text-muted-foreground/60">{label}</dt>
-			<dd className="min-w-0 flex-1 overflow-auto">
-				<JsonOrText raw={raw} />
-			</dd>
-		</div>
 	);
 }
 
@@ -294,7 +303,11 @@ function AttributesSection({ attributes }: { attributes: SpanAttributes }) {
 							No attributes recorded.
 						</p>
 					) : (
-						<ul className="space-y-2.5">
+						// The attribute bag is the tallest thing in the drawer, so it
+						// columnizes into whatever width is actually available — a viewport
+						// breakpoint would guess wrong, since the drawer only gets the
+						// remainder of the card after the facts rail.
+						<ul className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-x-8 gap-y-2.5">
 							{a.entries.map((entry) => (
 								<AttributeRow key={entry.key} entry={entry} />
 							))}
@@ -316,14 +329,17 @@ function RawAttributes({ raw }: { raw: string }) {
 
 function AttributeRow({ entry }: { entry: AttributeEntry }) {
 	return (
-		<li className="space-y-1">
-			<div className="font-mono text-[10px] tracking-tight">
+		<li className="min-w-0 space-y-1">
+			<div className="break-words font-mono text-[10px] tracking-tight">
 				{entry.namespace !== "" && (
 					<span className="text-muted-foreground/45">{entry.namespace}.</span>
 				)}
 				<span className="text-foreground/70">{entry.leaf}</span>
 			</div>
-			<div className="pl-2 font-mono text-[11px] leading-relaxed">
+			{/* Scrolls rather than clips: a container value (a JSON tree, indented per
+			    level) can outrun a grid cell, and the host card is `overflow-hidden`,
+			    so without this an unbroken token is simply unreachable. */}
+			<div className="overflow-x-auto pl-2 font-mono text-[11px] leading-relaxed">
 				<AttributeValue value={entry.value} />
 			</div>
 		</li>
@@ -370,34 +386,6 @@ function SectionLabel({ label, meta }: { label: string; meta?: string | null }) 
 				</span>
 			)}
 		</div>
-	);
-}
-
-function SpanDetailEmpty() {
-	return (
-		<Card className="relative gap-0 overflow-hidden p-0">
-			<CardContent className="relative flex flex-col items-center justify-center overflow-hidden px-6 py-10 text-center">
-				<div
-					aria-hidden="true"
-					className="pointer-events-none absolute inset-0 opacity-[0.04]"
-					style={{
-						backgroundImage:
-							"linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)",
-						backgroundSize: "16px 16px",
-					}}
-				/>
-				<p className="relative font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground/60">
-					◎ inspector
-				</p>
-				<h3 className="relative mt-3 text-sm font-semibold tracking-tight text-foreground/90">
-					Select a span
-				</h3>
-				<p className="relative mt-1.5 max-w-[26ch] text-xs leading-relaxed text-muted-foreground">
-					Click any row in the span tree to inspect its attributes, timing, and linked model + tool
-					calls.
-				</p>
-			</CardContent>
-		</Card>
 	);
 }
 

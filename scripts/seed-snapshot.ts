@@ -9,8 +9,25 @@
  * and see an authentic interruption without a live agent or any provider API
  * keys.
  *
- * Nothing here is random or clock-dependent, so re-running produces a
- * byte-identical fixture. Run: `bun run scripts/seed-snapshot.ts`.
+ * Nothing here is random or clock-dependent, so the fixture's CONTENT is
+ * reproducible anywhere: `sqlite3 snapshot/xray.db .dump | shasum` is stable
+ * across machines. Two things had to be forced for even that much — the
+ * wall-clock columns the job processors stamp (`pinGeneratedTimestamps`) and
+ * SQLite's own file change counter (`promoteDeterministicDb`).
+ *
+ * The BYTES are only stable per platform, and this is measured, not assumed:
+ * the header records the writing library's `SQLITE_VERSION_NUMBER` and its
+ * reserved-bytes-per-page, and `bun:sqlite` links the OS SQLite on macOS
+ * (3.51.0) while bundling its own on Linux (3.53.0). The same pinned Bun on the
+ * two platforms produces ~9.5KB of differing bytes for a `.dump`-identical
+ * fixture — so regenerating inside the dev container and regenerating on a Mac
+ * host legitimately disagree.
+ *
+ * So: a `snapshot/xray.db` diff in a PR that didn't touch this script is worth
+ * looking at, but check `.dump` before calling it a real change — a whole-file
+ * hash difference on its own may only mean the author regenerated on a
+ * different OS.
+ * Run: `bun run scripts/seed-snapshot.ts`.
  *
  * The one concession to "authentic": transcripts are scripted rather than
  * produced by a real STT provider (there's no key offline). Each turn's audio
@@ -18,23 +35,22 @@
  * its line — VAD, turn derivation, metrics, and assertions all run for real.
  */
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { eq, sql } from "drizzle-orm";
 
-import type { StereoWav } from "@/server/audio/audio.types.ts";
 import { writeStereoWav } from "@/server/audio/audio.wav.ts";
 import {
 	canonicalizeAndHashSpec,
 	ensureConversation,
 } from "@/server/conversations/conversations.service.ts";
-import type { ConversationTurn } from "@/server/conversations/conversations.types.ts";
 import { makeAnalyzeProcessor } from "@/server/jobs/analyze-replay/analyze-replay.processor.ts";
 import { makeCalculateMetricsProcessor } from "@/server/jobs/calculate-metrics/calculate-metrics.processor.ts";
 import { makeEvaluateReplayProcessor } from "@/server/jobs/evaluate-replay/evaluate-replay.processor.ts";
 import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import type { JudgeProvider } from "@/server/judges/judges.types.ts";
+import { ingestOtlpTraces } from "@/server/otlp/otlp.service.ts";
 import { makeReplayEvents } from "@/server/replays/replays.events.ts";
 import { createReplay } from "@/server/replays/replays.service.ts";
 import {
@@ -49,244 +65,26 @@ import type {
 	TranscriptionResult,
 } from "@/server/transcription/transcription.types.ts";
 
+import { buildWav, scriptFor } from "./seed-snapshot.audio.ts";
+import type { SeedReplay } from "./seed-snapshot.fixture.ts";
+import {
+	ALL_SCRIPTED_TURNS,
+	CONVERSATIONS,
+	DECLARED_ASSERTIONS_BY_CONVERSATION,
+	requireConversation,
+	requireVariant,
+	SEED_REPLAYS,
+} from "./seed-snapshot.fixture.ts";
+import { buildSeededTrace, expectedExtractions, otlpRequestFor } from "./seed-snapshot.trace.ts";
+import type { ScriptedConversation } from "./seed-snapshot.types.ts";
+import { assertExtractedRows, assertReplayIsGreen } from "./seed-snapshot.verify.ts";
+
 const SNAPSHOT_DIR = new URL("../snapshot", import.meta.url).pathname;
 const DB_PATH = join(SNAPSHOT_DIR, "xray.db");
+// VACUUM INTO refuses to overwrite, so the deterministic copy is built beside
+// the working file and renamed over it once the run is complete.
+const DB_TMP_PATH = join(SNAPSHOT_DIR, "xray.db.tmp");
 const AUDIO_ROOT = join(SNAPSHOT_DIR, "audio");
-
-const SAMPLE_RATE = 48_000;
-const TONE_HZ = 200;
-
-// One line per turn. The distinct amplitude doubles as the marker the
-// stand-in transcription provider reads back to recover the line — so
-// amplitudes are unique across BOTH scripts, not just within one.
-interface ScriptedTurn {
-	readonly role: "user" | "agent";
-	readonly startMs: number;
-	readonly endMs: number;
-	readonly amplitude: number;
-	readonly transcript: string;
-}
-
-const BARGE_IN_SCRIPT: readonly ScriptedTurn[] = [
-	{
-		role: "user",
-		startMs: 0,
-		endMs: 1800,
-		amplitude: 6_000,
-		transcript: "Book me a flight to Paris.",
-	},
-	// The agent starts answering, gets cut off, and keeps talking ~300ms.
-	{
-		role: "agent",
-		startMs: 2300,
-		endMs: 4600,
-		amplitude: 9_000,
-		transcript: "Sure — I'm booking a flight to Paris",
-	},
-	// The user barges in 300ms before the agent stops (4300 < 4600).
-	{ role: "user", startMs: 4300, endMs: 5500, amplitude: 12_000, transcript: "No, wait — Berlin!" },
-	{
-		role: "agent",
-		startMs: 6000,
-		endMs: 8000,
-		amplitude: 15_000,
-		transcript: "Got it, booking a flight to Berlin instead.",
-	},
-];
-
-// A short, clean two-turn exchange: no interruption, so `yield_ms` has no
-// sample here and the compare view shows a metric whose `n` legitimately
-// differs per row. Also a third of the audio bytes of the barge-in script,
-// which is what keeps a 5-config fixture from dominating the repo.
-const LOOKUP_SCRIPT: readonly ScriptedTurn[] = [
-	{
-		role: "user",
-		startMs: 0,
-		endMs: 1200,
-		amplitude: 18_000,
-		transcript: "What time is my flight?",
-	},
-	{
-		role: "agent",
-		startMs: 1600,
-		endMs: 3200,
-		amplitude: 21_000,
-		transcript: "Your flight leaves at 6pm.",
-	},
-];
-
-interface ScriptedConversation {
-	readonly key: string;
-	readonly name: string;
-	readonly script: readonly ScriptedTurn[];
-	readonly specTurns: readonly ConversationTurn[];
-	readonly recordingEndMs: number;
-}
-
-// The conversations the developer would have authored. interrupt_after_ms marks
-// the barge-in; the agent turn it interrupts must yield within 500ms, and the
-// recovery turn must mention the corrected city.
-const CONVERSATIONS: readonly ScriptedConversation[] = [
-	{
-		key: "barge-in",
-		name: "user corrects destination mid-answer",
-		script: BARGE_IN_SCRIPT,
-		recordingEndMs: 8200,
-		specTurns: [
-			{ role: "user", text: BARGE_IN_SCRIPT[0]?.transcript ?? "", assertions: [] },
-			{ role: "agent", assertions: [{ kind: "yielded_within_ms", max_ms: 500 }] },
-			{
-				role: "user",
-				text: BARGE_IN_SCRIPT[2]?.transcript ?? "",
-				interrupt_after_ms: 2000,
-				assertions: [],
-			},
-			{ role: "agent", assertions: [{ kind: "contains", text: "Berlin", case_insensitive: true }] },
-		],
-	},
-	{
-		key: "lookup",
-		name: "user asks when their flight leaves",
-		script: LOOKUP_SCRIPT,
-		recordingEndMs: 3400,
-		specTurns: [
-			{ role: "user", text: LOOKUP_SCRIPT[0]?.transcript ?? "", assertions: [] },
-			{ role: "agent", assertions: [{ kind: "contains", text: "6pm", case_insensitive: true }] },
-		],
-	},
-];
-
-const ALL_SCRIPTED_TURNS: readonly ScriptedTurn[] = CONVERSATIONS.flatMap((c) => c.script);
-
-/**
- * Five configurations, so the comparison view has a realistic spread on a fresh
- * checkout. `agentDelayMs` shifts only the *start* of each agent turn, never its
- * end: that moves `agent_response_ms` (the number the configs differ on) while
- * leaving the barge-in overlap — and therefore `yield_ms` and the
- * `yielded_within_ms` assertion — identical. Every run passes; they differ only
- * on how quickly the agent gets going.
- *
- * `temperature` is a float on purpose: it exercises the run-config canonicalizer
- * that the conversation one can't handle.
- */
-interface RunVariant {
-	readonly key: string;
-	readonly configName: string;
-	readonly config: Record<string, string | number>;
-	readonly agentDelayMs: number;
-}
-
-const RUN_VARIANTS: readonly RunVariant[] = [
-	{ key: "baseline", configName: "baseline", config: { model: "gpt-4o" }, agentDelayMs: 0 },
-	{
-		key: "fast-follow",
-		configName: "fast-follow",
-		config: { model: "gemini-2.5-flash" },
-		agentDelayMs: -250,
-	},
-	{
-		key: "precise",
-		configName: "precise",
-		config: { model: "gpt-4o", temperature: 0.2 },
-		agentDelayMs: 120,
-	},
-	{ key: "mini", configName: "mini", config: { model: "gpt-4o-mini" }, agentDelayMs: -100 },
-	{
-		key: "flash-tuned",
-		configName: "flash-tuned",
-		config: { model: "gemini-2.5-flash", temperature: 0.9, top_p: 0.8 },
-		agentDelayMs: 350,
-	},
-];
-
-/**
- * One row per replay, with a hand-assigned id so the fixture stays stable across
- * regenerations. Only two configs ran the barge-in conversation: that partial
- * coverage is what the compare view's fair-comparison warning is for, so the
- * fixture has to contain a case that triggers it.
- *
- * `...0001` is the barge-in run this fixture has always held and its WAV is
- * byte-identical — the inspector's canonical example is unchanged. `...0002` is
- * new: a second run of that same conversation under `fast-follow`, so the
- * barge-in conversation has more than one config to compare.
- */
-interface SeedReplay {
-	readonly replayId: string;
-	readonly variantKey: string;
-	readonly conversationKey: string;
-	readonly startedAt: string;
-}
-
-const SEED_REPLAYS: readonly SeedReplay[] = [
-	{
-		replayId: "ba9e1000-0000-4000-8000-000000000001",
-		variantKey: "baseline",
-		conversationKey: "barge-in",
-		startedAt: "2026-07-01T12:00:00.000Z",
-	},
-	{
-		replayId: "ba9e1000-0000-4000-8000-000000000002",
-		variantKey: "fast-follow",
-		conversationKey: "barge-in",
-		startedAt: "2026-07-01T12:05:00.000Z",
-	},
-	{
-		replayId: "ba9e1000-0000-4000-8000-000000000003",
-		variantKey: "baseline",
-		conversationKey: "lookup",
-		startedAt: "2026-07-02T09:00:00.000Z",
-	},
-	{
-		replayId: "ba9e1000-0000-4000-8000-000000000004",
-		variantKey: "fast-follow",
-		conversationKey: "lookup",
-		startedAt: "2026-07-02T09:05:00.000Z",
-	},
-	{
-		replayId: "ba9e1000-0000-4000-8000-000000000005",
-		variantKey: "precise",
-		conversationKey: "lookup",
-		startedAt: "2026-07-02T09:10:00.000Z",
-	},
-	{
-		replayId: "ba9e1000-0000-4000-8000-000000000006",
-		variantKey: "mini",
-		conversationKey: "lookup",
-		startedAt: "2026-07-02T09:15:00.000Z",
-	},
-	{
-		replayId: "ba9e1000-0000-4000-8000-000000000007",
-		variantKey: "flash-tuned",
-		conversationKey: "lookup",
-		startedAt: "2026-07-02T09:20:00.000Z",
-	},
-];
-
-/** Agent turns start `agentDelayMs` earlier/later; their ends never move. */
-function scriptFor(script: readonly ScriptedTurn[], agentDelayMs: number): readonly ScriptedTurn[] {
-	if (agentDelayMs === 0) return script;
-	return script.map((turn) =>
-		turn.role === "agent" ? { ...turn, startMs: turn.startMs + agentDelayMs } : turn,
-	);
-}
-
-function buildWav(script: readonly ScriptedTurn[], recordingEndMs: number): StereoWav {
-	const totalSamples = Math.round((recordingEndMs / 1000) * SAMPLE_RATE);
-	const left = new Int16Array(totalSamples);
-	const right = new Int16Array(totalSamples);
-	for (const turn of script) {
-		writeTone(turn.role === "user" ? left : right, turn);
-	}
-	return { sampleRate: SAMPLE_RATE, bitsPerSample: 16, left, right };
-}
-
-function writeTone(channel: Int16Array, turn: ScriptedTurn): void {
-	const start = Math.round((turn.startMs / 1000) * SAMPLE_RATE);
-	const end = Math.round((turn.endMs / 1000) * SAMPLE_RATE);
-	for (let i = start; i < end; i++) {
-		channel[i] = Math.round(Math.sin((2 * Math.PI * TONE_HZ * i) / SAMPLE_RATE) * turn.amplitude);
-	}
-}
 
 /**
  * Maps a turn's audio slice back to its scripted line by peak amplitude — each
@@ -322,23 +120,15 @@ const UNUSED_JUDGE_PROVIDER: JudgeProvider = {
 	},
 };
 
-function requireVariant(key: string): RunVariant {
-	const variant = RUN_VARIANTS.find((v) => v.key === key);
-	if (variant === undefined) throw new Error(`seed-snapshot: unknown run variant "${key}"`);
-	return variant;
-}
-
-function requireConversation(key: string): ScriptedConversation {
-	const conversation = CONVERSATIONS.find((c) => c.key === key);
-	if (conversation === undefined) throw new Error(`seed-snapshot: unknown conversation "${key}"`);
-	return conversation;
-}
-
 async function main(): Promise<void> {
 	// Start from a clean slate so a regeneration can't leave stale rows or a
-	// mismatched WAL behind.
-	for (const suffix of ["", "-shm", "-wal"]) {
-		await rm(`${DB_PATH}${suffix}`, { force: true });
+	// mismatched WAL behind. The `.tmp` copy is cleared too: `VACUUM INTO`
+	// refuses an existing target, so a run that died between the vacuum and the
+	// rename would otherwise block every run after it.
+	for (const path of [DB_PATH, DB_TMP_PATH]) {
+		for (const suffix of ["", "-shm", "-wal"]) {
+			await rm(`${path}${suffix}`, { force: true });
+		}
 	}
 	await rm(AUDIO_ROOT, { recursive: true, force: true });
 	await mkdir(dirname(DB_PATH), { recursive: true });
@@ -366,14 +156,51 @@ async function main(): Promise<void> {
 		}
 
 		printSummary(store);
+		for (const seed of SEED_REPLAYS) {
+			assertReplayIsGreen(
+				store.db,
+				seed.replayId,
+				DECLARED_ASSERTIONS_BY_CONVERSATION[seed.conversationKey],
+			);
+		}
 
-		// Fold the WAL into the main db file: only `snapshot/xray.db` is
-		// committed (the -wal/-shm siblings are gitignored), so every row must
-		// live in the main file before we close.
-		store.db.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`);
+		// Fold the WAL into the main db file AND normalize the header: only
+		// `snapshot/xray.db` is committed (the -wal/-shm siblings are
+		// gitignored), so every row must live in the main file before we close.
+		store.db.run(sql`VACUUM INTO ${DB_TMP_PATH}`);
 	} finally {
 		store.close();
 	}
+
+	await promoteDeterministicDb();
+}
+
+/**
+ * A `wal_checkpoint` alone leaves SQLite's file change counter (header bytes
+ * 24-27, mirrored at 92-95) reflecting how many write transactions this run
+ * happened to commit — the one part of the fixture that isn't derived from
+ * `startedAt`, and enough to make two logically identical runs hash
+ * differently. `VACUUM INTO` writes a fresh file whose header is a pure
+ * function of the content; re-opening the copy puts it back in WAL mode, which
+ * is what the server always runs, so the first `openStore` on a fresh clone
+ * doesn't rewrite two bytes of a committed artifact.
+ */
+async function promoteDeterministicDb(): Promise<void> {
+	const copy = openStore({ path: DB_TMP_PATH });
+	try {
+		copy.db.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`);
+	} finally {
+		copy.close();
+	}
+	// Only the siblings are removed: `rename` replaces the main file atomically,
+	// so this step never leaves the fixture missing from disk. (The run as a whole
+	// still does — `main` unlinks it up front to start from a clean slate.)
+	for (const path of [DB_PATH, DB_TMP_PATH]) {
+		for (const suffix of ["-shm", "-wal"]) {
+			await rm(`${path}${suffix}`, { force: true });
+		}
+	}
+	await rename(DB_TMP_PATH, DB_PATH);
 }
 
 async function seedReplay(
@@ -411,6 +238,31 @@ async function seedReplay(
 		.where(eq(replays.id, replayId))
 		.run();
 
+	const replayOrdinal = SEED_REPLAYS.indexOf(seed) + 1;
+	const trace = buildSeededTrace(conversation, variant, script, replayOrdinal);
+	const { result } = ingestOtlpTraces(
+		store,
+		otlpRequestFor(replayId, replayOrdinal, seed.startedAt, trace),
+	);
+	// A rejected span means a vocabulary stopped recognizing what we emit; the
+	// fixture would then ship an empty span tree, which is exactly the silence
+	// this fixture exists to prevent.
+	if (result.rejectedSpans !== 0 || result.persistedSpans !== trace.length) {
+		throw new Error(
+			`seed-snapshot: ${replayId} expected ${trace.length} spans persisted, got ${result.persistedSpans} (rejected ${result.rejectedSpans})`,
+		);
+	}
+	// Recognized isn't the same as extracted. The expected counts never come from
+	// the spans just built, so a drifted attribute can't move the expectation
+	// along with the extraction it broke. (`modelUsage` is the script's agent
+	// turns; `toolCalls` is the trace builder's per-turn argument table, so a
+	// deleted entry there does move both — `fixture.test.ts` pins those counts.)
+	assertExtractedRows(store.db, {
+		replayId,
+		spans: trace.length,
+		...expectedExtractions(conversation, script),
+	});
+
 	// Drive the three chain stages in order. Each normally enqueues the next
 	// on the job queue; here the fake runner swallows that and we call the
 	// next stage directly, so the whole pipeline runs in one process.
@@ -425,6 +277,38 @@ async function seedReplay(
 	)({ replayId });
 	await makeCalculateMetricsProcessor(store, events, runner)({ replayId });
 	await makeEvaluateReplayProcessor(store, events, UNUSED_JUDGE_PROVIDER)({ replayId });
+
+	pinGeneratedTimestamps(store, seed, conversation);
+}
+
+/**
+ * The three processors stamp the real wall clock into `finished_at` and
+ * `evaluated_at` — they take no clock to inject. Left alone, a regeneration
+ * rewrites those columns (a binary diff with no logical change) and the
+ * inspector shows a replay that started in July and finished whenever the
+ * fixture was last rebuilt. Overwriting them here, at the seam where the run is
+ * already complete, keeps the whole fixture derived from `startedAt` and makes
+ * the `.db` genuinely byte-identical run to run.
+ */
+function pinGeneratedTimestamps(
+	store: ReturnType<typeof openStore>,
+	seed: SeedReplay,
+	conversation: ScriptedConversation,
+): void {
+	const finishedAt = new Date(
+		Date.parse(seed.startedAt) + conversation.recordingEndMs + 1_200,
+	).toISOString();
+	store.db.update(replays).set({ finishedAt }).where(eq(replays.id, seed.replayId)).run();
+	store.db
+		.update(assertionResults)
+		.set({ evaluatedAt: finishedAt })
+		.where(eq(assertionResults.replayId, seed.replayId))
+		.run();
+	store.db
+		.update(replayEvaluations)
+		.set({ evaluatedAt: finishedAt })
+		.where(eq(replayEvaluations.replayId, seed.replayId))
+		.run();
 }
 
 function printSummary(store: ReturnType<typeof openStore>): void {
