@@ -5,37 +5,32 @@ import type { ReplayEvents } from "@/server/replays/replays.events.ts";
 import { findReplay, markReplayFailed } from "@/server/replays/replays.service.ts";
 import type { ReplayResult } from "@/server/replays/replays.types.ts";
 import { projectTurnMetrics } from "@/server/replays/turn-metrics.ts";
-import {
-	replayEvaluations,
-	replayMetrics,
-	replays,
-	replayTurns,
-	speechSegments,
-} from "@/server/store/schema.ts";
+import { replayEvaluations, replayMetrics, replays, replayTurns } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
-import type { ReplayTurnRow, SpeechSegmentRow } from "@/server/store/types.ts";
+import type { ReplayTurnRow } from "@/server/store/types.ts";
 
 import type { JobRunner } from "../jobs.bunqueue.ts";
 import { JobProcessingError } from "../jobs.errors.ts";
 import type { JobPayload } from "../jobs.types.ts";
 
 /**
- * Minimum opposite-channel speech that counts as a barge-in. VAD emits segments
- * as short as 80ms, so without a floor a cough or a backchannel "mm-hmm" started
- * the yield clock and an agent that correctly kept talking was billed for the
- * whole remainder of its answer.
+ * Minimum opposite-side speech that counts as a barge-in, measured over the
+ * whole utterance (the derived turn). Without a floor, VAD segments as short as
+ * 80ms meant a cough or a backchannel "mm-hmm" started the yield clock and an
+ * agent that correctly kept talking was billed for the whole remainder of its
+ * answer.
  *
  * 500ms matches LiveKit's own `min_interruption_duration` default — the speech a
  * real agent waits for before it treats sound as an interruption — and the turn
  * boundary floor in `audio.turns.ts`. Every real barge-in in the committed
  * fixtures clears it (shortest is 510ms).
  *
- * Soft floor, knowingly: it measures a segment's **extent**, and `audio.vad.ts`
- * merges voiced runs up to `mergeGapMs` apart before filtering short ones, so
- * clustered noise inflates. Measured: three 70ms bursts 190ms apart report one
- * 600ms segment carrying 210ms of sound — enough to read as a barge-in. Clean
- * scripted channels don't produce that; a live human mic might. Tightening it
- * needs per-segment voiced duration out of the VAD, a schema change.
+ * Soft floor, knowingly: a turn's extent spans the pauses inside it, so speech
+ * totalling less than this can still clear it — two 150ms phrases 400ms apart
+ * are one 700ms turn carrying 300ms of sound. That is the deliberate direction
+ * to err, because the alternative missed real interruptions: a barge-in said
+ * with a beat in the middle is still a barge-in. Measuring actual voiced time
+ * would need per-segment voiced duration out of the VAD, a schema change.
  */
 const MIN_INTERRUPTION_MS = 500;
 
@@ -47,9 +42,8 @@ export interface CalculateMetricsResult {
 export type CalculateMetricsProcessor = (payload: JobPayload) => Promise<CalculateMetricsResult>;
 
 /**
- * Stage 2 of the analyze chain. Reads the VAD-derived turns + speech
- * segments + raw spans, computes per-turn timing metrics, writes
- * `replay_metrics`. For a scripted replay it then bumps analysis_step to
+ * Stage 2 of the analyze chain. Reads the VAD-derived turns, computes per-turn
+ * timing metrics, writes `replay_metrics`. For a scripted replay it then bumps analysis_step to
  * `metrics` and enqueues `evaluate-replay`. For a live replay there's no
  * script to evaluate, so this stage is terminal: it finalizes in the same
  * transaction (writes an empty `replay_evaluations` row + flips lifecycle
@@ -60,7 +54,7 @@ export type CalculateMetricsProcessor = (payload: JobPayload) => Promise<Calcula
  * - `agentResponseMs` (agent turns only): gap from the prior user turn's
  *   `voice_end_ms` to this turn's `voice_start_ms`. Null for user turns
  *   and for the first agent turn when no prior user turn exists.
- * - `interrupted`: true iff an opposite-channel speech segment of at least
+ * - `interrupted`: true iff an opposite-role turn of at least
  *   `MIN_INTERRUPTION_MS` started while this turn was still active.
  * - `interruptionStartMs`: the start of that overlap, when present.
  * - `yieldMs`: how long this turn kept talking after the interruption
@@ -68,7 +62,7 @@ export type CalculateMetricsProcessor = (payload: JobPayload) => Promise<Calcula
  *   wasn't interrupted. This is the barge-in "time to yield the floor".
  *
  * Model TTFT is NOT computed here — it's an optional span attribute on
- * `model_usage.ttft_ms` (see spec 0001), surfaced on the timeline.
+ * `model_usage.ttft_ms`, surfaced on the timeline.
  */
 export function makeCalculateMetricsProcessor(
 	store: Store,
@@ -88,13 +82,7 @@ export function makeCalculateMetricsProcessor(
 				.where(eq(replayTurns.replayId, replayId))
 				.orderBy(asc(replayTurns.idx))
 				.all();
-			const segments = store.db
-				.select()
-				.from(speechSegments)
-				.where(eq(speechSegments.replayId, replayId))
-				.all();
-
-			const rows = computeMetrics(replayId, turns, segments);
+			const rows = computeMetrics(replayId, turns);
 
 			// Decide live vs scripted BEFORE the transaction. The conversation
 			// row is immutable post-creation (no live-flag flip), so reading it
@@ -202,7 +190,6 @@ export function makeCalculateMetricsProcessor(
 export function computeMetrics(
 	replayId: string,
 	turns: readonly ReplayTurnRow[],
-	segments: readonly SpeechSegmentRow[],
 ): Array<{
 	replayId: string;
 	turnIdx: number;
@@ -214,7 +201,7 @@ export function computeMetrics(
 	const sorted = [...turns].sort((a, b) => a.idx - b.idx);
 	return sorted.map((turn, i) => {
 		const agentResponseMs = turn.role === "agent" ? agentResponseFor(turn, sorted, i) : null;
-		const { interrupted, interruptionStartMs } = interruptionFor(turn, segments);
+		const { interrupted, interruptionStartMs } = interruptionFor(turn, sorted);
 		// Time to yield the floor: from when the other side cut in to when this
 		// turn's own voice stopped. Only defined when an interruption landed.
 		const yieldMs =
@@ -245,19 +232,32 @@ function agentResponseFor(
 	return null;
 }
 
+/**
+ * Whether the other side cut into this turn, measured over their whole utterance
+ * — the opposite-role *turn* — rather than over one VAD segment.
+ *
+ * A single segment is the wrong unit: VAD only bridges gaps up to its own
+ * `mergeGapMs`, so one interruption said with a beat in the middle ("Wait—
+ * stop!") arrives as two shorter segments and neither clears the floor on its
+ * own. Turn derivation has already grouped those into one utterance, so reading
+ * turns gets the grouping for free and — more importantly — can never disagree
+ * with it. Re-deriving the grouping here from segments would be a second
+ * implementation of `audio.turns.ts`, free to drift from it and reintroduce
+ * exactly this bug.
+ */
 function interruptionFor(
 	turn: ReplayTurnRow,
-	segments: readonly SpeechSegmentRow[],
+	turns: readonly ReplayTurnRow[],
 ): { interrupted: boolean; interruptionStartMs: number | null } {
 	const opposite = turn.role === "user" ? "agent" : "user";
-	// Earliest overlap, not first-iterated: yieldMs runs from when the floor was
-	// first contested, and `segments` carries no ordering guarantee.
+	// Earliest onset, not first-iterated: yieldMs runs from when the floor was
+	// first contested, and two opposite turns can both start inside this one.
 	let earliest: number | null = null;
-	for (const seg of segments) {
-		if (seg.channel !== opposite) continue;
-		if (seg.endMs - seg.startMs < MIN_INTERRUPTION_MS) continue;
-		if (seg.startMs >= turn.voiceStartMs && seg.startMs < turn.voiceEndMs) {
-			earliest = earliest === null ? seg.startMs : Math.min(earliest, seg.startMs);
+	for (const other of turns) {
+		if (other.role !== opposite) continue;
+		if (other.voiceEndMs - other.voiceStartMs < MIN_INTERRUPTION_MS) continue;
+		if (other.voiceStartMs >= turn.voiceStartMs && other.voiceStartMs < turn.voiceEndMs) {
+			earliest = earliest === null ? other.voiceStartMs : Math.min(earliest, other.voiceStartMs);
 		}
 	}
 	return earliest === null

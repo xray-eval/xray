@@ -51,6 +51,3 @@ Thumbs.db
 # they shouldn't pollute git status here OR trip biome's config discovery
 # (their full biome.json copy makes biome see two competing root configs).
 .claude/worktrees/
-
-# React Cosmos generated artifacts (local dev only — see .claude/rules/public-repo.md)
-cosmos/

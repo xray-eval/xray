@@ -213,6 +213,24 @@ describe("deriveTurns", () => {
 			]);
 		});
 
+		// "Wait— stop!" with a beat in the middle, against an agent that yields
+		// promptly. The agent's answer ends inside the caller's pause, but that stop
+		// is the agent *yielding* to the interruption — not the agent taking a turn
+		// and handing it back — so the caller still holds the floor and their two
+		// phrases are one turn. Splitting them leaves both halves under the barge-in
+		// minimum, and the interruption disappears from the metrics entirely.
+		it("keeps a barge-in whole when the interrupted speaker yields during its pause", () => {
+			const turns = deriveTurns(
+				[seg(4290, 4590), seg(4840, 5240)],
+				[seg(2280, 4620), seg(6000, 8010)],
+			);
+			expect(turns.map((t) => `${t.role} ${t.voiceStartMs}-${t.voiceEndMs}`)).toEqual([
+				"agent 2280-4620",
+				"user 4290-5240",
+				"agent 6000-8010",
+			]);
+		});
+
 		// Guards MIN_UTTERANCE_MS from below. A 150ms blip in a quiet pause is a
 		// fragment, not a turn: without the floor it splits one answer in two,
 		// which scatters that turn's transcript and assertions across the halves.

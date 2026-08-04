@@ -63,16 +63,19 @@ function groupUtterances(
 	const sorted = [...own].sort((a, b) => a.startMs - b.startMs);
 	const utterances: Utterance[] = [];
 	let segments: VadSegment[] = [];
+	let openStartMs = 0;
 	let openEndMs = 0;
 	for (const segment of sorted) {
 		if (segments.length === 0) {
 			segments = [segment];
+			openStartMs = segment.startMs;
 			openEndMs = segment.endMs;
 			continue;
 		}
-		if (floorChangedHands(openEndMs, segment.startMs, other)) {
+		if (floorChangedHands(openStartMs, openEndMs, segment.startMs, other)) {
 			utterances.push({ role, segments });
 			segments = [segment];
+			openStartMs = segment.startMs;
 			openEndMs = segment.endMs;
 			continue;
 		}
@@ -150,11 +153,13 @@ const VAD_FRAME_MS = 30;
  *
  * - **They have gone quiet.** Then they were speaking when we stopped and have
  *   since finished: we yielded, they had their say, and our resumption answers
- *   them. Gated only by `MIN_UTTERANCE_MS`, because a short reply is still a
- *   reply. "Speaking when we stopped" is what keeps a speaker who talked *over*
- *   the other side and carried on afterwards from being cut at its own next
- *   breath — there, the pause is mid-utterance and the other side had long since
- *   finished.
+ *   them. Gated by `MIN_UTTERANCE_MS` — a short reply is still a reply — unless
+ *   their stop was itself a yield to *us*: a completed segment straddling our own
+ *   onset means we took the floor off them mid-utterance, and a caller who barges
+ *   in and draws breath still holds it. "Speaking when we stopped" is what keeps a
+ *   speaker who talked *over* the other side and carried on afterwards from being
+ *   cut at its own next breath — there, the pause is mid-utterance and the other
+ *   side had long since finished.
  * - **They are still talking.** Then we are either answering them or talking
  *   over them, and only how long they held our pause separates the two:
  *   `FLOOR_HANDOFF_MS`.
@@ -186,6 +191,7 @@ const VAD_FRAME_MS = 30;
  * so a refactor can't move it unnoticed.
  */
 function floorChangedHands(
+	utteranceStartMs: number,
 	gapStartMs: number,
 	gapEndMs: number,
 	other: readonly VadSegment[],
@@ -198,7 +204,13 @@ function floorChangedHands(
 			(segment) =>
 				segment.endMs >= gapStartMs - VAD_FRAME_MS &&
 				segment.endMs <= gapEndMs &&
-				segment.endMs - segment.startMs >= MIN_UTTERANCE_MS,
+				segment.endMs - segment.startMs >= MIN_UTTERANCE_MS &&
+				// Their stopping is a yield, not a handoff, when we took the floor off
+				// them mid-utterance: a caller who barges in and draws breath still
+				// holds the floor, so "Wait— stop!" stays one turn. Without this, both
+				// halves fall under the barge-in minimum and the interruption vanishes
+				// from the metrics.
+				!(segment.startMs < utteranceStartMs && segment.endMs > utteranceStartMs),
 		);
 	}
 	let heldMs = 0;

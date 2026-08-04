@@ -6,7 +6,7 @@ import { makeReplayEvents } from "@/server/replays/replays.events.ts";
 import { createReplay } from "@/server/replays/replays.service.ts";
 import { replayEvaluations, replayMetrics, replays, replayTurns } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
-import type { ReplayTurnRow, SpeechSegmentRow } from "@/server/store/types.ts";
+import type { ReplayTurnRow } from "@/server/store/types.ts";
 
 import { computeMetrics, makeCalculateMetricsProcessor } from "./calculate-metrics.processor.ts";
 import { describe, expect, it } from "bun:test";
@@ -30,49 +30,33 @@ async function setupReplay(opts: { live?: boolean } = {}): Promise<{
 	return { store, replayId: detail.id, startedAt: row.startedAt };
 }
 
+/** A derived turn row; only the voice window and role drive these metrics. */
+function turn(
+	idx: number,
+	role: "user" | "agent",
+	voiceStartMs: number,
+	voiceEndMs: number,
+): ReplayTurnRow {
+	return {
+		replayId: "r",
+		idx,
+		role,
+		turnStartMs: voiceStartMs,
+		turnEndMs: voiceEndMs,
+		voiceStartMs,
+		voiceEndMs,
+	};
+}
+
 describe("computeMetrics (pure)", () => {
 	it("returns agentResponseMs = voiceStart - priorUserVoiceEnd for agent turns", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "user",
-				turnStartMs: 0,
-				turnEndMs: 1000,
-				voiceStartMs: 0,
-				voiceEndMs: 1000,
-			},
-			{
-				replayId: "r",
-				idx: 1,
-				role: "agent",
-				turnStartMs: 1000,
-				turnEndMs: 2500,
-				voiceStartMs: 1300,
-				voiceEndMs: 2500,
-			},
-		];
-		const rows = computeMetrics("r", turns, []);
+		const rows = computeMetrics("r", [turn(0, "user", 0, 1000), turn(1, "agent", 1300, 2500)]);
 		expect(rows[1]?.agentResponseMs).toBe(300);
 		expect(rows[0]?.agentResponseMs).toBeNull();
 	});
 
-	it("flags interrupted=true when opposite channel starts a segment inside the turn", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 0,
-				turnEndMs: 3000,
-				voiceStartMs: 500,
-				voiceEndMs: 2800,
-			},
-		];
-		const segments: SpeechSegmentRow[] = [
-			{ id: 1, replayId: "r", channel: "user", startMs: 1200, endMs: 1900 },
-		];
-		const rows = computeMetrics("r", turns, segments);
+	it("flags interrupted=true when an opposite-role turn starts inside the turn", () => {
+		const rows = computeMetrics("r", [turn(0, "agent", 500, 2800), turn(1, "user", 1200, 1900)]);
 		expect(rows[0]?.interrupted).toBe(true);
 		expect(rows[0]?.interruptionStartMs).toBe(1200);
 	});
@@ -80,24 +64,25 @@ describe("computeMetrics (pure)", () => {
 	// A backchannel is not a barge-in. Without a minimum the shortest thing VAD
 	// will emit (80ms) started the yield clock, so an agent that correctly ignored
 	// a cough was billed for every remaining second of its own answer.
-	it("ignores an opposite-channel blip shorter than the barge-in minimum", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 0,
-				turnEndMs: 10_000,
-				voiceStartMs: 1000,
-				voiceEndMs: 10_000,
-			},
-		];
-		const segments: SpeechSegmentRow[] = [
-			{ id: 1, replayId: "r", channel: "user", startMs: 2000, endMs: 2090 },
-		];
-		const rows = computeMetrics("r", turns, segments);
+	it("ignores an opposite-role turn shorter than the barge-in minimum", () => {
+		const rows = computeMetrics("r", [turn(0, "agent", 1000, 10_000), turn(1, "user", 2000, 2090)]);
 		expect(rows[0]?.interrupted).toBe(false);
 		expect(rows[0]?.yieldMs).toBeNull();
+	});
+
+	// A barge-in is one thing the caller said, not one thing the VAD emitted.
+	// "Wait— stop!" with a beat in the middle arrives as two sub-500ms segments,
+	// because VAD only bridges gaps up to its own mergeGapMs. Measuring one segment
+	// at a time missed it entirely and `yielded_within_ms` errored with "no
+	// interruption landed" on an agent that was plainly cut off — the failure #126
+	// was about. Turn derivation groups those segments into this one 950ms turn
+	// (see audio.turns.test.ts), so reading turns is what makes the barge-in
+	// visible here.
+	it("sees a barge-in that VAD split across a pause", () => {
+		const rows = computeMetrics("r", [turn(0, "agent", 2280, 4620), turn(1, "user", 4290, 5240)]);
+		expect(rows[0]?.interrupted).toBe(true);
+		expect(rows[0]?.interruptionStartMs).toBe(4290);
+		expect(rows[0]?.yieldMs).toBe(330);
 	});
 
 	// The floor measures the interrupting utterance's OWN length, not the part of
@@ -106,121 +91,60 @@ describe("computeMetrics (pure)", () => {
 	// overlap-based floor would reject it and so would fail precisely the agents
 	// that yielded fastest — the better the agent, the smaller the overlap.
 	it("measures the barge-in minimum against the whole utterance, not the overlap", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 17_340,
-				turnEndMs: 21_540,
-				voiceStartMs: 19_140,
-				voiceEndMs: 21_540,
-			},
-		];
-		const segments: SpeechSegmentRow[] = [
-			{ id: 1, replayId: "r", channel: "user", startMs: 21_210, endMs: 21_870 },
-		];
-		const rows = computeMetrics("r", turns, segments);
+		const rows = computeMetrics("r", [
+			turn(0, "agent", 19_140, 21_540),
+			turn(1, "user", 21_210, 21_870),
+		]);
 		expect(rows[0]?.interrupted).toBe(true);
 		expect(rows[0]?.yieldMs).toBe(330);
 	});
 
 	// The floor is on the interrupting speech, not on how far into the turn it
 	// lands: a real barge-in that starts late still counts.
-	it("counts an opposite-channel segment at or above the minimum", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 0,
-				turnEndMs: 10_000,
-				voiceStartMs: 1000,
-				voiceEndMs: 10_000,
-			},
-		];
-		const segments: SpeechSegmentRow[] = [
-			{ id: 1, replayId: "r", channel: "user", startMs: 9000, endMs: 9500 },
-		];
-		const rows = computeMetrics("r", turns, segments);
+	it("counts an opposite-role turn exactly at the minimum", () => {
+		const rows = computeMetrics("r", [turn(0, "agent", 1000, 10_000), turn(1, "user", 9000, 9500)]);
 		expect(rows[0]?.interrupted).toBe(true);
 		expect(rows[0]?.yieldMs).toBe(1000);
 	});
 
-	it("interrupted=false when only same-channel segments overlap (the agent's own voice)", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 0,
-				turnEndMs: 2000,
-				voiceStartMs: 500,
-				voiceEndMs: 1800,
-			},
-		];
-		const segments: SpeechSegmentRow[] = [
-			{ id: 1, replayId: "r", channel: "agent", startMs: 600, endMs: 1500 },
-		];
-		const rows = computeMetrics("r", turns, segments);
+	// Overlapping same-role turns can't come out of `deriveTurns`, but the role
+	// filter is worth pinning: an agent's own voice must never read as a barge-in
+	// against itself.
+	it("interrupted=false when only a same-role turn overlaps", () => {
+		const rows = computeMetrics("r", [turn(0, "agent", 500, 1800), turn(1, "agent", 600, 1500)]);
 		expect(rows[0]?.interrupted).toBe(false);
 	});
 
 	it("yieldMs = voiceEnd - interruptionStart for an interrupted turn, null otherwise", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 0,
-				turnEndMs: 2000,
-				voiceStartMs: 500,
-				voiceEndMs: 1800,
-			},
-			{
-				replayId: "r",
-				idx: 1,
-				role: "agent",
-				turnStartMs: 2000,
-				turnEndMs: 3000,
-				voiceStartMs: 2000,
-				voiceEndMs: 3000,
-			},
-		];
-		// User cuts in at 1500; the agent (voiced through 1800) keeps talking 300ms.
-		const segments: SpeechSegmentRow[] = [
-			{ id: 1, replayId: "r", channel: "user", startMs: 1500, endMs: 2200 },
-		];
-		const rows = computeMetrics("r", turns, segments);
+		// The caller cuts in at 1500; the agent (voiced through 1800) keeps talking
+		// 300ms. The agent's next turn then starts at 2000, while the caller is still
+		// going — so the caller's turn is itself interrupted, 200ms before it ends.
+		// Interruption is symmetric, and both directions are asserted here.
+		const rows = computeMetrics("r", [
+			turn(0, "agent", 500, 1800),
+			turn(1, "user", 1500, 2200),
+			turn(2, "agent", 2000, 3000),
+		]);
 		expect(rows[0]?.yieldMs).toBe(300);
-		// The uninterrupted turn has no yield time.
-		expect(rows[1]?.interrupted).toBe(false);
-		expect(rows[1]?.yieldMs).toBeNull();
+		expect(rows[1]?.interrupted).toBe(true);
+		expect(rows[1]?.interruptionStartMs).toBe(2000);
+		expect(rows[1]?.yieldMs).toBe(200);
+		// The last turn is talked over by nobody after it.
+		expect(rows[2]?.interrupted).toBe(false);
+		expect(rows[2]?.yieldMs).toBeNull();
 	});
 
-	it("uses the EARLIEST opposite-channel overlap, not whichever row iterates first", () => {
-		const turns: ReplayTurnRow[] = [
-			{
-				replayId: "r",
-				idx: 0,
-				role: "agent",
-				turnStartMs: 0,
-				turnEndMs: 2000,
-				voiceStartMs: 500,
-				voiceEndMs: 1800,
-			},
-		];
-		// Two user segments overlap the agent turn; the LATER cut-in is first in
-		// the array. yieldMs must run from the earliest overlap (1200), not from
-		// whatever order the segments happen to be stored in.
-		// Both clear the barge-in minimum; only their order in the array differs.
-		const segments: SpeechSegmentRow[] = [
-			{ id: 2, replayId: "r", channel: "user", startMs: 1500, endMs: 2100 },
-			{ id: 1, replayId: "r", channel: "user", startMs: 1200, endMs: 1750 },
-		];
-		const rows = computeMetrics("r", turns, segments);
+	it("uses the EARLIEST qualifying onset, not whichever turn iterates first", () => {
+		// Two separate caller turns land inside one long agent turn. yieldMs must run
+		// from the first contested moment, not from whichever row comes first in the
+		// array — so the later one is listed first here.
+		const rows = computeMetrics("r", [
+			turn(0, "agent", 500, 4000),
+			turn(2, "user", 3000, 3600),
+			turn(1, "user", 1200, 1750),
+		]);
 		expect(rows[0]?.interruptionStartMs).toBe(1200);
-		expect(rows[0]?.yieldMs).toBe(600); // 1800 - 1200
+		expect(rows[0]?.yieldMs).toBe(2800); // 4000 - 1200
 	});
 });
 
