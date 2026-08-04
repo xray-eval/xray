@@ -52,11 +52,14 @@ describe("createTurnSynthesizer", () => {
 	});
 
 	it("peak-normalizes stored audio so VAD-calibrated segmentation can see quiet providers", async () => {
-		// Regression for the Deepgram Aura German voices: their raw linear16
-		// sits near -33 dBFS RMS — below the ≈-23 dBFS energy threshold the
-		// VAD is calibrated for — so every replay with such a turn died with
-		// spec_vad_mismatch (zero user segments detected in the mixdown).
-		const quiet = makeSine(800, 500);
+		// Regression for the Deepgram Aura German voices, whose raw linear16 sat
+		// below the VAD energy threshold, so every replay with such a turn died
+		// with spec_vad_mismatch (zero user segments detected in the mixdown).
+		// Aura's own ≈-33 dBFS now clears the threshold on its own (it moved to
+		// ≈-36 dBFS / 500 RMS), but quieter providers exist and normalization is
+		// what keeps them visible — so the fixture is a provider under the current
+		// floor: amplitude 400 ⇒ 8e4 mean energy < 2.5e5.
+		const quiet = makeSine(400, 500);
 		// Prove the fixture actually reproduces the failure pre-normalization.
 		expect(runVadOnChannel(quiet, 48_000, {})).toHaveLength(0);
 

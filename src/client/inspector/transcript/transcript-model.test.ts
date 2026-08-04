@@ -76,6 +76,23 @@ describe("activeTurnIndex", () => {
 	it("returns -1 in a gap between turns", () => {
 		expect(activeTurnIndex(entries, 1.0)).toBe(-1);
 	});
+
+	// A barge-in nests one turn inside another: the interrupted speaker keeps
+	// talking while the interrupter's turn runs its course. The enclosing turn
+	// contains the playhead the whole time, so picking the first match leaves the
+	// nested turn permanently unhighlighted during playback.
+	it("prefers the innermost turn when one turn nests inside another", () => {
+		const nested = buildTranscriptView(
+			[transcript({ turn_idx: 0 }), transcript({ turn_idx: 1 })],
+			[
+				turn({ idx: 0, voice_start_ms: 1410, voice_end_ms: 12_060 }),
+				turn({ idx: 1, voice_start_ms: 2250, voice_end_ms: 5760 }),
+			],
+		);
+		expect(activeTurnIndex(nested, 3.0)).toBe(1);
+		// Outside the nested window the enclosing turn still wins.
+		expect(activeTurnIndex(nested, 8.0)).toBe(0);
+	});
 });
 
 describe("activeWordIndex", () => {

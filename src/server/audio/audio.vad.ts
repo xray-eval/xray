@@ -1,12 +1,19 @@
 import type { VadConfig, VadSegment } from "./audio.types.ts";
 
 const DEFAULT_FRAME_DURATION_MS = 30;
-// 5e6 mean energy ≈ 2236 int16 RMS amplitude ≈ -23 dBFS. Calibrated against
-// the synthetic test fixtures only (200 Hz sine at amplitude 15000 trips,
-// 500-amplitude background doesn't). Real WebRTC + TTS output has not been
-// measured against this; mis-tuning on real audio is plausible (too strict
-// = quiet speech missed; too sensitive = WebRTC comfort noise tripped).
-const DEFAULT_ENERGY_THRESHOLD = 5_000_000;
+// 2.5e5 mean energy = 500 int16 RMS ≈ -36 dBFS — deliberately the same boundary
+// the SDK driver uses to tell agent speech from the comfort noise a track carries
+// while the agent is thinking (`_SPEECH_RMS_FLOOR` in
+// `sdk/python/src/xray/runtime/livekit.py`). Driver and server disagreeing on
+// what counts as speech is how a barge-in the driver timed against real audio
+// became invisible to the analyzer.
+//
+// Calibrated against two real azure-openai voice-to-voice recordings, not just
+// the sine fixtures: agent speech there measures 846-1897 RMS (7.2e5-3.6e6 frame
+// energy) while the loudest non-speech frame measured 1.07e5. The previous 5e6
+// was tuned on 15_000-amplitude sines alone and missed ~88% of one recording's
+// speech frames, which fragmented turns and broke barge-in attribution.
+const DEFAULT_ENERGY_THRESHOLD = 250_000;
 const DEFAULT_MERGE_GAP_MS = 200;
 const DEFAULT_MIN_SEGMENT_MS = 80;
 const DEFAULT_ZCR_MIN = 0;

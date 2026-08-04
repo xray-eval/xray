@@ -3,7 +3,7 @@
  * wall-clock `started_at` into an offset on the audio timeline (ms from the
  * recording's t=0), and decides which turn's window an offset falls in.
  *
- * See `docs/specs/0001-timeline-clock-alignment.md`. The origin is ALWAYS
+ * The origin is ALWAYS
  * `replays.recording_started_at` (the driver's audio sample-0 wall-clock) —
  * never `replays.started_at`, which is row-creation time and precedes the
  * recording by the room-connect + agent-join latency.

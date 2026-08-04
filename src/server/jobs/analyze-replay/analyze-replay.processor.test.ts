@@ -22,7 +22,7 @@ interface ToneBlock {
 	durationMs: number;
 	voiced: boolean;
 	/** Sine amplitude for voiced blocks. Default 15_000 trips the VAD;
-	 *  pass a sub-threshold value (< ~3_162 ⇒ mean energy < 5e6) to lay
+	 *  pass a sub-threshold value (< ~707 ⇒ mean energy < 2.5e5) to lay
 	 *  down real audio the energy VAD does NOT detect. */
 	amplitude?: number;
 }
@@ -159,10 +159,11 @@ describe("analyze-replay processor", () => {
 		//
 		// Model that here: the agent turn's detected voice is a short loud
 		// blip at 1.5s, and the actual reply is a quiet 2s tone at 4.0–6.0s —
-		// below the VAD energy threshold (amplitude 2_500 ⇒ mean energy
-		// ≈3.1e6 < 5e6), so no speech segment marks it. The slice must still
-		// cover it: the agent turn is the last turn on its channel, so its
-		// window runs from its own voice onset to the end of the recording.
+		// below the VAD energy threshold (amplitude 300 ⇒ mean energy
+		// 4.5e4 < 2.5e5), so no speech segment marks it. The slice must still
+		// cover it: the agent turn is the last turn on its channel, so its window
+		// runs from its own voice onset to where its audio stops — which is past
+		// the quiet reply, since a sub-VAD tone still carries signal.
 		const { replayId } = await seedReplayForAudio(store);
 		const wav = makeStereo({
 			userBlocks: [
@@ -173,7 +174,7 @@ describe("analyze-replay processor", () => {
 				{ durationMs: 1500, voiced: false },
 				{ durationMs: 300, voiced: true },
 				{ durationMs: 2200, voiced: false },
-				{ durationMs: 2000, voiced: true, amplitude: 2_500 },
+				{ durationMs: 2000, voiced: true, amplitude: 300 },
 				{ durationMs: 500, voiced: false },
 			],
 		});
@@ -194,22 +195,61 @@ describe("analyze-replay processor", () => {
 		expect(result.turnsWritten).toBe(2);
 
 		// The agent turn's slice — its window starts at the agent's own voice
-		// onset (~1.5s) and, being the last turn on its channel, extends to the
-		// recording end — must contain the quiet reply. Detect it by a sustained
-		// run of sub-threshold-amplitude samples: a 2s sine at amplitude 2_500
-		// puts ~59% of its 96_000 samples in [1_500, 3_500]; the loud 300ms blip
-		// only sweeps that band briefly (~1_300 samples) and the user channel is
-		// silent after 1.0s, so a 40_000 floor cleanly picks out the one slice
-		// that actually covered the reply.
+		// onset (~1.5s) and, being the last turn on its channel, extends to where
+		// its channel goes quiet — must contain the quiet reply. Detect it by a sustained
+		// run of sub-threshold-amplitude samples: a 2s sine at amplitude 300 puts
+		// 40_000 of its 96_000 samples in [150, 275], a band the 15_000-amplitude
+		// blips never linger in (0 samples each), so a 30_000 floor cleanly picks
+		// out the one slice that actually covered the reply.
 		const coveredQuietReply = transcription.calls.some((call) => {
 			let quietBandSamples = 0;
 			for (const v of call.audio) {
 				const mag = Math.abs(v);
-				if (mag >= 1_500 && mag <= 3_500) quietBandSamples++;
+				if (mag >= 150 && mag <= 275) quietBandSamples++;
 			}
-			return quietBandSamples >= 40_000;
+			return quietBandSamples >= 30_000;
 		});
 		expect(coveredQuietReply).toBe(true);
+	});
+
+	it("stops a turn's slice where the channel goes silent, not at the end of the file", async () => {
+		// Regression from replay 2a8fd70b: the agent stopped speaking 12.5s into a
+		// 60s recording (the driver waited out a turn that never came), and because
+		// the last turn on each channel extended to the recording end, the provider
+		// was handed 57-second slices that were 80% silence. It answered with an
+		// empty transcript for one turn and a sentence the audio could not contain
+		// for another, and the judge then graded that text.
+		const { replayId } = await seedReplayForAudio(store);
+		const wav = makeStereo({
+			userBlocks: [
+				{ durationMs: 1000, voiced: true },
+				{ durationMs: 40_000, voiced: false },
+			],
+			agentBlocks: [
+				{ durationMs: 1200, voiced: false },
+				{ durationMs: 800, voiced: true },
+				{ durationMs: 40_000, voiced: false },
+			],
+		});
+		const wavBytes = writeStereoWav(wav);
+		const relPath = `${replayId}/replay.wav`;
+		const absPath = join(audio.path, relPath);
+		await mkdir(dirname(absPath), { recursive: true });
+		await writeFile(absPath, wavBytes);
+		store.db
+			.update(replays)
+			.set({ audioPath: relPath, lifecycleState: "analyzing", analysisStep: "vad" })
+			.where(eq(replays.id, replayId))
+			.run();
+
+		const { processor, transcription } = makeProcessor();
+		expect((await processor({ replayId })).ok).toBe(true);
+
+		// Every slice must end near the last audible sample (~2.0s), not at 41s.
+		const longestMs = Math.max(
+			...transcription.calls.map((call) => (call.audio.length / SAMPLE_RATE) * 1000),
+		);
+		expect(longestMs).toBeLessThan(5_000);
 	});
 
 	it("transcribes an interrupting turn from its own onset, not the interrupted turn's tail", async () => {

@@ -40,10 +40,21 @@ export function buildTranscriptView(
 		});
 }
 
-/** Index of the entry whose voice window contains `sec`, or -1 when none do. */
+/**
+ * Index of the entry whose voice window contains `sec`, or -1 when none do. On a
+ * barge-in the windows nest — the interrupted speaker keeps talking while the
+ * interrupter's turn runs — so the innermost (latest-starting) match wins;
+ * picking the first would leave the nested turn dark for its whole duration.
+ */
 export function activeTurnIndex(entries: readonly TranscriptEntry[], sec: number): number {
 	const ms = sec * 1000;
-	return entries.findIndex((e) => ms >= e.voiceStartMs && ms < e.voiceEndMs);
+	let active = -1;
+	entries.forEach((entry, idx) => {
+		if (ms < entry.voiceStartMs || ms >= entry.voiceEndMs) return;
+		const current = entries[active];
+		if (current === undefined || entry.voiceStartMs >= current.voiceStartMs) active = idx;
+	});
+	return active;
 }
 
 /** Index of the word whose [start_ms, end_ms) window contains `ms`, or -1. */

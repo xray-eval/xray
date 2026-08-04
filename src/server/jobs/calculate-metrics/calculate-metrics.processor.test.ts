@@ -64,17 +64,87 @@ describe("computeMetrics (pure)", () => {
 				idx: 0,
 				role: "agent",
 				turnStartMs: 0,
-				turnEndMs: 2000,
+				turnEndMs: 3000,
 				voiceStartMs: 500,
-				voiceEndMs: 1800,
+				voiceEndMs: 2800,
 			},
 		];
 		const segments: SpeechSegmentRow[] = [
-			{ id: 1, replayId: "r", channel: "user", startMs: 1200, endMs: 1500 },
+			{ id: 1, replayId: "r", channel: "user", startMs: 1200, endMs: 1900 },
 		];
 		const rows = computeMetrics("r", turns, segments);
 		expect(rows[0]?.interrupted).toBe(true);
 		expect(rows[0]?.interruptionStartMs).toBe(1200);
+	});
+
+	// A backchannel is not a barge-in. Without a minimum the shortest thing VAD
+	// will emit (80ms) started the yield clock, so an agent that correctly ignored
+	// a cough was billed for every remaining second of its own answer.
+	it("ignores an opposite-channel blip shorter than the barge-in minimum", () => {
+		const turns: ReplayTurnRow[] = [
+			{
+				replayId: "r",
+				idx: 0,
+				role: "agent",
+				turnStartMs: 0,
+				turnEndMs: 10_000,
+				voiceStartMs: 1000,
+				voiceEndMs: 10_000,
+			},
+		];
+		const segments: SpeechSegmentRow[] = [
+			{ id: 1, replayId: "r", channel: "user", startMs: 2000, endMs: 2090 },
+		];
+		const rows = computeMetrics("r", turns, segments);
+		expect(rows[0]?.interrupted).toBe(false);
+		expect(rows[0]?.yieldMs).toBeNull();
+	});
+
+	// The floor measures the interrupting utterance's OWN length, not the part of
+	// it that overlaps the turn. Replay 6036f881's numbers: the agent yielded 330ms
+	// after a 660ms barge-in, so only 330ms of that line lands inside the turn. An
+	// overlap-based floor would reject it and so would fail precisely the agents
+	// that yielded fastest — the better the agent, the smaller the overlap.
+	it("measures the barge-in minimum against the whole utterance, not the overlap", () => {
+		const turns: ReplayTurnRow[] = [
+			{
+				replayId: "r",
+				idx: 0,
+				role: "agent",
+				turnStartMs: 17_340,
+				turnEndMs: 21_540,
+				voiceStartMs: 19_140,
+				voiceEndMs: 21_540,
+			},
+		];
+		const segments: SpeechSegmentRow[] = [
+			{ id: 1, replayId: "r", channel: "user", startMs: 21_210, endMs: 21_870 },
+		];
+		const rows = computeMetrics("r", turns, segments);
+		expect(rows[0]?.interrupted).toBe(true);
+		expect(rows[0]?.yieldMs).toBe(330);
+	});
+
+	// The floor is on the interrupting speech, not on how far into the turn it
+	// lands: a real barge-in that starts late still counts.
+	it("counts an opposite-channel segment at or above the minimum", () => {
+		const turns: ReplayTurnRow[] = [
+			{
+				replayId: "r",
+				idx: 0,
+				role: "agent",
+				turnStartMs: 0,
+				turnEndMs: 10_000,
+				voiceStartMs: 1000,
+				voiceEndMs: 10_000,
+			},
+		];
+		const segments: SpeechSegmentRow[] = [
+			{ id: 1, replayId: "r", channel: "user", startMs: 9000, endMs: 9500 },
+		];
+		const rows = computeMetrics("r", turns, segments);
+		expect(rows[0]?.interrupted).toBe(true);
+		expect(rows[0]?.yieldMs).toBe(1000);
 	});
 
 	it("interrupted=false when only same-channel segments overlap (the agent's own voice)", () => {
@@ -143,9 +213,10 @@ describe("computeMetrics (pure)", () => {
 		// Two user segments overlap the agent turn; the LATER cut-in is first in
 		// the array. yieldMs must run from the earliest overlap (1200), not from
 		// whatever order the segments happen to be stored in.
+		// Both clear the barge-in minimum; only their order in the array differs.
 		const segments: SpeechSegmentRow[] = [
-			{ id: 2, replayId: "r", channel: "user", startMs: 1500, endMs: 1700 },
-			{ id: 1, replayId: "r", channel: "user", startMs: 1200, endMs: 1400 },
+			{ id: 2, replayId: "r", channel: "user", startMs: 1500, endMs: 2100 },
+			{ id: 1, replayId: "r", channel: "user", startMs: 1200, endMs: 1750 },
 		];
 		const rows = computeMetrics("r", turns, segments);
 		expect(rows[0]?.interruptionStartMs).toBe(1200);
