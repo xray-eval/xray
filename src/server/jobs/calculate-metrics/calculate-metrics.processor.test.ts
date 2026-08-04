@@ -107,6 +107,16 @@ describe("computeMetrics (pure)", () => {
 		expect(rows[0]?.yieldMs).toBe(1000);
 	});
 
+	// The window is half-open, and exact adjacency is ordinary on a 30ms VAD grid:
+	// one side stops at the millisecond the other starts. That is a clean handoff,
+	// not an interruption — treating it as one would report a 0ms yield on turns
+	// where nobody talked over anybody.
+	it("does not flag a turn whose successor starts exactly as it ends", () => {
+		const rows = computeMetrics("r", [turn(0, "user", 0, 1000), turn(1, "agent", 1000, 2500)]);
+		expect(rows[0]?.interrupted).toBe(false);
+		expect(rows[0]?.yieldMs).toBeNull();
+	});
+
 	// Overlapping same-role turns can't come out of `deriveTurns`, but the role
 	// filter is worth pinning: an agent's own voice must never read as a barge-in
 	// against itself.

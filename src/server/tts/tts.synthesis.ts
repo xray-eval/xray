@@ -17,7 +17,7 @@ const TARGET_SAMPLE_RATE = 48_000;
 // `spec_vad_mismatch` (zero user segments detected). That floor is ≈-36 dBFS now
 // (audio.vad.ts), which Aura clears on its own — but quieter providers don't,
 // and Aura's ~3 dB of margin is an average against a per-frame threshold, so its
-// onset and trailing frames would still dip under. Normalization is what keeps
+// onset and trailing frames can dip under. Normalization is what keeps
 // segmentation independent of the provider.
 const TARGET_PEAK = 27_852;
 

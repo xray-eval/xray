@@ -209,7 +209,17 @@ function floorChangedHands(
 				// them mid-utterance: a caller who barges in and draws breath still
 				// holds the floor, so "Wait— stop!" stays one turn. Without this, both
 				// halves fall under the barge-in minimum and the interruption vanishes
-				// from the metrics.
+				// from the metrics — and the recording comes out a turn longer than the
+				// script, failing the replay before it is scored.
+				//
+				// Known live-mode edge: "they yielded to us" and "they finished under a
+				// backchannel of ours" are identical in the audio, separated only by
+				// what happens next. So a backchannel over the other party's *final*
+				// utterance merges with our next line when nobody speaks in between,
+				// flagging that last turn interrupted. Once they do speak again before
+				// we resume, that utterance is an un-excluded handoff and the split is
+				// restored. Scripted replays can't reach it (the driver waits for the
+				// agent's reply between lines); a live session tail can.
 				!(segment.startMs < utteranceStartMs && segment.endMs > utteranceStartMs),
 		);
 	}
