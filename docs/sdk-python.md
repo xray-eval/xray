@@ -131,6 +131,8 @@ A user turn with no `audio` is sent as a server-side TTS marker. TTS means text-
 
 `interrupt_after_ms` scripts a **barge-in**: the user starts talking that many milliseconds into the *preceding agent turn's* speech, instead of waiting for it to finish. The delay is measured from the agent's speech onset — not the turn start — so the interruption lands at the same point in the agent's response run-to-run, regardless of the agent's latency. It is only valid on a user turn immediately following an agent turn; anything else raises `ValueError` at construction. Pair it with `Assertion.yielded_within_ms(...)` on the agent turn to assert how fast the agent stops talking. See [Scripting a barge-in](#scripting-a-barge-in).
 
+**Keep `interrupt_after_ms` at 500 or above.** The server reconstructs turns from the recording, and it needs about half a second of agent speech to tell "the caller cut into the agent" from "the caller paused and the agent started up". Cut in earlier than that and the caller's two lines are read as one turn, which leaves the recording a turn short of the script and fails the replay with `spec_vad_mismatch` rather than evaluating it.
+
 ### Assertions
 
 An assertion is a single declarative check on one turn.
@@ -538,6 +540,8 @@ TurnMetrics(turn_idx: int, role: Role, agent_response_ms: int | None,
 ```
 
 `yield_ms` is the barge-in "time to yield the floor": how long the turn kept talking after being interrupted. It is `None` when no interruption landed on the turn.
+
+`interrupted` needs at least **500 ms** of speech on the other channel, starting while this turn was still going. Shorter bursts — a cough, an "mm-hmm" — are not treated as barge-ins, so an agent that correctly talks through one is not charged a yield time for it. That threshold matches LiveKit's own `min_interruption_duration` default.
 
 `EvaluationStatus` is `"passed" | "failed" | "errored"`. `format_failures(result)` renders just the non-passed assertion and judge outcomes. If there are none, it returns `"all assertions and judges passed"`.
 

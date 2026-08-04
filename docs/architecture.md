@@ -421,6 +421,13 @@ channel of the uploaded stereo WAV.
 VAD output: one row per detected voiced chunk per channel. The
 inspector renders these alongside the turn boundaries. That helps you debug overlap, silence, and latency.
 
+Turn boundaries are not simply "the speaker changed". A pause inside one
+speaker's audio splits it into two turns only when the *other* side took the
+floor across that pause — otherwise the audio after the pause is the same
+utterance continuing. Without that rule, an agent that resumed talking at the
+moment a user cut in had its own tail filed as a separate turn, which put the
+barge-in on a turn nobody was asserting about (issue #126).
+
 `tool_calls`, `model_usage`, and `spans` are written by the OTLP
 receiver as it ingests `gen_ai.*` / Langfuse / `xray.*` spans.
 

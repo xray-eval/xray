@@ -128,8 +128,7 @@ export function ingestOtlpTraces(
  * stored — rows carry only their wall-clock `started_at`. Turn membership is
  * derived at read/eval time by mapping `started_at` onto the audio timeline
  * (`audio_offset_ms = started_at − replays.recording_started_at`) and testing
- * the turn window — see `docs/specs/0001-timeline-clock-alignment.md` and
- * `src/server/replays/timeline.ts`. Every recognized row is recorded
+ * the turn window — see `src/server/replays/timeline.ts`. Every recognized row is recorded
  * unconditionally; the timeline placement decides display + assertion scope.
  */
 function persistExtracted(

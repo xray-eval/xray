@@ -9,13 +9,16 @@ import type { TtsProvider } from "./tts.types.ts";
 
 const TARGET_SAMPLE_RATE = 48_000;
 
-// Stored turn audio must clear the level the VAD calibration assumes:
-// segmentation (audio.vad.ts) only marks frames voiced above ≈-23 dBFS mean
-// energy, and provider/voice loudness varies wildly — Deepgram Aura's German
-// voices ship near -33 dBFS RMS, invisible to the VAD, so every scripted
-// replay with such a turn died with `spec_vad_mismatch` (zero user segments).
 // Peak-normalizing every synthesis to one fixed target (-1.4 dBFS peak) makes
-// the stored WAV level-deterministic regardless of provider or voice.
+// the stored WAV level-deterministic, so segmentation behaviour doesn't depend
+// on who synthesized the line. Provider loudness varies wildly: Deepgram Aura's
+// German voices ship near -33 dBFS RMS, which sat under the VAD's original
+// ≈-23 dBFS voiced floor and killed every scripted replay with such a turn as
+// `spec_vad_mismatch` (zero user segments detected). That floor is ≈-36 dBFS now
+// (audio.vad.ts), which Aura clears on its own — but quieter providers don't,
+// and Aura's ~3 dB of margin is an average against a per-frame threshold, so its
+// onset and trailing frames can dip under. Normalization is what keeps
+// segmentation independent of the provider.
 const TARGET_PEAK = 27_852;
 
 function peakNormalize(pcm: Int16Array, targetPeak: number): Int16Array {

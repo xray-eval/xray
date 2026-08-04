@@ -3,7 +3,9 @@ import { describe, expect, it } from "bun:test";
 
 const SAMPLE_RATE = 16_000;
 
-function makeAlternating(blocks: { durationMs: number; voiced: boolean }[]): Int16Array {
+function makeAlternating(
+	blocks: { durationMs: number; voiced: boolean; amplitude?: number }[],
+): Int16Array {
 	const totalSamples = blocks.reduce(
 		(sum, b) => sum + Math.floor((SAMPLE_RATE * b.durationMs) / 1000),
 		0,
@@ -14,8 +16,9 @@ function makeAlternating(blocks: { durationMs: number; voiced: boolean }[]): Int
 		const samples = Math.floor((SAMPLE_RATE * block.durationMs) / 1000);
 		if (block.voiced) {
 			// 200 Hz sine at moderate amplitude — lands inside the default ZCR window.
+			const amplitude = block.amplitude ?? 15_000;
 			for (let i = 0; i < samples; i++) {
-				pcm[cursor + i] = Math.round(Math.sin((2 * Math.PI * 200 * i) / SAMPLE_RATE) * 15_000);
+				pcm[cursor + i] = Math.round(Math.sin((2 * Math.PI * 200 * i) / SAMPLE_RATE) * amplitude);
 			}
 		}
 		cursor += samples;
@@ -72,6 +75,28 @@ describe("runVadOnChannel", () => {
 		]);
 		const segments = runVadOnChannel(pcm, SAMPLE_RATE);
 		expect(segments).toEqual([]);
+	});
+
+	// Calibration regression. A real agent recording (replay 2a8fd70b) speaks for
+	// 11 seconds at 846-1897 RMS — frame energy 7.2e5 to 3.6e6 — and the original
+	// 5e6 threshold, tuned only against 15_000-amplitude sine fixtures, caught 45
+	// of its ~367 speech frames. Everything downstream (turn boundaries, barge-in,
+	// transcript slices) inherited that miss.
+	it("detects quiet-but-real speech at the level a live agent produces", () => {
+		// 1_600 amplitude sine ⇒ mean energy 1.28e6, mid-band for the measured
+		// recording; the agent-channel noise floor there was 30-300 RMS (≤9e4).
+		const pcm = makeAlternating([
+			{ durationMs: 200, voiced: false },
+			{ durationMs: 600, voiced: true, amplitude: 1_600 },
+			{ durationMs: 200, voiced: false },
+		]);
+		expect(runVadOnChannel(pcm, SAMPLE_RATE).length).toBe(1);
+	});
+
+	it("still rejects a channel's idle noise floor", () => {
+		// 300 amplitude ⇒ mean energy 4.5e4, the top of the measured noise floor.
+		const pcm = makeAlternating([{ durationMs: 1000, voiced: true, amplitude: 300 }]);
+		expect(runVadOnChannel(pcm, SAMPLE_RATE)).toEqual([]);
 	});
 
 	it("respects an explicit lower energy threshold", () => {

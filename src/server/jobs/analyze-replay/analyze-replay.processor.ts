@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 
-import { sliceTurnAudio } from "@/server/audio/audio.slice.ts";
+import { sliceTurnAudio, trimTrailingSilence } from "@/server/audio/audio.slice.ts";
 import { deriveTurns } from "@/server/audio/audio.turns.ts";
 import type { StereoWav } from "@/server/audio/audio.types.ts";
 import { runVadOnChannel } from "@/server/audio/audio.vad.ts";
@@ -248,7 +248,13 @@ async function runTranscriptionStage(
 					nextSameChannel !== undefined ? nextSameChannel.voiceStartMs : recordingEndMs,
 				);
 				if (endMs <= startMs) return null;
-				const pcm = sliceTurnAudio(wav, turn.role, startMs, endMs);
+				// The window is generous on purpose (it has to cover quiet speech the
+				// VAD missed), so trim the silence it drags in before paying a
+				// provider to listen to it.
+				const pcm = trimTrailingSilence(
+					sliceTurnAudio(wav, turn.role, startMs, endMs),
+					wav.sampleRate,
+				);
 				if (pcm.length === 0) return null;
 				const result = await transcription.transcribe({
 					audio: pcm,
