@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5  # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
         with:
           egress-policy: audit
 
@@ -58,7 +58,7 @@ jobs:
       # setup-uv reads `.python-version` automatically and caches the
       # resolved interpreter + wheel set across runs.
       - name: Setup uv (pinned via SHA)
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           python-version-file: '.python-version'
           # Re-key the wheel cache when the dep set changes. uv reads

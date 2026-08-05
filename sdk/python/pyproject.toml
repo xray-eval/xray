@@ -42,7 +42,16 @@ live = [
   "sounddevice==0.5.5",
 ]
 dev = [
-  "pytest>=8.0",
+  # Floor is 9.0.3, not 8.0, because of GHSA-6w46-j5rx-g56g / CVE-2025-71176:
+  # pytest through 9.0.2 puts `tmp_path` under a predictable
+  # `/tmp/pytest-of-{user}` directory, so on a shared UNIX host another local
+  # user can pre-create it and win the race for whatever a test writes there.
+  # A range is fine here (this is a library — pinning would fight consumers),
+  # but the range must not span a vulnerable release: GitHub's dependency graph
+  # resolves `>=8.0` as intersecting the advisory and opens an alert, and it is
+  # right to. CI already installed 9.1.1, so this closes the declared range
+  # rather than changing what runs. Raised 2026-08-05.
+  "pytest>=9.0.3",
   "pytest-asyncio>=0.24",
   "pyright>=1.1.380",
   # Exact-pinned: CI installs dev tools with `uv pip install -e '.[dev]'`
