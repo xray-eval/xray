@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # python:3.12-slim-bookworm — pinned per `.claude/rules/supply-chain.md` §4.
-FROM python@sha256:93ab4b7fa528b25124c97bcc755415e60eb671a86b4dbe0328df2fe2d1c1193d
+FROM python@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

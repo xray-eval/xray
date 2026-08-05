@@ -199,6 +199,11 @@ overrides:
 # finding for a few days is strictly safer than installing a package that is
 # days old. Each entry names the date it converts into a real upgrade; on that
 # date, delete the entry and bump. Do not let them outlive those dates.
+#
+# EVERY ENTRY HERE HAS A TWIN in `allow-ghsas` on the dependency-review step of
+# .github/workflows/supply-chain.yml, because that action reads GitHub's advisory
+# DB directly and never looks at this file. Add and delete in both places on the
+# same commit, or `pnpm audit` and the `Supply-chain audit` job disagree.
 auditConfig:
   ignoreGhsas:
     # GHSA-7p8r-x3mc-p8w7 (HIGH) — fast-uri mis-parses a backslash as an
