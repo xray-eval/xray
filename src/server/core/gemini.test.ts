@@ -25,18 +25,9 @@ describe("extractGeminiText", () => {
 	});
 
 	it("throws via the factory when the envelope fails schema validation", () => {
-		const err = (() => {
-			try {
-				extractGeminiText("not an object", makeError);
-				return null;
-			} catch (e) {
-				return e;
-			}
-		})();
-		if (!(err instanceof FakeProviderError)) {
-			throw new Error(`expected FakeProviderError, got ${err}`);
-		}
-		expect(err.message).toContain("response failed validation");
+		const call = () => extractGeminiText("not an object", makeError);
+		expect(call).toThrow(FakeProviderError);
+		expect(call).toThrow("response failed validation");
 	});
 
 	it("throws on a promptFeedback safety block", () => {
