@@ -188,6 +188,111 @@ describe("ingestOtlpTraces — langfuse vocabulary", () => {
 	});
 });
 
+describe("ingestOtlpTraces — redelivery", () => {
+	it("ignores a span already stored under the same (replay, span) key", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = () =>
+			makeOtlpRequest({
+				replayId,
+				spans: [
+					{
+						name: "xray.turn",
+						traceId: "trace-retry",
+						spanId: "span-retry",
+						attributes: { "xray.turn.idx": 0, "xray.turn.role": "agent" },
+					},
+				],
+			});
+
+		const first = ingestOtlpTraces(store, req());
+		expect(first.result.persistedSpans).toBe(1);
+
+		// An OTLP exporter that didn't see our 200 retries the same batch.
+		const second = ingestOtlpTraces(store, req());
+		expect(second.result.persistedSpans).toBe(0);
+		// A duplicate is not a rejection — the span *is* stored, so the
+		// exporter's partialSuccess count must stay at zero.
+		expect(second.result.rejectedSpans).toBe(0);
+		expect(second.response.partialSuccess?.rejectedSpans).toBe(0);
+
+		expect(store.db.select().from(spans).where(eq(spans.replayId, replayId)).all()).toHaveLength(1);
+		store.close();
+	});
+
+	it("does not re-extract model_usage / tool_calls rows for a redelivered span", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = () =>
+			makeOtlpRequest({
+				replayId,
+				spans: [
+					{
+						name: "chat gpt-4o",
+						traceId: "trace-retry",
+						spanId: "span-chat",
+						attributes: {
+							"gen_ai.operation.name": "chat",
+							"gen_ai.system": "openai",
+							"gen_ai.request.model": "gpt-4o",
+							"gen_ai.usage.input_tokens": 42,
+						},
+					},
+					{
+						name: "execute_tool lookup",
+						traceId: "trace-retry",
+						spanId: "span-tool",
+						attributes: {
+							"gen_ai.operation.name": "execute_tool",
+							"gen_ai.tool.name": "lookup",
+						},
+					},
+				],
+			});
+
+		ingestOtlpTraces(store, req());
+		const second = ingestOtlpTraces(store, req());
+		expect(second.result.persistedSpans).toBe(0);
+
+		expect(
+			store.db.select().from(modelUsage).where(eq(modelUsage.replayId, replayId)).all(),
+		).toHaveLength(1);
+		expect(
+			store.db.select().from(toolCalls).where(eq(toolCalls.replayId, replayId)).all(),
+		).toHaveLength(1);
+		store.close();
+	});
+
+	it("persists the new spans of a batch that also redelivers an old one", async () => {
+		const { store, replayId } = await setupReplay();
+		const seen = {
+			name: "xray.turn",
+			traceId: "trace-mixed",
+			spanId: "span-seen",
+			attributes: { "xray.turn.idx": 0, "xray.turn.role": "agent" },
+		};
+		ingestOtlpTraces(store, makeOtlpRequest({ replayId, spans: [seen] }));
+
+		const { result } = ingestOtlpTraces(
+			store,
+			makeOtlpRequest({
+				replayId,
+				spans: [
+					seen,
+					{
+						name: "xray.turn",
+						traceId: "trace-mixed",
+						spanId: "span-fresh",
+						attributes: { "xray.turn.idx": 1, "xray.turn.role": "user" },
+					},
+				],
+			}),
+		);
+		expect(result.persistedSpans).toBe(1);
+		expect(result.rejectedSpans).toBe(0);
+		expect(store.db.select().from(spans).where(eq(spans.replayId, replayId)).all()).toHaveLength(2);
+		store.close();
+	});
+});
+
 describe("ingestOtlpTraces — limits", () => {
 	it("throws TooManySpansPerRequestError above the per-request cap", async () => {
 		const { store, replayId } = await setupReplay();
