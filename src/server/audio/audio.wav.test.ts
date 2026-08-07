@@ -213,6 +213,53 @@ describe("readStereoWav — hardening", () => {
 	});
 });
 
+describe("readStereoWav — fmt field rejections", () => {
+	// Each case starts from a well-formed 48k/stereo/16-bit file and patches one
+	// header field, so a single branch is under test. The message assertion is
+	// load-bearing: without it any other rejection (channel count, missing fmt)
+	// would satisfy the InvalidWavFormatError expectation and the test would
+	// pass without ever reaching the branch it names.
+	function wellFormedStereoBytes(): Uint8Array {
+		return writeStereoWav({
+			sampleRate: 48_000,
+			bitsPerSample: 16,
+			left: new Int16Array([1, 2, 3, 4]),
+			right: new Int16Array([5, 6, 7, 8]),
+		});
+	}
+
+	it("throws on a 44.1kHz file (the analyze chain assumes 48k throughout)", () => {
+		const bytes = wellFormedStereoBytes();
+		new DataView(bytes.buffer).setUint32(24, 44_100, true);
+		expect(() => readStereoWav(bytes)).toThrow(InvalidWavFormatError);
+		expect(() => readStereoWav(bytes)).toThrow("sample rate 44100");
+	});
+
+	it("throws on 24-bit samples", () => {
+		const bytes = wellFormedStereoBytes();
+		new DataView(bytes.buffer).setUint16(34, 24, true);
+		expect(() => readStereoWav(bytes)).toThrow(InvalidWavFormatError);
+		expect(() => readStereoWav(bytes)).toThrow("bits per sample 24");
+	});
+
+	it("throws when the fmt chunk declares fewer than 16 bytes", () => {
+		// A 14-byte fmt chunk has no bitsPerSample field; reading past it would
+		// pick up whatever bytes follow instead of failing.
+		const bytes = wellFormedStereoBytes();
+		new DataView(bytes.buffer).setUint32(16, 14, true);
+		expect(() => readStereoWav(bytes)).toThrow(InvalidWavFormatError);
+		expect(() => readStereoWav(bytes)).toThrow("fmt chunk too short (14)");
+	});
+
+	it("throws when no data chunk is present", () => {
+		// Retag "data" as "JUNK": fmt still validates, but there are no samples.
+		const bytes = wellFormedStereoBytes();
+		new DataView(bytes.buffer).setUint32(36, 0x4a554e4b, false);
+		expect(() => readStereoWav(bytes)).toThrow(InvalidWavFormatError);
+		expect(() => readStereoWav(bytes)).toThrow("missing data chunk");
+	});
+});
+
 describe("resamplePcm", () => {
 	it("returns the input when src and dst rates match", () => {
 		const pcm = new Int16Array([1, 2, 3, 4, 5]);
@@ -266,5 +313,21 @@ describe("readMonoWav", () => {
 		const view = new DataView(bytes.buffer);
 		view.setUint32(40, 0xffff_ffff, true);
 		expect(() => readMonoWav(bytes)).toThrow(InvalidWavFormatError);
+	});
+
+	it("throws on 8-bit mono, which the Int16 sample walk would silently misread", () => {
+		const bytes = writeMonoWav(new Int16Array([1, 2, 3]), 24_000);
+		new DataView(bytes.buffer).setUint16(34, 8, true);
+		expect(() => readMonoWav(bytes)).toThrow(InvalidWavFormatError);
+		expect(() => readMonoWav(bytes)).toThrow("bits per sample 8");
+	});
+
+	it("throws on a zero sample rate rather than handing it to resamplePcm", () => {
+		// A provider WAV with a zero rate would make `resamplePcm`'s
+		// `srcRate / dstRate` ratio 0 and loop over a zero-length output —
+		// silently dropping the synthesized turn instead of failing the job.
+		const bytes = writeMonoWav(new Int16Array([1, 2, 3]), 0);
+		expect(() => readMonoWav(bytes)).toThrow(InvalidWavFormatError);
+		expect(() => readMonoWav(bytes)).toThrow("sample rate 0");
 	});
 });

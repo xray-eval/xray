@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { eq } from "drizzle-orm";
@@ -10,9 +11,17 @@ import {
 	AudioNotUploadedError,
 	AudioPathOutsideRootError,
 	AudioReplayNotFoundError,
+	InvalidAudioExtensionError,
 	ReplayUploadStateError,
 } from "./audio.errors.ts";
-import { readReplayAudio, uploadReplayAudio } from "./audio.service.ts";
+import {
+	conversationAudioRelativePath,
+	readConversationTurnAudio,
+	readReplayAudio,
+	saveRecordedConversationAudio,
+	saveTtsConversationAudio,
+	uploadReplayAudio,
+} from "./audio.service.ts";
 import { fakeAudioBytes, makeTempAudioRoot, seedReplayForAudio } from "./audio.test-utils.ts";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
@@ -182,6 +191,100 @@ describe("uploadReplayAudio — lifecycle guard", () => {
 	});
 });
 
+describe("conversation turn audio", () => {
+	const SHA_A = "a".repeat(64);
+	const SHA_B = "b".repeat(64);
+
+	it("keys recorded and synthesized audio into sibling directories by content hash", () => {
+		expect(conversationAudioRelativePath("recorded", SHA_A)).toBe(join("recorded", `${SHA_A}.wav`));
+		expect(conversationAudioRelativePath("tts", SHA_A)).toBe(join("tts", `${SHA_A}.wav`));
+	});
+
+	it("saves recorded bytes at the content-addressed path and reads them back as audio/wav", async () => {
+		const bytes = fakeAudioBytes(3);
+		const rel = await saveRecordedConversationAudio(audio.path, SHA_A, bytes);
+		expect(rel).toBe(join("recorded", `${SHA_A}.wav`));
+		const result = await readConversationTurnAudio(audio.path, "recorded", SHA_A, missingError);
+		expect(await streamToBytes(result.stream)).toEqual(bytes);
+		expect(result.contentLength).toBe(bytes.byteLength);
+		expect(result.contentType).toBe("audio/wav");
+	});
+
+	it("keeps the tts namespace disjoint from recorded for the same hash", async () => {
+		// A RecordedAudio turn and a server-synthesized turn can hash the same
+		// only by coincidence, but the two are different bytes with different
+		// provenance — one must never serve the other's file.
+		const recorded = fakeAudioBytes(1);
+		const synthesized = fakeAudioBytes(2);
+		await saveRecordedConversationAudio(audio.path, SHA_A, recorded);
+		const rel = await saveTtsConversationAudio(audio.path, SHA_A, synthesized);
+		expect(rel).toBe(join("tts", `${SHA_A}.wav`));
+		const fromRecorded = await readConversationTurnAudio(
+			audio.path,
+			"recorded",
+			SHA_A,
+			missingError,
+		);
+		const fromTts = await readConversationTurnAudio(audio.path, "tts", SHA_A, missingError);
+		expect(await streamToBytes(fromRecorded.stream)).toEqual(recorded);
+		expect(await streamToBytes(fromTts.stream)).toEqual(synthesized);
+	});
+
+	it("re-saving the same hash leaves exactly one file — no orphaned .tmp- writes", async () => {
+		const bytes = fakeAudioBytes(4);
+		await saveRecordedConversationAudio(audio.path, SHA_A, bytes);
+		await saveRecordedConversationAudio(audio.path, SHA_A, bytes);
+		expect(await readdir(join(audio.path, "recorded"))).toEqual([`${SHA_A}.wav`]);
+		const result = await readConversationTurnAudio(audio.path, "recorded", SHA_A, missingError);
+		expect(await streamToBytes(result.stream)).toEqual(bytes);
+	});
+
+	it("throws the caller's error when the hash was never saved", async () => {
+		await saveRecordedConversationAudio(audio.path, SHA_A, fakeAudioBytes());
+		await expect(
+			readConversationTurnAudio(audio.path, "recorded", SHA_B, missingError),
+		).rejects.toBeInstanceOf(TurnAudioMissingError);
+	});
+
+	it("throws the caller's error when the hash exists only in the other namespace", async () => {
+		await saveTtsConversationAudio(audio.path, SHA_A, fakeAudioBytes());
+		await expect(
+			readConversationTurnAudio(audio.path, "recorded", SHA_A, missingError),
+		).rejects.toBeInstanceOf(TurnAudioMissingError);
+	});
+
+	it("rejects a hash that walks out of the audio root", async () => {
+		// The server computes the hash, so this is unreachable today; the guard
+		// is what keeps it unreachable if a hash ever becomes caller-supplied.
+		await expect(
+			saveRecordedConversationAudio(audio.path, "../../escape", fakeAudioBytes()),
+		).rejects.toBeInstanceOf(AudioPathOutsideRootError);
+	});
+});
+
+describe("stored audio_path extension", () => {
+	it("readReplayAudio throws InvalidAudioExtensionError for a tampered non-audio extension", async () => {
+		const { replayId } = await seedReplayForAudio(store);
+		await uploadReplayAudio(store, audio.path, {
+			replayId,
+			contentType: "audio/wav",
+			recordingStartedAt: null,
+			bytes: fakeAudioBytes(),
+		});
+		// The extension check runs after the existence check, so the tampered
+		// target has to exist on disk for this branch to be reached at all.
+		const tampered = join(replayId, "replay.bin");
+		await Bun.write(join(audio.path, tampered), fakeAudioBytes());
+		store.db.update(replays).set({ audioPath: tampered }).where(eq(replays.id, replayId)).run();
+
+		const err = await captureThrown(() => readReplayAudio(store, audio.path, replayId));
+		expect(err).toBeInstanceOf(InvalidAudioExtensionError);
+		if (!(err instanceof InvalidAudioExtensionError)) throw err;
+		expect(err.relativePath).toBe(tampered);
+		expect(err.issues.length).toBeGreaterThan(0);
+	});
+});
+
 describe("path-traversal defense", () => {
 	it("readReplayAudio throws AudioPathOutsideRootError when a tampered row escapes the root", async () => {
 		const { replayId } = await seedReplayForAudio(store);
@@ -198,6 +301,20 @@ describe("path-traversal defense", () => {
 		expect(err.attemptedPath.startsWith(`${resolve(audio.path)}/`)).toBe(false);
 	});
 });
+
+// `readConversationTurnAudio` takes the not-found error as a factory so the
+// conversations router can throw its own 404 type. A local class proves the
+// factory is what's thrown, not an audio-slice error.
+class TurnAudioMissingError extends Error {
+	constructor() {
+		super("turn audio missing");
+		this.name = "TurnAudioMissingError";
+	}
+}
+
+function missingError(): Error {
+	return new TurnAudioMissingError();
+}
 
 async function captureThrown(fn: () => Promise<unknown>): Promise<unknown> {
 	try {
