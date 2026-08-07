@@ -64,11 +64,12 @@ describe("resolveProviderKind", () => {
 		).toThrow(AmbiguousProviderConfigError);
 	});
 
-	it.each([
+	const singleKeyCases: readonly (readonly [TestKind, ReturnType<typeof candidates>])[] = [
 		["google", candidates({ google: true })],
 		["mistral", candidates({ mistral: true })],
 		["openai", candidates({ openai: true })],
-	])("infers %s when its key is the only one set", (kind, only) => {
+	];
+	it.each(singleKeyCases)("infers %s when its key is the only one set", (kind, only) => {
 		expect(resolveProviderKind(undefined, "XRAY_JUDGE_PROVIDER", only)).toBe(kind);
 	});
 

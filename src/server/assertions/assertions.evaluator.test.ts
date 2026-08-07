@@ -263,20 +263,18 @@ describe("evaluateAssertion — no recording anchor", () => {
 	// the audio timeline, so span-attributed assertions can't be evaluated —
 	// they must `error`, never silently pass/fail. Text/latency assertions are
 	// unaffected (they don't depend on the timeline).
-	it("errors tool_called / tool_not_called / tool_args_match / max_ttft_ms", () => {
+	it.each([
+		["tool_called", { kind: "tool_called", name: "lookup" }],
+		["tool_not_called", { kind: "tool_not_called", name: "lookup" }],
+		["tool_args_match", { kind: "tool_args_match", name: "lookup", args: {} }],
+		["max_ttft_ms", { kind: "max_ttft_ms", max_ms: 500 }],
+	] as const)("errors %s", (_kind, assertion) => {
 		const ctx = makeAssertionContext({
 			hasRecordingAnchor: false,
 			toolCalls: [makeToolCallRow({ name: "lookup" })],
 			ttftMs: 100,
 		});
-		for (const assertion of [
-			{ kind: "tool_called", name: "lookup" },
-			{ kind: "tool_not_called", name: "lookup" },
-			{ kind: "tool_args_match", name: "lookup", args: {} },
-			{ kind: "max_ttft_ms", max_ms: 500 },
-		] as const) {
-			expect(evaluateAssertion(assertion, ctx).status).toBe("errored");
-		}
+		expect(evaluateAssertion(assertion, ctx).status).toBe("errored");
 	});
 
 	it("does NOT error text, latency, or yield assertions (timeline-independent)", () => {
@@ -314,5 +312,16 @@ describe("deepPartialMatch", () => {
 
 	it("returns false when expected has a key actual lacks", () => {
 		expect(deepPartialMatch({ a: 1 }, { b: 2 })).toBe(false);
+	});
+
+	// An object expectation against a non-object actual: a tool that used to
+	// return `{status: "ok"}` and now returns the bare string "ok" must fail
+	// `tool_args_match`, not match it by falling through the object walk.
+	it.each([
+		["a primitive", 5],
+		["null", null],
+		["an array", [1]],
+	])("returns false when expected is an object and actual is %s", (_label, actual) => {
+		expect(deepPartialMatch({ a: 1 }, actual)).toBe(false);
 	});
 });
