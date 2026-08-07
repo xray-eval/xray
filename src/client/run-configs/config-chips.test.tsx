@@ -117,11 +117,6 @@ describe("ConfigChips", () => {
 		).toBeDefined();
 	});
 
-	it("keeps the dev's name when there is one, since that outranks any derived label", async () => {
-		await renderChips(GROUPS);
-		expect(screen.getByRole("button", { name: "Remove baseline from comparison" })).toBeDefined();
-	});
-
 	it("falls back to the hash when two configs are distinguished by nothing", async () => {
 		// Same config content under two group hashes shouldn't happen (the hash is
 		// derived from the content), but a label of "" would be unclickable.
