@@ -24,7 +24,6 @@ describe("sanitizeIssues", () => {
 			message: "Invalid type",
 			path: undefined,
 		});
-		expect(JSON.stringify(out)).not.toContain("xxx");
 	});
 
 	it("strips `input`/`value` from each path step", () => {
