@@ -101,6 +101,72 @@ describe("ingestOtlpTraces — xray vocabulary (raw spans only)", () => {
 	});
 });
 
+// registry.test.ts pins the order of SPAN_VOCABULARIES and walks it with its
+// own copy of the matcher loop. That proves the array, not the consumer:
+// reversing the loop inside `recognize()` here left all 1382 tests green while
+// changing which vocabulary actually claims a span on the ingest path. These
+// go through ingestOtlpTraces and assert the stored row.
+describe("ingestOtlpTraces — vocabulary precedence on the real ingest path", () => {
+	it("stores a span both xray and gen_ai would claim as xray, with no model_usage", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = makeOtlpRequest({
+			replayId,
+			spans: [
+				{
+					name: "xray.turn",
+					attributes: {
+						"xray.turn.idx": 0,
+						"gen_ai.operation.name": "chat",
+						"gen_ai.request.model": "gpt-5",
+						"gen_ai.usage.input_tokens": 11,
+						"gen_ai.usage.output_tokens": 22,
+					},
+				},
+			],
+		});
+		ingestOtlpTraces(store, req);
+
+		const rows = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.vocabulary).toBe("xray");
+		// xray claims the span as a raw span, so gen_ai's extraction must not run.
+		expect(
+			store.db.select().from(modelUsage).where(eq(modelUsage.replayId, replayId)).all(),
+		).toEqual([]);
+		store.close();
+	});
+
+	it("stores a span both gen_ai and langfuse would claim as gen_ai", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = makeOtlpRequest({
+			replayId,
+			spans: [
+				{
+					name: "chat gpt-4o",
+					attributes: {
+						"gen_ai.operation.name": "chat",
+						"gen_ai.request.model": "gpt-4o",
+						"gen_ai.system": "openai",
+						"langfuse.observation.type": "generation",
+						"langfuse.observation.model.name": "claude-opus-4",
+					},
+				},
+			],
+		});
+		ingestOtlpTraces(store, req);
+
+		const rows = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.vocabulary).toBe("gen_ai");
+		// The model name distinguishes the two matchers: langfuse would have
+		// recorded claude-opus-4 off its own attribute.
+		const usage = store.db.select().from(modelUsage).where(eq(modelUsage.replayId, replayId)).all();
+		expect(usage).toHaveLength(1);
+		expect(usage[0]?.model).toBe("gpt-4o");
+		store.close();
+	});
+});
+
 describe("ingestOtlpTraces — gen_ai vocabulary", () => {
 	it("extracts model_usage from a chat span", async () => {
 		const { store, replayId } = await setupReplay();
