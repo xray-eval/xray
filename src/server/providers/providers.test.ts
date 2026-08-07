@@ -64,16 +64,12 @@ describe("resolveProviderKind", () => {
 		).toThrow(AmbiguousProviderConfigError);
 	});
 
-	it("infers the kind whose key is the only one set", () => {
-		expect(
-			resolveProviderKind(undefined, "XRAY_JUDGE_PROVIDER", candidates({ google: true })),
-		).toBe("google");
-		expect(
-			resolveProviderKind(undefined, "XRAY_JUDGE_PROVIDER", candidates({ mistral: true })),
-		).toBe("mistral");
-		expect(
-			resolveProviderKind(undefined, "XRAY_JUDGE_PROVIDER", candidates({ openai: true })),
-		).toBe("openai");
+	it.each([
+		["google", candidates({ google: true })],
+		["mistral", candidates({ mistral: true })],
+		["openai", candidates({ openai: true })],
+	])("infers %s when its key is the only one set", (kind, only) => {
+		expect(resolveProviderKind(undefined, "XRAY_JUDGE_PROVIDER", only)).toBe(kind);
 	});
 
 	it("falls back to the first candidate when no key is set", () => {
