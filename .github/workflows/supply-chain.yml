@@ -119,12 +119,10 @@ jobs:
           # entry lives in pnpm-workspace.yaml; it is deliberately not duplicated
           # here, so that there is one place to read and two places to delete.
           #
-          # DELETE EACH ENTRY ON THE DATE ITS pnpm-workspace.yaml TWIN NAMES —
-          # GHSA-7p8r-x3mc-p8w7 (fast-uri) on 2026-08-07, GHSA-8j4g-w8fx-2239
-          # (hono) on 2026-08-10. Both are pending only because every patched
-          # release is still inside the 7-day `minimumReleaseAge` cooldown.
-          # Added 2026-08-05.
-          allow-ghsas: GHSA-7p8r-x3mc-p8w7, GHSA-8j4g-w8fx-2239
+          # No allow-ghsas entries: the two added 2026-08-05 (fast-uri, hono)
+          # reached their cooldown dates and were fixed by real upgrades on
+          # 2026-08-11. Any new entry needs a twin in pnpm-workspace.yaml
+          # `auditConfig.ignoreGhsas` on the same commit.
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft

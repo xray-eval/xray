@@ -1,4 +1,11 @@
-import { asInteger, asString, msBetween, pickPrefixed, safeJsonString } from "./attrs.ts";
+import {
+	asFiniteNumber,
+	asInteger,
+	asString,
+	msBetween,
+	pickPrefixed,
+	safeJsonString,
+} from "./attrs.ts";
 import { describe, expect, it } from "bun:test";
 
 describe("asString", () => {
@@ -43,6 +50,45 @@ describe("asInteger", () => {
 		expect(asInteger(true)).toBeNull();
 		expect(asInteger(undefined)).toBeNull();
 		expect(asInteger(null)).toBeNull();
+	});
+});
+
+describe("asFiniteNumber", () => {
+	it("returns finite numbers unchanged, fraction preserved", () => {
+		expect(asFiniteNumber(0.25)).toBe(0.25);
+		expect(asFiniteNumber(-1.5)).toBe(-1.5);
+		expect(asFiniteNumber(0)).toBe(0);
+		expect(asFiniteNumber(42)).toBe(42);
+	});
+
+	it("parses decimal, signed, and exponent-notation strings", () => {
+		expect(asFiniteNumber("0.25")).toBe(0.25);
+		expect(asFiniteNumber("-3.5")).toBe(-3.5);
+		expect(asFiniteNumber("+2")).toBe(2);
+		expect(asFiniteNumber("1e-3")).toBe(0.001);
+		// Leading/trailing whitespace is tolerated — the trim() guard only
+		// rejects all-whitespace, Number() handles the padding itself.
+		expect(asFiniteNumber("  7.5  ")).toBe(7.5);
+	});
+
+	it("returns null for non-finite numbers", () => {
+		expect(asFiniteNumber(Number.NaN)).toBeNull();
+		expect(asFiniteNumber(Number.POSITIVE_INFINITY)).toBeNull();
+		expect(asFiniteNumber(Number.NEGATIVE_INFINITY)).toBeNull();
+	});
+
+	it("returns null for empty / whitespace-only / unparseable strings", () => {
+		expect(asFiniteNumber("")).toBeNull();
+		expect(asFiniteNumber("   ")).toBeNull();
+		expect(asFiniteNumber("not a number")).toBeNull();
+		expect(asFiniteNumber("Infinity")).toBeNull();
+	});
+
+	it("returns null for booleans, null and undefined", () => {
+		expect(asFiniteNumber(true)).toBeNull();
+		expect(asFiniteNumber(false)).toBeNull();
+		expect(asFiniteNumber(null)).toBeNull();
+		expect(asFiniteNumber(undefined)).toBeNull();
 	});
 });
 

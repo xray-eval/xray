@@ -26,22 +26,34 @@ describe("OtlpError subclasses", () => {
 		expect(e.name).toBe("InvalidOtlpBodyError");
 		expect(e.issues).toHaveLength(1);
 	});
-	it("MalformedOtlpBodyError exposes a frozen issues array", () => {
+	it("MalformedOtlpBodyError exposes a frozen issues array + parentage", () => {
 		const e = new MalformedOtlpBodyError();
+		expect(e).toBeInstanceOf(OtlpError);
+		expect(e.name).toBe("MalformedOtlpBodyError");
 		expect(e.issues[0]?.type).toBe("json_body");
 	});
-	it("OtlpBodyTooLargeError carries maxBytes", () => {
+	it("OtlpBodyTooLargeError carries maxBytes + parentage", () => {
 		const e = new OtlpBodyTooLargeError(4 * 1024 * 1024);
+		expect(e).toBeInstanceOf(OtlpError);
+		expect(e.name).toBe("OtlpBodyTooLargeError");
 		expect(e.maxBytes).toBe(4 * 1024 * 1024);
 	});
-	it("TooManySpansPerRequestError carries maxSpans + received", () => {
+	it("TooManySpansPerRequestError carries maxSpans + received + parentage", () => {
 		const e = new TooManySpansPerRequestError(512, 999);
+		expect(e).toBeInstanceOf(OtlpError);
+		expect(e.name).toBe("TooManySpansPerRequestError");
 		expect(e.maxSpans).toBe(512);
 		expect(e.received).toBe(999);
 	});
-	it("UnsupportedOtlpContentTypeError carries contentType", () => {
+	it("UnsupportedOtlpContentTypeError carries contentType + parentage", () => {
 		const e = new UnsupportedOtlpContentTypeError("application/x-protobuf");
+		expect(e).toBeInstanceOf(OtlpError);
+		expect(e.name).toBe("UnsupportedOtlpContentTypeError");
 		expect(e.contentType).toBe("application/x-protobuf");
+	});
+	it("UnsupportedOtlpContentTypeError carries a null contentType for a missing header", () => {
+		const e = new UnsupportedOtlpContentTypeError(null);
+		expect(e.contentType).toBeNull();
 	});
 	it("UnsupportedWireTypeError carries wireType + parentage", () => {
 		const e = new UnsupportedWireTypeError(6);

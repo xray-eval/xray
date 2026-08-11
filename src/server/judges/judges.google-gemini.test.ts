@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import { makeFetch } from "@/server/core/test-utils.ts";
+import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
 import { JudgeOutputParseError, JudgeProviderError } from "./judges.errors.ts";
 import { createGoogleGeminiJudgeProvider } from "./judges.google-gemini.ts";
@@ -159,5 +160,39 @@ describe("createGoogleGeminiJudgeProvider", () => {
 		await expect(provider.judge({ systemPrompt: "s", userPrompt: "u" })).rejects.toBeInstanceOf(
 			JudgeOutputParseError,
 		);
+	});
+
+	it("names GOOGLE_API_KEY in the missing-credential error", async () => {
+		const provider = createGoogleGeminiJudgeProvider({ apiKey: () => undefined, fetchImpl: fetch });
+		const err = await provider.judge({ systemPrompt: "s", userPrompt: "u" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof MissingProviderCredentialError)) {
+			throw new Error(`expected MissingProviderCredentialError, got ${err}`);
+		}
+		expect(err.envVar).toBe("GOOGLE_API_KEY");
+	});
+
+	it("treats a blank GOOGLE_API_KEY as missing rather than sending it upstream", async () => {
+		// `GOOGLE_API_KEY=` in an env file reads back as "" — without the
+		// length check that empty string would ride out as an `x-goog-api-key`
+		// header and come back as an opaque 400 instead of the actionable
+		// "set the env var" failure.
+		let requested = false;
+		const fetchImpl = makeFetch(() => {
+			requested = true;
+			return geminiResponse(JSON.stringify({ score: 50, reason: "x" }));
+		});
+		const provider = createGoogleGeminiJudgeProvider({ apiKey: () => "", fetchImpl });
+		const err = await provider.judge({ systemPrompt: "s", userPrompt: "u" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof MissingProviderCredentialError)) {
+			throw new Error(`expected MissingProviderCredentialError, got ${err}`);
+		}
+		expect(err.envVar).toBe("GOOGLE_API_KEY");
+		expect(requested).toBe(false);
 	});
 });

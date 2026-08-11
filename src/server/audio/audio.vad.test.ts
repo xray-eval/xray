@@ -99,6 +99,32 @@ describe("runVadOnChannel", () => {
 		expect(runVadOnChannel(pcm, SAMPLE_RATE)).toEqual([]);
 	});
 
+	// Every other fixture here is a 200 Hz sine, whose ZCR (~0.025) sits well
+	// inside the default [0, 0.5] window — so the gate on line 60 never decides
+	// anything. These two pick signals that are loud enough to clear the energy
+	// threshold and are rejected *only* by the ZCR term.
+	it("rejects a loud wideband signal whose ZCR is above zcrMax", () => {
+		// Sign flip every sample (Nyquist) ⇒ ZCR ≈ 1.0, the extreme of the
+		// wideband noise the gate exists to cut. Mean energy 2.25e8, three
+		// orders of magnitude above the 2.5e5 speech floor.
+		const pcm = new Int16Array(SAMPLE_RATE);
+		for (let i = 0; i < pcm.length; i++) pcm[i] = i % 2 === 0 ? 15_000 : -15_000;
+		expect(runVadOnChannel(pcm, SAMPLE_RATE)).toEqual([]);
+		// Same samples, gate opened: proves the rejection came from ZCR and not
+		// from the energy threshold.
+		expect(runVadOnChannel(pcm, SAMPLE_RATE, { zcrMax: 1 }).length).toBe(1);
+	});
+
+	it("rejects a DC offset only when the caller raises zcrMin above the default 0", () => {
+		// Constant +8_000 ⇒ zero crossings, ZCR 0, mean energy 6.4e7.
+		const pcm = new Int16Array(SAMPLE_RATE).fill(8_000);
+		expect(runVadOnChannel(pcm, SAMPLE_RATE, { zcrMin: 0.01 })).toEqual([]);
+		// DEFAULT_ZCR_MIN is 0, so `zcr >= zcrMin` is vacuously true under the
+		// defaults and a pure DC block reads as a full second of speech. The
+		// "cuts DC offset" half of the gate is opt-in, not on by default.
+		expect(runVadOnChannel(pcm, SAMPLE_RATE).length).toBe(1);
+	});
+
 	it("respects an explicit lower energy threshold", () => {
 		const quietPcm = new Int16Array(SAMPLE_RATE);
 		for (let i = 0; i < SAMPLE_RATE; i++) {
