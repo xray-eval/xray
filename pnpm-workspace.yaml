@@ -200,42 +200,12 @@ overrides:
 # days old. Each entry names the date it converts into a real upgrade; on that
 # date, delete the entry and bump. Do not let them outlive those dates.
 #
-# EVERY ENTRY HERE HAS A TWIN in `allow-ghsas` on the dependency-review step of
-# .github/workflows/supply-chain.yml, because that action reads GitHub's advisory
-# DB directly and never looks at this file. Add and delete in both places on the
-# same commit, or `pnpm audit` and the `Supply-chain audit` job disagree.
-auditConfig:
-  ignoreGhsas:
-    # GHSA-7p8r-x3mc-p8w7 (HIGH) — fast-uri mis-parses a backslash as an
-    # authority introducer, so a crafted URI resolves to a different host than
-    # it reads as. NOT AFFECTED:
-    #   • Dev-only. One chain: `@commitlint/cli > @commitlint/load >
-    #     @commitlint/config-validator > ajv > fast-uri`. commitlint is a
-    #     devDependency; the `--prod` image (Dockerfile stage 1) drops it.
-    #   • No untrusted input. ajv uses fast-uri to resolve `$ref` URIs while
-    #     validating OUR commitlint config against OUR schema. No
-    #     attacker-controlled URI reaches it.
-    # Unreachable by upgrade today: the advisory covers *every* release line
-    # (<2.4.4, >=3.0.0 <3.1.5, >=4.0.0 <4.1.2) and all three patched versions
-    # (2.4.4 / 3.1.5 / 4.1.2) were published 2026-07-31 in one coordinated
-    # release — 4 days old, inside the cooldown. ajv@8.20.0 declares
-    # `fast-uri ^3.0.1`, so `pnpm update fast-uri -r` caps at 3.1.4. Overriding
-    # to 4.1.1 was tried and rejected: it is past the cooldown but still inside
-    # the advisory's 4.x range, so it changes nothing.
-    # CONVERT 2026-08-07, when 3.1.5 clears the cooldown: delete this entry and
-    # run `pnpm update fast-uri -r` (in-range, no override needed). Added 2026-08-04.
-    - GHSA-7p8r-x3mc-p8w7
-    # GHSA-8j4g-w8fx-2239 (moderate) — ReDoS in Hono's CORS middleware via a
-    # crafted `Access-Control-Request-Headers`. NOT AFFECTED:
-    #   • We never mount it. The server imports exactly `hono`,
-    #     `hono/body-limit` and `hono/streaming` (plus `hono-openapi`); there is
-    #     no `hono/cors` import anywhere in `src/`, so the vulnerable regex is
-    #     never on a request path. Re-check this claim with
-    #     `grep -rn "hono/cors" src/` before extending the entry.
-    # This is the only advisory that touches the SHIPPED image, which is why it
-    # gets a hard expiry rather than a soft one. Unreachable by upgrade today:
-    # patched 4.12.34 was published 2026-08-03, 1 day old. The newest hono past
-    # the cooldown is 4.12.32, still below the patch floor.
-    # CONVERT 2026-08-10, when 4.12.34 clears the cooldown: delete this entry and
-    # bump the `hono` dependency. Added 2026-08-04.
-    - GHSA-8j4g-w8fx-2239
+# The ignore list is empty: both entries added 2026-08-04 (fast-uri
+# GHSA-7p8r-x3mc-p8w7, hono GHSA-8j4g-w8fx-2239) reached their CONVERT dates
+# and were resolved by real upgrades on 2026-08-11.
+#
+# If an entry ever comes back: EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the
+# dependency-review step of .github/workflows/supply-chain.yml, because that
+# action reads GitHub's advisory DB directly and never looks at this file. Add
+# and delete in both places on the same commit, or `pnpm audit` and the
+# `Supply-chain audit` job disagree.
