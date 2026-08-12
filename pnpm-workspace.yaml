@@ -7,15 +7,9 @@ minimumReleaseAge: 10080
 # Fail loudly when a target version is too new — never silently downgrade.
 minimumReleaseAgeStrict: true
 
-# Temporary, delete on 2026-08-06. brace-expansion 5.0.9 (GHSA-rgw5-rvv9-x895,
-# high) is 5 days old; on that date `minimatch`'s `^5.0.5` reaches it unaided.
-# NOT the `auditConfig.ignoreGhsas` disposition used below: that only silences
-# `pnpm audit`. `dependency-review-action` reads GitHub's advisory DB directly
-# and flags every NEWLY ADDED vulnerable package regardless — and glob 13 adds
-# brace-expansion to this tree for the first time, so the only thing that turns
-# the Supply-chain check green is installing the patched version.
-minimumReleaseAgeExclude:
-  - brace-expansion
+# No minimumReleaseAgeExclude entries. The cooldown bypass is this repo's
+# primary Shai-Hulud defence; the only entry that ever existed (brace-expansion,
+# added 2026-08-01) reached its delete date and was resolved by upstream.
 
 # Default-deny lifecycle scripts. Audit before adding entries here.
 allowBuilds:
@@ -184,10 +178,6 @@ overrides:
   # deliberate re-verified bump, never by drifting on `pnpm update`.
   # Added 2026-07-31.
   "react-cosmos>glob": "13.0.6"
-  # GHSA-rgw5-rvv9-x895 (high) — landed after the glob 13 pin above, against the
-  # 5.0.8 its `minimatch ^10.2.2 > brace-expansion ^5.0.5` chain resolves.
-  # Delete on 2026-08-06 with the `minimumReleaseAgeExclude` entry above.
-  "minimatch>brace-expansion": "5.0.9"
 
 # VEX-style "not affected" dispositions. Both entries below exist for the SAME
 # structural reason, and it is not "we'd rather not upgrade": every patched
@@ -209,3 +199,23 @@ overrides:
 # action reads GitHub's advisory DB directly and never looks at this file. Add
 # and delete in both places on the same commit, or `pnpm audit` and the
 # `Supply-chain audit` job disagree.
+
+# Deliberate version holds — packages whose newest 30-day-eligible release is
+# NOT the one pinned in package.json, because that release is broken for us.
+# Distinct from everything above: no advisory is involved and no pnpm setting
+# enforces it, so the only thing keeping the pin honest is this note. Each entry
+# names the version that fixes it and the date it becomes installable, so a
+# future audit pass converts the hold into a bump instead of rediscovering it.
+#
+# - @biomejs/biome, held at 2.5.2 (2026-08-12).
+#   2.5.3 and 2.5.4 panic with `index out of bounds ... the index is 1116` on
+#   five files — `src/client/inspector/transcript/transcript.tsx` and the
+#   `*.types.ts` of the audio / conversations / replays / run-configs slices —
+#   and a panicked file is SKIPPED, not failed: `biome check` prints the panic,
+#   reports "Checked 345 files" instead of 350, and still exits 0. So the lint
+#   gate silently stops covering those five files (including the custom
+#   `no-as-cast` plugin) while CI stays green — strictly worse than a red build,
+#   which is why the newer release is the wrong trade here. Verified by running
+#   2.5.2 through 2.5.8 against this repo: 2.5.5 is the first that checks all
+#   350 clean. BUMP TO 2.5.5+ ON 2026-08-20, when 2.5.5 (published 2026-07-21)
+#   clears the 30-day bar.
