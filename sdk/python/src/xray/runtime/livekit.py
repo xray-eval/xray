@@ -1282,9 +1282,7 @@ def _mix_into(dest: bytearray, offset_bytes: int, src: bytearray) -> None:
     """Copy `src` into `dest` at `offset_bytes`. Truncates if `src` would
     overrun `dest` (caller has already sized `dest` to accommodate the
     farthest-reaching segment)."""
-    end = offset_bytes + len(src)
-    if end > len(dest):
-        end = len(dest)
+    end = min(offset_bytes + len(src), len(dest))
     dest[offset_bytes:end] = src[: end - offset_bytes]
 
 

@@ -21,7 +21,7 @@ import importlib
 from collections.abc import AsyncIterator, Callable
 from typing import Protocol, runtime_checkable
 
-from typing_extensions import Buffer
+from typing_extensions import Buffer, Self
 
 from xray.errors import LiveDependencyError, MicCaptureError, SpeakerPlaybackError
 
@@ -84,7 +84,7 @@ class MicStream(Protocol):
     iterator.
     """
 
-    async def __aenter__(self) -> MicStream: ...
+    async def __aenter__(self) -> Self: ...
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None: ...
     def __aiter__(self) -> AsyncIterator[bytes]: ...
 
@@ -104,7 +104,7 @@ class SpeakerSink(Protocol):
     releases the device. Playback is best-effort — the live runtime swallows
     ``play`` errors so a glitchy speaker never aborts the recording."""
 
-    async def __aenter__(self) -> SpeakerSink: ...
+    async def __aenter__(self) -> Self: ...
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None: ...
     async def play(self, frame: bytes) -> None: ...
 
@@ -156,7 +156,7 @@ class SoundDeviceMicStream:
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    async def __aenter__(self) -> MicStream:
+    async def __aenter__(self) -> Self:
         self._loop = asyncio.get_running_loop()
 
         def _callback(indata: Buffer, _frames: int, _time: object, _status: object) -> None:
@@ -237,7 +237,7 @@ class SoundDeviceSpeakerSink:
         self._sd = sd
         self._stream: _RawOutputStream | None = None
 
-    async def __aenter__(self) -> SpeakerSink:
+    async def __aenter__(self) -> Self:
         try:
             stream = self._sd.RawOutputStream(
                 samplerate=self._sample_rate,
@@ -277,7 +277,7 @@ class NullSpeaker:
     """A :class:`SpeakerSink` that discards audio — used when
     ``play_agent_audio=False`` (record-only, e.g. headless/CI)."""
 
-    async def __aenter__(self) -> SpeakerSink:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:

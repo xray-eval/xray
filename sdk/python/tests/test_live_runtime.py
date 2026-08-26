@@ -12,10 +12,11 @@ import asyncio
 import wave
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from typing_extensions import Self
 
 from xray import Conversation, SimulatedSipCall
 from xray.errors import AgentNotJoinedError, RuntimeBindError
@@ -86,7 +87,7 @@ class _FakeAudioFrame:
 
 
 class _FakeAudioSource:
-    instances: list[_FakeAudioSource] = []
+    instances: ClassVar[list[_FakeAudioSource]] = []
 
     def __init__(self, sample_rate: int, num_channels: int) -> None:
         self.sample_rate = sample_rate
@@ -132,10 +133,10 @@ class _FakeMicStream:
         self._frames = frames
         self._closed = asyncio.Event()
 
-    async def __aenter__(self) -> _FakeMicStream:
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_: Any) -> None:
+    async def __aexit__(self, *_: object) -> None:
         self._closed.set()
 
     def __aiter__(self) -> AsyncIterator[bytes]:
@@ -162,11 +163,11 @@ class _FakeSpeaker:
         self.entered = False
         self.exited = False
 
-    async def __aenter__(self) -> _FakeSpeaker:
+    async def __aenter__(self) -> Self:
         self.entered = True
         return self
 
-    async def __aexit__(self, *_: Any) -> None:
+    async def __aexit__(self, *_: object) -> None:
         self.exited = True
 
     async def play(self, frame: bytes) -> None:

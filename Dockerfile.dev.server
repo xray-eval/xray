@@ -27,7 +27,12 @@ COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 # script runs `lefthook install` after every `pnpm install`, and lefthook
 # shells out to git.
 
-RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
+# Spelled out rather than the bare `corepack prepare --activate` the CI jobs
+# use: this runs before package.json is COPYed in, so corepack has no
+# `packageManager` field to read. Keep it equal to package.json's
+# `packageManager` — a mismatch means `pnpm dev` resolves the lockfile with a
+# different pnpm than CI and every developer.
+RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
 
 # Pre-create /app/node_modules and /data owned by the dev UID so the named
 # volumes attached at runtime inherit that ownership (Docker copies the

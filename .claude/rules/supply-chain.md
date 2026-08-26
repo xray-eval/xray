@@ -9,7 +9,7 @@ The repo enforces this in four places — local config, CI, dependency-add disci
 ## 1 · Local config
 
 ### `package.json`
-- `"packageManager": "pnpm@11.1.2"` (or newer 11.x) — pinned, activated via `corepack enable`.
+- `"packageManager": "pnpm@11.17.0"` (or newer 11.x) — pinned, activated via `corepack enable`. `Dockerfile.dev.server` mirrors it explicitly (corepack cannot read `packageManager` before the COPY); keep the two equal.
 - `"engines": { "node": ">=24.0.0", "pnpm": ">=11.0.0" }` — bump to whichever LTS line `.nvmrc` pins.
 - `"private": true` until publishing is intentional.
 - `preinstall` runs `npx -y only-allow pnpm` — rejects `npm`/`yarn`/`bun install`.
