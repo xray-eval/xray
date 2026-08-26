@@ -113,14 +113,14 @@ describe("POST /v1/replays/:id/audio — X-Recording-Started-At header", () => {
 	// storing them would make every downstream offset null while the row looks
 	// anchored — tool/ttft assertions would then report misleading fail/pass
 	// instead of `errored`. Reject at the boundary instead.
-	it.each([
-		"2026-05-26T14:31:31+02",
-		"2026-05-26T14:31:31 +02:00",
-	])("rejects an ISO-shaped but unparseable anchor (%s) with 400", async (anchor) => {
-		const { res, row } = await replayRowAfterUpload({ "X-Recording-Started-At": anchor });
-		expect(res.status).toBe(400);
-		expect(row?.recordingStartedAt).toBeNull();
-	});
+	it.each(["2026-05-26T14:31:31+02", "2026-05-26T14:31:31 +02:00"])(
+		"rejects an ISO-shaped but unparseable anchor (%s) with 400",
+		async (anchor) => {
+			const { res, row } = await replayRowAfterUpload({ "X-Recording-Started-At": anchor });
+			expect(res.status).toBe(400);
+			expect(row?.recordingStartedAt).toBeNull();
+		},
+	);
 });
 
 describe("POST /v1/replays/:id/audio — rejections", () => {

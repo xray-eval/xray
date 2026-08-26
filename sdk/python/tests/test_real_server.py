@@ -22,7 +22,6 @@ import os
 import shutil
 import socket
 import struct
-import subprocess
 import time
 import wave
 from collections.abc import AsyncIterator
@@ -130,12 +129,16 @@ async def xray_server(tmp_path: Path) -> AsyncIterator[str]:
             "XRAY_AUDIO_ROOT": str(tmp_path / "audio"),
         }
     )
-    proc = subprocess.Popen(
-        ["bun", "src/server/main.ts"],
+    # `asyncio.create_subprocess_exec`, not `subprocess.Popen`: this fixture is
+    # async, and Popen's spawn plus its blocking `wait(timeout=…)` stall the
+    # event loop the health-check poll below runs on.
+    proc = await asyncio.create_subprocess_exec(
+        "bun",
+        "src/server/main.ts",
         cwd=REPO_ROOT,
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
     )
     base_url = f"http://127.0.0.1:{port}"
     try:
@@ -144,9 +147,10 @@ async def xray_server(tmp_path: Path) -> AsyncIterator[str]:
     finally:
         proc.terminate()
         try:
-            proc.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
             proc.kill()
+            await proc.wait()
 
 
 async def test_run_against_real_server_returns_conversation_hash(xray_server: str, tmp_path: Path):

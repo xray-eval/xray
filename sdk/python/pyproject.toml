@@ -59,9 +59,15 @@ dev = [
   # pull whatever ruff shipped that day. A ruff minor promotes new lint rules
   # to the default set and turns green code red with no code change — exactly
   # the drift that reddened this gate. Pin to the tested version; bump
-  # deliberately after a cooldown-checked audit. 0.15.21 uploaded 2026-07-09;
-  # re-verified 2026-08-12 (ruff check + ruff format --check both clean).
-  "ruff==0.15.21",
+  # deliberately after a cooldown-checked audit. 0.16.0 uploaded 2026-07-23;
+  # bumped 2026-08-26 from 0.15.21 after fixing, not suppressing, the nine
+  # findings the newly-defaulted rules raised (PYI034 `__aenter__` -> `Self`
+  # across the mic/speaker protocols and their three implementations, PYI036
+  # `*_: Any` -> `*_: object`, PLR1730 `min(...)`, RUF012 `ClassVar`, and
+  # ASYNC220 `subprocess.Popen` -> `asyncio.create_subprocess_exec` in the
+  # async server fixture). ruff check + ruff format --check + pyright strict +
+  # pytest all clean on 0.16.0.
+  "ruff==0.16.0",
   "respx>=0.21",
 ]
 

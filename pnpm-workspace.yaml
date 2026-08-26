@@ -84,7 +84,9 @@ overrides:
   # already declares (`esbuild ^0.25.4`), so this adds zero new versions —
   # pinning ^0.28.1 here would instead add a third copy for no audit gain, since
   # 0.25.x carries no open advisory. Remove once drizzle-kit drops
-  # `@esbuild-kit/*`. Added 2026-05-16, re-verified 2026-07-29.
+  # `@esbuild-kit/*`. Added 2026-05-16, re-verified 2026-08-26 (drizzle-kit
+  # 0.31.10 is still the newest release and still ships `@esbuild-kit/*`;
+  # removing this override brings GHSA-67mh-4wv8-2f99 straight back).
   "@esbuild-kit/core-utils>esbuild": "^0.25.0"
   # GHSA-fx2h-pf6j-xcff / GHSA-4w7w-66w2-5vf9 / GHSA-v6wh-96g9-6wx3 — vite
   # <=6.4.2 has a `server.fs.deny` bypass via Windows alternate paths, a path
@@ -113,18 +115,32 @@ overrides:
   # Exact-pinned, not caret: a vite major that vitepress does not sanction must
   # move on a deliberate, re-verified bump, never by drifting on `pnpm update`.
   # Remove once vitepress ships a stable release on vite >=6.4.3 (its 2.x line;
-  # only a 2.0.0-alpha exists today). Added 2026-07-29.
+  # only a 2.0.0-alpha exists today). Added 2026-07-29, re-verified 2026-08-26:
+  # vitepress is still 1.6.4 and 7.3.6 is still the newest 7.x.
+  #
+  # Second, independent reason this entry is now load-bearing: without it the
+  # install does not merely regress the audit, it FAILS. vitepress's own range
+  # resolves vite 5.4.21, which trips `trustPolicy: no-downgrade` above —
+  # `ERR_PNPM_TRUST_DOWNGRADE ... earlier versions had trusted publisher, but
+  # this version has provenance attestation`. So removing this entry would mean
+  # relaxing a supply-chain gate, not just accepting an advisory.
   vite: "7.3.6"
-  # The four entries below all exist for one reason: `react-cosmos` 7.3.0 (the
+  # The three entries below all exist for one reason: `react-cosmos` 7.3.0 (the
   # component workbench, devDependency only — never in the image, see
   # `.dockerignore`) declares its server-side deps as **exact** versions
   # (`express: 4.22.1`, `glob: 10.5.0`, `http-proxy-middleware: 3.0.5`,
   # `ws: 8.19.0`). An exact pin means pnpm cannot reach a patched release on its
   # own no matter how long we wait, so `pnpm audit --audit-level=moderate`
-  # reports 6 advisories (3 high, 3 moderate) that no upgrade of react-cosmos
-  # itself resolves — 7.3.0 is the newest release. Overriding the four leaves is
-  # the only route that keeps the audit gate honest instead of suppressed.
-  # Remove each one the moment react-cosmos bumps the corresponding pin.
+  # reports 5 advisories (2 high, 3 moderate) that no *installable* upgrade of
+  # react-cosmos resolves. Overriding the three leaves is the only route that
+  # keeps the audit gate honest instead of suppressed. Verified 2026-08-26 by
+  # deleting all three and reinstalling: every one of the five comes back.
+  #
+  # react-cosmos 7.4.0 (2026-08-17) fixes all three at the source — it moves to
+  # `ws 8.21.3`, `http-proxy-middleware 3.0.7` and `express 5.2.1` (whose
+  # `qs ^6.14.0` reaches the patched 6.15.3 unaided). It is held only by the
+  # 30-day bar; see the version-holds section at the bottom of this file for the
+  # date these three entries get deleted together.
   #
   # GHSA-gcq2-9pq2-cxqm (high, multipart/form-data field injection via unescaped
   # CRLF in `fixRequestBody`, patched 3.0.7) and GHSA-64mm-vxmg-q3vj (moderate,
@@ -150,34 +166,11 @@ overrides:
   # deletes the vulnerable one by deduping onto the copy already in the tree.
   # Keyed on `express>qs`, not `qs`, so it can't silently pin an unrelated
   # future qs consumer; pnpm's override selector takes only one parent level, so
-  # the react-cosmos prefix the three sibling entries carry can't be spelled
+  # the react-cosmos prefix the two sibling entries carry can't be spelled
   # here — it would be redundant anyway, since express enters this tree solely
   # as a react-cosmos dependency and is not a direct dep of ours.
   # Added 2026-07-31.
   "express>qs": "6.15.3"
-  # GHSA-mh99-v99m-4gvg (high, unbounded brace expansion → OOM crash), reached
-  # via `glob 10.5.0 > minimatch 9.0.9 > brace-expansion 2.1.2`.
-  #
-  # Deliberately fixed at `glob` rather than at the `brace-expansion` leaf,
-  # which is the obvious-looking move and is wrong: the advisory's only patched
-  # range is `>=5.0.8` (a single `<= 5.0.7` vulnerable range, so the maintainer's
-  # backports to 1.1.17 / 2.1.3 / 3.0.5 do not clear it), and brace-expansion 5.x
-  # changed its CJS entry point from `module.exports = expandTop` to
-  # `exports.expand` — so forcing 5.0.8 under minimatch 9 resolves the audit and
-  # breaks `expand is not a function` at runtime, taking the workbench's fixture
-  # scan with it. glob 13.0.6 instead brings an internally-consistent chain that
-  # is already on the patched line: `minimatch ^10.2.2` → `brace-expansion
-  # ^5.0.5` → 5.0.8, with minimatch 10 written against the named-export API.
-  #
-  # Outside react-cosmos's declared `glob: 10.5.0`, so it is verified by
-  # behaviour rather than by semver: react-cosmos imports only `glob` and
-  # `globSync` (`findUserModulePaths.js`, `findCosmosPluginConfigs.js`), whose
-  # signatures are unchanged across 10 → 13, and `pnpm cosmos` was confirmed to
-  # still discover every `*.fixture.tsx`. Exact-pinned for the same reason as
-  # vite above: a glob major react-cosmos does not sanction must move on a
-  # deliberate re-verified bump, never by drifting on `pnpm update`.
-  # Added 2026-07-31.
-  "react-cosmos>glob": "13.0.6"
 
 # VEX-style "not affected" dispositions. Both entries below exist for the SAME
 # structural reason, and it is not "we'd rather not upgrade": every patched
@@ -207,15 +200,60 @@ overrides:
 # names the version that fixes it and the date it becomes installable, so a
 # future audit pass converts the hold into a bump instead of rediscovering it.
 #
-# - @biomejs/biome, held at 2.5.2 (2026-08-12).
-#   2.5.3 and 2.5.4 panic with `index out of bounds ... the index is 1116` on
-#   five files — `src/client/inspector/transcript/transcript.tsx` and the
-#   `*.types.ts` of the audio / conversations / replays / run-configs slices —
-#   and a panicked file is SKIPPED, not failed: `biome check` prints the panic,
-#   reports "Checked 345 files" instead of 350, and still exits 0. So the lint
-#   gate silently stops covering those five files (including the custom
-#   `no-as-cast` plugin) while CI stays green — strictly worse than a red build,
-#   which is why the newer release is the wrong trade here. Verified by running
-#   2.5.2 through 2.5.8 against this repo: 2.5.5 is the first that checks all
-#   350 clean. BUMP TO 2.5.5+ ON 2026-08-20, when 2.5.5 (published 2026-07-21)
-#   clears the 30-day bar.
+# The @biomejs/biome hold (held at 2.5.2 for the `index out of bounds ... the
+# index is 1116` panic that SKIPPED five files while still exiting 0) reached
+# its stated 2026-08-20 bump date and was converted on 2026-08-26: 2.5.5 is
+# pinned and `biome check` reports all 350 files, clean, exit 0.
+#
+# - react-cosmos / react-cosmos-core / react-cosmos-dom, held at 7.3.0
+#   (2026-08-26). 7.4.0 is not broken for us — it is simply nine days old
+#   (published 2026-08-17), so it is past the 7-day `minimumReleaseAge` gate but
+#   short of the 30-day bar. It matters more than a routine bump because it
+#   deletes THREE overrides above at the source: `ws 8.19.0 -> 8.21.3`,
+#   `http-proxy-middleware 3.0.5 -> 3.0.7`, and `express 4.22.1 -> 5.2.1`
+#   (express 5 declares `qs ^6.14.0`, which reaches the patched 6.15.3 without
+#   help, so `express>qs` goes too). Taking it early would trade a 30-day
+#   exposure window for a tidier config while the overrides already neutralise
+#   every advisory involved — the wrong way round. Note 7.4.0 also carries four
+#   internal majors (express 4->5, chokidar 3->5, yargs 17->18, open 10->11), so
+#   the bump needs `pnpm cosmos` re-verified, not just a version swap.
+#   BUMP TO 7.4.0 AND DELETE THE THREE OVERRIDES ON 2026-09-16.
+#
+# - @hono/standard-validator, held at 0.2.3 (2026-08-26). This one is NOT
+#   date-gated: 0.3.0 (2026-07-15) and 0.4.0 (2026-08-05) both clear the 30-day
+#   bar, but `hono-openapi@1.3.1` — the newest release — declares
+#   `@hono/standard-validator ^0.2.0` as an optional peer, so anything from
+#   0.3.0 up leaves the range its only consumer sanctions. Nothing in `src/`
+#   imports this package by name; it is a direct dependency purely because
+#   `hono-openapi/dist/index.js` statically imports `sValidator` from it and an
+#   *optional* peer is not installed unless we declare it. The 0.3.0 diff is
+#   types-only (it stops defining `InferInput` locally and re-exports hono's,
+#   which is why its peer floor moved to `hono >=4.11.2`); `sValidator` itself is
+#   unchanged. So the upgrade buys nothing we consume and costs a peer-range
+#   violation. BUMP WHEN hono-openapi WIDENS ITS PEER RANGE, not on a date.
+#
+# - Node, held at 24.18.1 in `.tool-versions` / `.nvmrc` / the Dockerfile digest
+#   (2026-08-26). 24.19.0 (2026-08-03) is the newer LTS but is 23 days old and,
+#   per the v24 changelog, is NOT a security release — 24.18.1 (2026-07-29) is
+#   the current security release and is what we run. BUMP TO 24.19.0 ON
+#   2026-09-02, or immediately if a security release supersedes it first.
+#
+# - bun, held at 1.3.14 in `.tool-versions` / the Dockerfile digest
+#   (2026-08-26). 1.4.0 (2026-08-20) is six days old — a major-minor jump for
+#   the runtime that serves both the SPA bundler and the API, well short of the
+#   30-day bar. BUMP TO 1.4.0 ON 2026-09-19.
+#
+# - python base image for the two example Dockerfiles, held at
+#   `python@sha256:d50fb761…` = 3.12.13-slim-bookworm, built 2026-07-14
+#   (2026-08-26). This is the one pinned digest in the repo that has drifted
+#   from its tag: `python:3.12-slim-bookworm` now resolves to
+#   `sha256:0f5b26b9…` = 3.12.14-slim-bookworm on a newer debian:bookworm-slim,
+#   built 2026-08-25 — ONE DAY old, so it is inside even the 7-day gate. The
+#   node and bun digests in `Dockerfile` / `Dockerfile.dev.server` were checked
+#   the same way on 2026-08-26 and all three still match their tags exactly.
+#   BUMP THE TWO EXAMPLE DOCKERFILES TO THE THEN-CURRENT 3.12-slim-bookworm
+#   DIGEST ON 2026-09-24, re-resolving it rather than pasting this one.
+#
+# - sounddevice (`sdk/python/pyproject.toml`, `[live]` extra), held at 0.5.5
+#   (2026-08-26). 0.5.6 uploaded 2026-08-17, nine days old.
+#   BUMP TO 0.5.6 ON 2026-09-16.
