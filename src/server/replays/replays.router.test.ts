@@ -298,6 +298,64 @@ describe("GET /v1/replays/:id/events (SSE)", () => {
 		await new Promise((r) => setTimeout(r, 10));
 		expect(events.listenerCount(replayId)).toBe(0);
 	});
+
+	it("re-reads an already-completed replay and emits evaluation_complete without waiting for a live event", async () => {
+		// A client can open the stream after the analyze chain already finished
+		// (e.g. a page reload) — no live "completed" event will ever fire, so
+		// the handler must serve the terminal state from a re-read.
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const { replays: replaysTable, replayEvaluations } = await import("@/server/store/schema.ts");
+		const { eq } = await import("drizzle-orm");
+		store.db
+			.update(replaysTable)
+			.set({ lifecycleState: "completed", finishedAt: "2026-05-18T12:30:00.000Z" })
+			.where(eq(replaysTable.id, replayId))
+			.run();
+		store.db
+			.insert(replayEvaluations)
+			.values({
+				replayId,
+				passed: true,
+				assertionsTotal: 0,
+				assertionsPassed: 0,
+				judgesTotal: 0,
+				judgesPassed: 0,
+				evaluatedAt: "2026-05-18T12:30:00.000Z",
+			})
+			.run();
+
+		const res = await app.request(`/v1/replays/${replayId}/events`);
+		expect(res.status).toBe(200);
+		const body = res.body;
+		if (body === null) throw new Error("missing SSE body");
+
+		const text = await readSseUntilCompleted(body);
+		expect(text).toContain('"lifecycle_state":"completed"');
+		expect(text).toContain("event: evaluation_complete");
+		expect(text).toContain('"passed":true');
+	});
+
+	it("re-reads an already-failed replay and emits failed with its stored reason", async () => {
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const { replays: replaysTable } = await import("@/server/store/schema.ts");
+		const { eq } = await import("drizzle-orm");
+		store.db
+			.update(replaysTable)
+			.set({ lifecycleState: "failed", failureReason: "audio_missing" })
+			.where(eq(replaysTable.id, replayId))
+			.run();
+
+		const res = await app.request(`/v1/replays/${replayId}/events`);
+		expect(res.status).toBe(200);
+		const body = res.body;
+		if (body === null) throw new Error("missing SSE body");
+
+		const text = await readSseUntilCompleted(body);
+		expect(text).toContain("event: failed");
+		expect(text).toContain('"reason":"audio_missing"');
+	});
 });
 
 describe("POST /v1/replays/:id/analyze", () => {

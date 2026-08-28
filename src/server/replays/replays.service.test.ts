@@ -6,11 +6,15 @@ import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
 import { UnhashableRunConfigError } from "@/server/run-configs/run-configs.errors.ts";
 import { hashRunConfig } from "@/server/run-configs/run-configs.hash.ts";
 import {
+	modelUsage,
 	replayEvaluations,
 	replayMetrics,
 	replays,
 	replayTurns,
 	runConfigs,
+	spans,
+	speechSegments,
+	toolCalls,
 	turnTranscripts,
 } from "@/server/store/schema.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
@@ -518,6 +522,195 @@ describe("buildReplayDetail — transcripts projection", () => {
 
 		expect(detail.transcripts[0]?.words).toBeNull();
 		expect(detail.transcripts[0]?.text).toBe("hi");
+		store.close();
+	});
+});
+
+describe("buildReplayDetail — turns, tool calls, model usage, spans, speech segments", () => {
+	it("maps every row kind, ordering spans and segments by their timestamp column", async () => {
+		const store = makeTempStore();
+		const { replayId } = await seedReplay(store);
+		store.db
+			.update(replays)
+			.set({ recordingStartedAt: "2026-05-18T12:00:00.000Z" })
+			.where(eq(replays.id, replayId))
+			.run();
+
+		store.db
+			.insert(replayTurns)
+			.values({
+				replayId,
+				idx: 0,
+				role: "user",
+				turnStartMs: 0,
+				turnEndMs: 1000,
+				voiceStartMs: 100,
+				voiceEndMs: 900,
+			})
+			.run();
+
+		store.db
+			.insert(speechSegments)
+			.values([
+				{ replayId, channel: "agent", startMs: 500, endMs: 900 },
+				{ replayId, channel: "user", startMs: 0, endMs: 400 },
+			])
+			.run();
+
+		store.db
+			.insert(spans)
+			.values([
+				{
+					replayId,
+					traceId: "trace-1",
+					spanId: "span-2",
+					parentSpanId: null,
+					name: "llm.call",
+					vocabulary: "gen_ai",
+					startedAt: "2026-05-18T12:00:02.000Z",
+					endedAt: "2026-05-18T12:00:02.500Z",
+					attributesJson: "{}",
+				},
+				{
+					replayId,
+					traceId: "trace-1",
+					spanId: "span-1",
+					parentSpanId: null,
+					name: "tool.call",
+					vocabulary: "xray",
+					startedAt: "2026-05-18T12:00:01.000Z",
+					endedAt: "2026-05-18T12:00:01.200Z",
+					attributesJson: "{}",
+				},
+			])
+			.run();
+
+		store.db
+			.insert(toolCalls)
+			.values({
+				replayId,
+				spanId: "span-1",
+				name: "get_weather",
+				argsJson: '{"city":"Berlin"}',
+				resultJson: '{"tempC":18}',
+				startedAt: "2026-05-18T12:00:01.000Z",
+				endedAt: "2026-05-18T12:00:01.200Z",
+				latencyMs: 200,
+			})
+			.run();
+
+		store.db
+			.insert(modelUsage)
+			.values({
+				replayId,
+				spanId: "span-2",
+				provider: "openai",
+				model: "gpt-5",
+				inputTokens: 120,
+				outputTokens: 40,
+				totalTokens: 160,
+				ttftMs: 310,
+				startedAt: "2026-05-18T12:00:02.000Z",
+				endedAt: "2026-05-18T12:00:02.500Z",
+				latencyMs: 500,
+			})
+			.run();
+
+		const detail = getReplay(store, replayId);
+
+		expect(detail.turns).toEqual([
+			{
+				idx: 0,
+				role: "user",
+				turn_start_ms: 0,
+				turn_end_ms: 1000,
+				voice_start_ms: 100,
+				voice_end_ms: 900,
+			},
+		]);
+
+		expect(detail.speech_segments.map((s) => s.channel)).toEqual(["user", "agent"]);
+		expect(detail.speech_segments[0]).toMatchObject({ start_ms: 0, end_ms: 400 });
+
+		expect(detail.spans.map((s) => s.span_id)).toEqual(["span-1", "span-2"]);
+		expect(detail.spans[0]).toMatchObject({ name: "tool.call", audio_offset_ms: 1000 });
+		expect(detail.spans[1]).toMatchObject({ name: "llm.call", audio_offset_ms: 2000 });
+
+		expect(detail.tool_calls).toHaveLength(1);
+		expect(detail.tool_calls[0]).toMatchObject({
+			span_id: "span-1",
+			name: "get_weather",
+			args_json: '{"city":"Berlin"}',
+			result_json: '{"tempC":18}',
+			latency_ms: 200,
+			audio_offset_ms: 1000,
+		});
+
+		expect(detail.model_usage).toHaveLength(1);
+		expect(detail.model_usage[0]).toMatchObject({
+			span_id: "span-2",
+			provider: "openai",
+			model: "gpt-5",
+			input_tokens: 120,
+			output_tokens: 40,
+			total_tokens: 160,
+			ttft_ms: 310,
+			audio_offset_ms: 2000,
+		});
+		store.close();
+	});
+
+	it("leaves audio_offset_ms null for a row with no timestamp, even when the replay has an anchor", async () => {
+		const store = makeTempStore();
+		const { replayId } = await seedReplay(store);
+		store.db
+			.update(replays)
+			.set({ recordingStartedAt: "2026-05-18T12:00:00.000Z" })
+			.where(eq(replays.id, replayId))
+			.run();
+
+		store.db
+			.insert(toolCalls)
+			.values({
+				replayId,
+				spanId: null,
+				name: "no_timestamp_tool",
+				argsJson: null,
+				resultJson: null,
+				startedAt: null,
+				endedAt: null,
+				latencyMs: null,
+			})
+			.run();
+
+		const detail = getReplay(store, replayId);
+
+		expect(detail.tool_calls[0]?.audio_offset_ms).toBeNull();
+		store.close();
+	});
+
+	it("leaves audio_offset_ms null for a timestamped row when the replay has no recording anchor", async () => {
+		const store = makeTempStore();
+		const { replayId } = await seedReplay(store);
+
+		store.db
+			.insert(toolCalls)
+			.values({
+				replayId,
+				spanId: null,
+				name: "unanchored_tool",
+				argsJson: null,
+				resultJson: null,
+				startedAt: "2026-05-18T12:00:01.000Z",
+				endedAt: "2026-05-18T12:00:01.200Z",
+				latencyMs: 200,
+			})
+			.run();
+
+		const detail = getReplay(store, replayId);
+
+		expect(detail.recording_started_at).toBeNull();
+		expect(detail.tool_calls[0]?.audio_offset_ms).toBeNull();
 		store.close();
 	});
 });
