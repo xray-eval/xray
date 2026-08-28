@@ -536,17 +536,31 @@ describe("buildReplayDetail — turns, tool calls, model usage, spans, speech se
 			.where(eq(replays.id, replayId))
 			.run();
 
+		// Inserted idx 1 before idx 0 so relying on insertion order (instead of
+		// the explicit `.sort((a, b) => a.idx - b.idx)` in buildReplayDetail)
+		// would produce the wrong order and fail the assertion below.
 		store.db
 			.insert(replayTurns)
-			.values({
-				replayId,
-				idx: 0,
-				role: "user",
-				turnStartMs: 0,
-				turnEndMs: 1000,
-				voiceStartMs: 100,
-				voiceEndMs: 900,
-			})
+			.values([
+				{
+					replayId,
+					idx: 1,
+					role: "agent",
+					turnStartMs: 1000,
+					turnEndMs: 2000,
+					voiceStartMs: 1100,
+					voiceEndMs: 2000,
+				},
+				{
+					replayId,
+					idx: 0,
+					role: "user",
+					turnStartMs: 0,
+					turnEndMs: 1000,
+					voiceStartMs: 100,
+					voiceEndMs: 900,
+				},
+			])
 			.run();
 
 		store.db
@@ -557,6 +571,9 @@ describe("buildReplayDetail — turns, tool calls, model usage, spans, speech se
 			])
 			.run();
 
+		// span-1 starts first but ends last (a long-running tool call spanning
+		// the shorter llm.call) — startedAt-order and endedAt-order disagree, so
+		// sorting by the wrong column produces a detectably different result.
 		store.db
 			.insert(spans)
 			.values([
@@ -579,7 +596,7 @@ describe("buildReplayDetail — turns, tool calls, model usage, spans, speech se
 					name: "tool.call",
 					vocabulary: "xray",
 					startedAt: "2026-05-18T12:00:01.000Z",
-					endedAt: "2026-05-18T12:00:01.200Z",
+					endedAt: "2026-05-18T12:00:03.000Z",
 					attributesJson: "{}",
 				},
 			])
@@ -626,6 +643,14 @@ describe("buildReplayDetail — turns, tool calls, model usage, spans, speech se
 				turn_end_ms: 1000,
 				voice_start_ms: 100,
 				voice_end_ms: 900,
+			},
+			{
+				idx: 1,
+				role: "agent",
+				turn_start_ms: 1000,
+				turn_end_ms: 2000,
+				voice_start_ms: 1100,
+				voice_end_ms: 2000,
 			},
 		]);
 
