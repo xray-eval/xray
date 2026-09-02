@@ -67,7 +67,7 @@ dev = [
   # ASYNC220 `subprocess.Popen` -> `asyncio.create_subprocess_exec` in the
   # async server fixture). ruff check + ruff format --check + pyright strict +
   # pytest all clean on 0.16.0.
-  "ruff==0.16.0",
+  "ruff==0.16.1",
   "respx>=0.21",
 ]
 
