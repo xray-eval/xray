@@ -177,6 +177,17 @@ overrides:
   # as a react-cosmos dependency and is not a direct dep of ours.
   # Added 2026-07-31.
   "express>qs": "6.15.3"
+  # GHSA-f65p-4m7j-42xc (high, ReDoS via a crafted URI), GHSA-fph4-wmhf-6fwf
+  # (high, SSRF via repeated hostname percent-decoding) and GHSA-jqff-g426-hqxp
+  # (high, host confusion via percent-encoded scheme normalization) — all three
+  # patched in fast-uri >=3.1.6. Pulled in as `ajv`'s own dependency
+  # (`@commitlint/cli>@commitlint/load>@commitlint/config-validator>ajv>fast-uri`,
+  # both directly and via `resolve-extends`) — commitlint runs only in the
+  # commit-msg git hook, never in a served path, so exposure was already nil,
+  # but 3.1.6 (published 2026-08-23, past the 7-day cooldown) is a real upgrade
+  # ajv's own `fast-uri: ^3.0.1` range already permits — not a suppression.
+  # Added 2026-09-03.
+  "ajv>fast-uri": "3.1.6"
 
 # VEX-style "not affected" dispositions. Both entries below exist for the SAME
 # structural reason, and it is not "we'd rather not upgrade": every patched
@@ -189,15 +200,31 @@ overrides:
 # days old. Each entry names the date it converts into a real upgrade; on that
 # date, delete the entry and bump. Do not let them outlive those dates.
 #
-# The ignore list is empty: both entries added 2026-08-04 (fast-uri
-# GHSA-7p8r-x3mc-p8w7, hono GHSA-8j4g-w8fx-2239) reached their CONVERT dates
-# and were resolved by real upgrades on 2026-08-11.
+# The previous two entries (fast-uri GHSA-7p8r-x3mc-p8w7, hono
+# GHSA-8j4g-w8fx-2239, added 2026-08-04) reached their CONVERT dates and were
+# resolved by real upgrades on 2026-08-11.
 #
-# If an entry ever comes back: EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the
-# dependency-review step of .github/workflows/supply-chain.yml, because that
-# action reads GitHub's advisory DB directly and never looks at this file. Add
-# and delete in both places on the same commit, or `pnpm audit` and the
-# `Supply-chain audit` job disagree.
+# EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the dependency-review step of
+# .github/workflows/supply-chain.yml, because that action reads GitHub's
+# advisory DB directly and never looks at this file. Add and delete in both
+# places on the same commit, or `pnpm audit` and the `Supply-chain audit` job
+# disagree.
+#
+# GHSA-x5fp-wj9c-mxmx (moderate, array-limit bypass via bracket-key comma
+# parsing) and GHSA-4mjr-xmp4-gh2g (moderate, DoS via attacker-controlled
+# `isBuffer`) — both patched only in qs >=6.16.0 (published 2026-08-29, five
+# days old today). `react-cosmos` 7.3.0 pins `express` to an exact 4.22.1,
+# whose own `qs` range cannot reach 6.16.0 unaided (see the `express>qs`
+# override above, which already dedupes onto the highest reachable patched
+# copy, 6.15.3 — insufficient for these two newer findings). react-cosmos is a
+# devDependency (the component workbench, never in the image — see
+# `.dockerignore`), so neither finding is reachable in anything we ship.
+# CONVERT ON 2026-09-05, by bumping the `express>qs` override above to
+# "6.16.0" and deleting both entries below.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-x5fp-wj9c-mxmx
+    - GHSA-4mjr-xmp4-gh2g
 
 # Deliberate version holds — packages whose newest 30-day-eligible release is
 # NOT the one pinned in package.json, because that release is broken for us.
