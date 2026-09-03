@@ -4,8 +4,8 @@ version = "0.0.0"
 description = "Minimal LiveKit Agents worker wired to xray (example)."
 requires-python = ">=3.10"
 dependencies = [
-  "livekit-agents==1.6.7",
-  "livekit-plugins-google==1.6.7",
-  "langfuse==4.14.1",
+  "livekit-agents==1.6.8",
+  "livekit-plugins-google==1.6.8",
+  "langfuse==4.14.2",
   # xray-py installed editable from ../../sdk/python in the Dockerfile.
 ]
