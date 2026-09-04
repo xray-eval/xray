@@ -93,7 +93,6 @@ describe("createJobRunner", () => {
 
 		await runner.enqueue("analyze-replay", makeAnalyzePayload({ replayId }));
 		await waitFor(() => failedFires.length >= 1);
-		await new Promise((r) => setTimeout(r, 50));
 
 		const row = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
 		expect(row?.lifecycleState).toBe("failed");
