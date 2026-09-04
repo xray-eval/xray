@@ -28,8 +28,9 @@ coverage/
 *.pem
 *.key
 
-# Python bytecode + caches (xray-py SDK)
+# Python bytecode + caches + venv (xray-py SDK)
 __pycache__/
+.venv/
 *.pyc
 *.pyo
 .pytest_cache/
