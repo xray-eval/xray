@@ -119,15 +119,12 @@ jobs:
           # entry lives in pnpm-workspace.yaml; it is deliberately not duplicated
           # here, so that there is one place to read and two places to delete.
           #
-          # The previous two entries (fast-uri, hono, added 2026-08-05) reached
-          # their cooldown dates and were fixed by real upgrades on 2026-08-11.
-          # Any new entry needs a twin in pnpm-workspace.yaml
-          # `auditConfig.ignoreGhsas` on the same commit — added here 2026-09-03,
-          # CONVERT ON 2026-09-05 (see pnpm-workspace.yaml for the reachability
-          # analysis).
-          allow-ghsas: >-
-            GHSA-x5fp-wj9c-mxmx,
-            GHSA-4mjr-xmp4-gh2g
+          # No allow-ghsas entries: the fast-uri/hono pair (added 2026-08-05)
+          # reached its cooldown dates and was fixed by real upgrades on
+          # 2026-08-11; the qs pair (added 2026-09-03) reached its cooldown
+          # date and was fixed by a real upgrade on 2026-09-06. Any new entry
+          # needs a twin in pnpm-workspace.yaml `auditConfig.ignoreGhsas` on
+          # the same commit.
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft
