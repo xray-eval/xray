@@ -3,7 +3,7 @@ import * as v from "valibot";
 
 import { seedConversation } from "@/server/conversations/conversations.test-utils.ts";
 import { readJson } from "@/server/core/test-utils.ts";
-import { makeFakeJobRunner } from "@/server/jobs/jobs.test-utils.ts";
+import { makeFakeJobRunner, waitFor } from "@/server/jobs/jobs.test-utils.ts";
 import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import { makeReplayEvents } from "./replays.events.ts";
@@ -273,6 +273,67 @@ describe("GET /v1/replays/:id/events (SSE)", () => {
 		expect(res.status).toBe(404);
 	});
 
+	it("delivers evaluation_complete immediately when the replay is already completed", async () => {
+		// Covers the re-read fast path: a client opening the stream after the
+		// analyze chain already finished must get the verdict from the row/
+		// evaluation tables directly, not by waiting on a live event that will
+		// never fire again.
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const { replays: replaysTable, replayEvaluations } = await import("@/server/store/schema.ts");
+		const { eq } = await import("drizzle-orm");
+
+		store.db
+			.update(replaysTable)
+			.set({ lifecycleState: "completed" })
+			.where(eq(replaysTable.id, replayId))
+			.run();
+		store.db
+			.insert(replayEvaluations)
+			.values({
+				replayId,
+				passed: true,
+				assertionsTotal: 0,
+				assertionsPassed: 0,
+				judgesTotal: 0,
+				judgesPassed: 0,
+				evaluatedAt: "2026-05-18T12:30:00.000Z",
+			})
+			.run();
+
+		const res = await app.request(`/v1/replays/${replayId}/events`);
+		expect(res.status).toBe(200);
+		const body = res.body;
+		if (body === null) throw new Error("missing SSE body");
+
+		const text = await readSseUntilCompleted(body);
+		expect(text).toContain('"lifecycle_state":"completed"');
+		expect(text).toContain('"evaluation_complete"');
+		expect(text).toContain('"passed":true');
+	});
+
+	it("delivers failed immediately when the replay is already failed", async () => {
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const { replays: replaysTable } = await import("@/server/store/schema.ts");
+		const { eq } = await import("drizzle-orm");
+
+		store.db
+			.update(replaysTable)
+			.set({ lifecycleState: "failed", failureReason: "max_attempts_exceeded" })
+			.where(eq(replaysTable.id, replayId))
+			.run();
+
+		const res = await app.request(`/v1/replays/${replayId}/events`);
+		expect(res.status).toBe(200);
+		const body = res.body;
+		if (body === null) throw new Error("missing SSE body");
+
+		const text = await readSseUntilCompleted(body);
+		expect(text).toContain('"lifecycle_state":"failed"');
+		expect(text).toContain('"reason":"max_attempts_exceeded"');
+	});
+
 	it("unsubscribes the listener after a terminal event", async () => {
 		const { app, store, events } = makeApp();
 		const { replayId } = await seedReplay(store);
@@ -295,7 +356,11 @@ describe("GET /v1/replays/:id/events (SSE)", () => {
 		});
 		await readSseUntilCompleted(body);
 
-		await new Promise((r) => setTimeout(r, 10));
+		// Unsubscription happens in the handler's cleanup path, which runs after
+		// the write that carries the terminal event settles — an async gap of
+		// unspecified length from the reader's point of view. Poll instead of
+		// guessing a fixed delay.
+		await waitFor(() => events.listenerCount(replayId) === 0);
 		expect(events.listenerCount(replayId)).toBe(0);
 	});
 
