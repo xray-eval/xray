@@ -175,8 +175,34 @@ overrides:
   # the react-cosmos prefix the two sibling entries carry can't be spelled
   # here — it would be redundant anyway, since express enters this tree solely
   # as a react-cosmos dependency and is not a direct dep of ours.
-  # Added 2026-07-31.
-  "express>qs": "6.15.3"
+  # Added 2026-07-31. Bumped 2026-09-06: GHSA-x5fp-wj9c-mxmx (moderate,
+  # array-limit bypass via bracket-key comma parsing) and GHSA-4mjr-xmp4-gh2g
+  # (moderate, DoS via attacker-controlled `isBuffer`) are patched only in qs
+  # >=6.16.0 (published 2026-08-29; cooldown cleared 2026-09-05). Bridged with
+  # a dated `auditConfig.ignoreGhsas` entry from 2026-09-03 until today, per
+  # PR #140 — now converted to this real upgrade.
+  "express>qs": "6.16.0"
+  # Same two GHSAs as the entry directly above, but body-parser's own bundled
+  # copy — express 4.22.1's `body-parser` (1.20.6) declares `qs: ~6.15.1`,
+  # which cannot reach 6.16.0 on its own, so the audit still found this copy
+  # after the `express>qs` bump. Forced outside body-parser's declared range
+  # (same pattern as the `vite` override above, verified by behaviour rather
+  # than semver): `pnpm cosmos` still starts and serves the renderer with this
+  # override in place — body-parser only uses `qs` to parse the workbench's
+  # own `application/x-www-form-urlencoded` request bodies, a shape 6.16.0
+  # still parses identically. Added 2026-09-06.
+  "body-parser>qs": "6.16.0"
+  # GHSA-f65p-4m7j-42xc (high, ReDoS via a crafted URI), GHSA-fph4-wmhf-6fwf
+  # (high, SSRF via repeated hostname percent-decoding) and GHSA-jqff-g426-hqxp
+  # (high, host confusion via percent-encoded scheme normalization) — all three
+  # patched in fast-uri >=3.1.6. Pulled in as `ajv`'s own dependency
+  # (`@commitlint/cli>@commitlint/load>@commitlint/config-validator>ajv>fast-uri`,
+  # both directly and via `resolve-extends`) — commitlint runs only in the
+  # commit-msg git hook, never in a served path, so exposure was already nil,
+  # but 3.1.6 (published 2026-08-23, past the 7-day cooldown) is a real upgrade
+  # ajv's own `fast-uri: ^3.0.1` range already permits — not a suppression.
+  # Added 2026-09-03.
+  "ajv>fast-uri": "3.1.6"
 
 # VEX-style "not affected" dispositions. Both entries below exist for the SAME
 # structural reason, and it is not "we'd rather not upgrade": every patched
@@ -189,9 +215,11 @@ overrides:
 # days old. Each entry names the date it converts into a real upgrade; on that
 # date, delete the entry and bump. Do not let them outlive those dates.
 #
-# The ignore list is empty: both entries added 2026-08-04 (fast-uri
-# GHSA-7p8r-x3mc-p8w7, hono GHSA-8j4g-w8fx-2239) reached their CONVERT dates
-# and were resolved by real upgrades on 2026-08-11.
+# The ignore list is empty: the fast-uri/hono pair (added 2026-08-04) reached
+# their CONVERT dates and were resolved by real upgrades on 2026-08-11; the
+# qs pair (GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g, added 2026-09-03) reached
+# its CONVERT date and was resolved by bumping the `express>qs` override above
+# to "6.16.0" on 2026-09-06.
 #
 # If an entry ever comes back: EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the
 # dependency-review step of .github/workflows/supply-chain.yml, because that
