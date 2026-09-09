@@ -65,9 +65,12 @@ dev = [
   # across the mic/speaker protocols and their three implementations, PYI036
   # `*_: Any` -> `*_: object`, PLR1730 `min(...)`, RUF012 `ClassVar`, and
   # ASYNC220 `subprocess.Popen` -> `asyncio.create_subprocess_exec` in the
-  # async server fixture). ruff check + ruff format --check + pyright strict +
-  # pytest all clean on 0.16.0.
-  "ruff==0.16.1",
+  # async server fixture). Bumped 2026-09-09 to 0.16.2 (uploaded 2026-08-07,
+  # the newest release clearing the 30-day bar — 0.16.3 is 2026-08-13). Same
+  # minor, so no rule was promoted into the default set; `ruff check`,
+  # `ruff format --check`, `pyright` strict and `pytest` were all re-run on
+  # 0.16.2 and are clean, no source change needed.
+  "ruff==0.16.2",
   "respx>=0.21",
 ]
 

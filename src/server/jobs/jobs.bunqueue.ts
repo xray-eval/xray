@@ -1,4 +1,4 @@
-import { Bunqueue } from "bunqueue/client";
+import { Bunqueue, shutdownManager } from "bunqueue/client";
 
 import { JobEnqueueError, UnknownJobNameError } from "./jobs.errors.ts";
 import type { JobName, JobPayload, JobProcessor, JobResult } from "./jobs.types.ts";
@@ -114,6 +114,14 @@ export function createJobRunner(opts: JobRunnerOptions): JobRunner {
 		},
 		async close() {
 			await queue.close();
+			// bunqueue >=2.8.58 keeps the embedded QueueManager as a
+			// process-wide singleton keyed by dataPath, and `queue.close()`
+			// does not release it: a later `new Bunqueue` against a different
+			// dataPath throws "Embedded QueueManager dataPath conflict".
+			// createJobRunner is the only construction site in this repo, so
+			// the runner owns that singleton's lifetime and close() has to
+			// hand it back — otherwise the runner is not actually disposable.
+			shutdownManager();
 		},
 	};
 }

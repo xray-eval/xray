@@ -14,9 +14,9 @@ COPY sdk/python /workspace/sdk/python
 RUN pip install --upgrade pip && \
     pip install -e "/workspace/sdk/python[livekit]" && \
     pip install \
-      "livekit-agents==1.6.8" \
-      "livekit-plugins-google==1.6.8" \
-      "langfuse==4.14.2"
+      "livekit-agents==1.6.9" \
+      "livekit-plugins-google==1.6.9" \
+      "langfuse==4.14.3"
 
 COPY examples/livekit-voice-agent/agent /workspace/agent
 COPY examples/livekit-voice-agent/fixtures /workspace/fixtures
