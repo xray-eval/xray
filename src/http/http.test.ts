@@ -134,4 +134,39 @@ describe("createHttpClient", () => {
 			HttpNetworkError,
 		);
 	});
+
+	it("propagates an error ky doesn't recognize as-is, unwrapped", async () => {
+		// A 200 response with a body that isn't valid JSON fails inside
+		// ky's own `.json()` with a plain SyntaxError — none of
+		// HTTPError/TimeoutError/NetworkError, so it must fall through
+		// the catch's three `instanceof` checks untouched.
+		server.use(
+			http.get(
+				`${BASE_URL}/v1/malformed`,
+				() =>
+					new HttpResponse("not json", {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					}),
+			),
+		);
+		const client = createHttpClient({ baseUrl: BASE_URL });
+
+		const promise = client.get("/v1/malformed", PingSchema);
+		await expect(promise).rejects.not.toBeInstanceOf(HttpRequestFailedError);
+		await expect(promise).rejects.not.toBeInstanceOf(HttpTimeoutError);
+		await expect(promise).rejects.not.toBeInstanceOf(HttpNetworkError);
+		await expect(promise).rejects.toBeInstanceOf(SyntaxError);
+	});
+
+	it("includes searchParams in the URL reported by a schema-shape error", async () => {
+		server.use(http.get(`${BASE_URL}/v1/items`, () => HttpResponse.json({ ok: "not-a-bool" })));
+		const client = createHttpClient({ baseUrl: BASE_URL });
+
+		const promise = client.get("/v1/items", PingSchema, { searchParams: { id: "weird/value" } });
+		await expect(promise).rejects.toBeInstanceOf(HttpResponseShapeError);
+		await expect(promise).rejects.toMatchObject({
+			url: `${BASE_URL}/v1/items?id=weird%2Fvalue`,
+		});
+	});
 });

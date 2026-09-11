@@ -182,8 +182,13 @@ describe("openStore", () => {
 	it("does not flag a fresh DB or a DB already on the new schema", () => {
 		const path = tmpDbPath();
 		const fresh = openStore({ path });
+		// Querying a new-schema table proves the migrations actually ran, not
+		// just that openStore() didn't throw.
+		expect(fresh.db.select().from(conversations).all()).toEqual([]);
 		fresh.close();
+
 		const reopen = openStore({ path });
+		expect(reopen.db.select().from(conversations).all()).toEqual([]);
 		reopen.close();
 	});
 

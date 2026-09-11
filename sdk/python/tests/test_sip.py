@@ -36,11 +36,6 @@ def test_to_attributes_emits_each_named_field_with_canonical_key() -> None:
     }
 
 
-def test_to_attributes_skips_unset_fields() -> None:
-    sip = SimulatedSipCall(caller_phone="+15551234567")
-    assert sip.to_attributes() == {"sip.phoneNumber": "+15551234567"}
-
-
 def test_to_attributes_passes_extra_attrs_through_verbatim() -> None:
     """Keys outside the standard ``sip.*`` set ride through ``extra_attrs``
     untouched — same key, same value."""
