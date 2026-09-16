@@ -37,9 +37,13 @@ livekit = [
   "livekit-api>=1.0",
 ]
 # Live mic sessions (xray.run_live). Exact-pinned + cooldown-checked per
-# .claude/rules/supply-chain.md §6: 0.5.5 uploaded 2026-01-23 (>7d old).
+# .claude/rules/supply-chain.md §6: 0.5.6 uploaded 2026-08-17, taken on
+# 2026-09-16 (the day it cleared the 30-day bar) from 0.5.5. It is the newest
+# release outright. Not exercised by CI — the Python SDK gate installs `[dev]`
+# only, and importing sounddevice needs the PortAudio system library — so the
+# check on a bump here is that `uv pip install -e '.[live]'` resolves.
 live = [
-  "sounddevice==0.5.5",
+  "sounddevice==0.5.6",
 ]
 dev = [
   # Floor is 9.0.3, not 8.0, because of GHSA-6w46-j5rx-g56g / CVE-2025-71176:
@@ -66,11 +70,15 @@ dev = [
   # `*_: Any` -> `*_: object`, PLR1730 `min(...)`, RUF012 `ClassVar`, and
   # ASYNC220 `subprocess.Popen` -> `asyncio.create_subprocess_exec` in the
   # async server fixture). Bumped 2026-09-09 to 0.16.2 (uploaded 2026-08-07,
-  # the newest release clearing the 30-day bar — 0.16.3 is 2026-08-13). Same
-  # minor, so no rule was promoted into the default set; `ruff check`,
-  # `ruff format --check`, `pyright` strict and `pytest` were all re-run on
-  # 0.16.2 and are clean, no source change needed.
-  "ruff==0.16.2",
+  # the newest release clearing the 30-day bar at the time). Bumped 2026-09-16
+  # to 0.16.3 (uploaded 2026-08-13), now the newest release clearing the bar —
+  # 0.16.4 and up are all younger, and 0.16.7 (2026-09-10) is eligible
+  # 2026-10-10. Still the same minor, so no rule was promoted into the default
+  # set; `ruff check src tests`, `ruff format --check src tests`, `pyright`
+  # strict (0 errors) and `pytest` (203 passed, 2 skipped) were all re-run on
+  # 0.16.3 and are clean, no source change needed. A ruff MINOR (0.17.x) is a
+  # read-the-changelog bump, never a date bump.
+  "ruff==0.16.3",
   "respx>=0.21",
 ]
 

@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
         with:
           # Start in audit mode to learn the egress profile, then flip to `block`
           # with an allowed-endpoints list once stable.
@@ -122,9 +122,12 @@ jobs:
           # No allow-ghsas entries: the fast-uri/hono pair (added 2026-08-05)
           # reached its cooldown dates and was fixed by real upgrades on
           # 2026-08-11; the qs pair (added 2026-09-03) reached its cooldown
-          # date and was fixed by a real upgrade on 2026-09-06. Any new entry
-          # needs a twin in pnpm-workspace.yaml `auditConfig.ignoreGhsas` on
-          # the same commit.
+          # date and was fixed by a real upgrade on 2026-09-06, and the
+          # override that upgrade created was itself deleted on 2026-09-16
+          # when react-cosmos 7.4.0 fixed the chain at the source. Both gates
+          # have been suppression-free since 2026-07-29. Any new entry needs a
+          # twin in pnpm-workspace.yaml `auditConfig.ignoreGhsas` on the same
+          # commit.
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft
