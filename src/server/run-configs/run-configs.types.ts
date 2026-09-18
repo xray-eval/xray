@@ -11,6 +11,7 @@ const MAX_COMPARE_CONFIGS = 8;
 
 export const COMPARE_CONFIGS_MIN = MIN_COMPARE_CONFIGS;
 export const COMPARE_CONFIGS_MAX = MAX_COMPARE_CONFIGS;
+export const MAX_COMPARE_BODY_BYTES = 16 * 1024;
 
 export const RunConfigHashSchema = v.pipe(
 	v.string(),

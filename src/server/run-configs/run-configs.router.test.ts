@@ -7,6 +7,7 @@ import { makeTempStore } from "@/server/store/test-utils.ts";
 
 import { createRunConfigsRouter } from "./run-configs.router.ts";
 import { seedGroupedReplay } from "./run-configs.test-utils.ts";
+import { MAX_COMPARE_BODY_BYTES } from "./run-configs.types.ts";
 import { beforeEach, describe, expect, it } from "bun:test";
 
 let store: Store;
@@ -172,6 +173,24 @@ describe("POST /v1/run-configs/compare", () => {
 			body: "{not json",
 		});
 		expect(res.status).toBe(400);
+	});
+
+	it("returns 413 with body_too_large shape when the body exceeds MAX_COMPARE_BODY_BYTES", async () => {
+		const oversize = "x".repeat(MAX_COMPARE_BODY_BYTES + 1);
+		const res = await app.request("/v1/run-configs/compare", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"content-length": String(oversize.length),
+			},
+			body: oversize,
+		});
+		expect(res.status).toBe(413);
+		const body = await readJson(
+			res,
+			v.object({ error: v.literal("body_too_large"), max_bytes: v.number() }),
+		);
+		expect(body.max_bytes).toBe(MAX_COMPARE_BODY_BYTES);
 	});
 
 	it("returns 404 naming the group that does not exist", async () => {

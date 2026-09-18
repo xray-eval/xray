@@ -134,8 +134,6 @@ async def test_mic_stream_delivers_callback_frames_to_iterator():
                 received.append(frame)
 
         task = asyncio.create_task(_collect())
-        # Let the queued frames drain to the iterator.
-        await asyncio.sleep(0.01)
 
     # Exiting the context stops the device and pushes the sentinel; the
     # iterator then terminates.

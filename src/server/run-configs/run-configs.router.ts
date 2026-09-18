@@ -27,12 +27,11 @@ import {
 	CompareRunConfigsRequestSchema,
 	CompareRunConfigsResponseSchema,
 	ListRunConfigsResponseSchema,
+	MAX_COMPARE_BODY_BYTES,
 	ReplaySelectionSchema,
 	RunConfigDetailResponseSchema,
 	RunConfigHashSchema,
 } from "./run-configs.types.ts";
-
-const MAX_COMPARE_BODY_BYTES = 16 * 1024;
 
 const RunConfigNotFoundResponseSchema = v.object({
 	error: v.string(),

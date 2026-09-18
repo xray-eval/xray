@@ -262,6 +262,21 @@ describe("POST /v1/otlp/v1/traces", () => {
 		expect(res.status).toBe(400);
 	});
 
+	it("returns 400 for well-formed JSON that fails the OTLP schema", async () => {
+		const { app } = await makeApp();
+		const res = await app.request("/v1/otlp/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ resourceSpans: "not-an-array" }),
+		});
+		expect(res.status).toBe(400);
+		const json = await readJson(
+			res,
+			v.object({ error: v.literal("invalid_otlp_body"), issues: v.array(v.unknown()) }),
+		);
+		expect(json.issues.length).toBeGreaterThan(0);
+	});
+
 	it("returns 413 with body_too_large shape when the body exceeds MAX_OTLP_BODY_BYTES", async () => {
 		const { app } = await makeApp();
 		const oversize = "x".repeat(MAX_OTLP_BODY_BYTES + 1);

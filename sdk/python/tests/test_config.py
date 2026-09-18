@@ -30,13 +30,6 @@ def test_to_wire_excludes_name_so_relabelling_cannot_fork_the_group():
     assert RunConfig(name="baseline", model="gpt-4o").to_wire() == {"model": "gpt-4o"}
 
 
-def test_two_configs_differing_only_by_name_have_identical_wire_content():
-    assert (
-        RunConfig(name="baseline", model="gpt-4o").to_wire()
-        == RunConfig(name="control-group", model="gpt-4o").to_wire()
-    )
-
-
 def test_name_is_readable_off_the_dataclass_for_the_orchestrator_to_send():
     assert RunConfig(name="baseline").name == "baseline"
     assert RunConfig().name is None
