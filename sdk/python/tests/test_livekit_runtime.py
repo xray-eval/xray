@@ -21,8 +21,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import xray.runtime.livekit as livekit_module
 from xray import Conversation, SimulatedSipCall, Turn
-from xray.errors import AgentNotJoinedError, AudioMissingError, RuntimeBindError
+from xray.errors import (
+    AgentNotJoinedError,
+    AudioMissingError,
+    LiveKitDependencyError,
+    RuntimeBindError,
+)
 from xray.runtime.livekit import (
     _UTTERANCE_GAP_S,
     SAMPLE_RATE,
@@ -32,6 +38,7 @@ from xray.runtime.livekit import (
     _ContinuousAgentCapture,
     _place_frames,
     _TurnSegment,
+    load_livekit_modules,
     write_stereo_mixdown,
 )
 
@@ -296,6 +303,39 @@ def _fire_agent_transcripts(
         return await original(idx=idx, **kw)
 
     rt._capture_agent_turn = _wrapped
+
+
+def test_load_livekit_modules_raises_dependency_error_on_import_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise(_name: str) -> object:
+        raise ImportError("no module named livekit")
+
+    monkeypatch.setattr(livekit_module.importlib, "import_module", _raise)
+    with pytest.raises(LiveKitDependencyError, match=r"pip install xray-py\[livekit\]"):
+        load_livekit_modules(None, None)
+
+
+def test_load_livekit_modules_raises_dependency_error_on_incompatible_rtc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _import(name: str) -> object:
+        return object() if name == "livekit.rtc" else _build_fake_lk_api()
+
+    monkeypatch.setattr(livekit_module.importlib, "import_module", _import)
+    with pytest.raises(LiveKitDependencyError, match="livekit.rtc is missing"):
+        load_livekit_modules(None, None)
+
+
+def test_load_livekit_modules_raises_dependency_error_on_incompatible_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _import(name: str) -> object:
+        return _build_fake_lk_rtc() if name == "livekit.rtc" else object()
+
+    monkeypatch.setattr(livekit_module.importlib, "import_module", _import)
+    with pytest.raises(LiveKitDependencyError, match="livekit.api is missing"):
+        load_livekit_modules(None, None)
 
 
 def test_bind_required_before_run():
