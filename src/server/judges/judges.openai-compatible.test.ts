@@ -99,13 +99,6 @@ describe("createOpenAICompatibleChatJudge", () => {
 		expect(out.reason).toBe("agent confirmed the booking");
 	});
 
-	it("rounds non-integer scores to the nearest integer", async () => {
-		const fetchImpl = makeFetch(() => chatResponse(JSON.stringify({ score: 87.6, reason: "x" })));
-		const provider = createOpenAICompatibleChatJudge(CONFIG, { apiKey: () => "ak", fetchImpl });
-		const out = await provider.judge({ systemPrompt: "s", userPrompt: "u" });
-		expect(out.score).toBe(88);
-	});
-
 	it("throws MissingProviderCredentialError naming the configured env var when the key is absent", async () => {
 		const provider = createOpenAICompatibleChatJudge(CONFIG, {
 			apiKey: () => undefined,

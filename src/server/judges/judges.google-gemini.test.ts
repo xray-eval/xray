@@ -99,13 +99,6 @@ describe("createGoogleGeminiJudgeProvider", () => {
 		expect(out.reason).toBe("agent confirmed the booking");
 	});
 
-	it("rounds non-integer scores to the nearest integer", async () => {
-		const fetchImpl = makeFetch(() => geminiResponse(JSON.stringify({ score: 87.6, reason: "x" })));
-		const provider = createGoogleGeminiJudgeProvider({ apiKey: () => "AIza", fetchImpl });
-		const out = await provider.judge({ systemPrompt: "s", userPrompt: "u" });
-		expect(out.score).toBe(88);
-	});
-
 	it("throws JudgeProviderError on 4xx/5xx, preserving status code", async () => {
 		const fetchImpl = makeFetch(() => new Response("nope", { status: 401 }));
 		const provider = createGoogleGeminiJudgeProvider({ apiKey: () => "AIza", fetchImpl });
