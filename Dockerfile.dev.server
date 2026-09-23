@@ -32,7 +32,7 @@ COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 # `packageManager` field to read. Keep it equal to package.json's
 # `packageManager` — a mismatch means `pnpm dev` resolves the lockfile with a
 # different pnpm than CI and every developer.
-RUN corepack enable && corepack prepare pnpm@11.20.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.23.0 --activate
 
 # Pre-create /app/node_modules and /data owned by the dev UID so the named
 # volumes attached at runtime inherit that ownership (Docker copies the

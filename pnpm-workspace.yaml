@@ -241,6 +241,23 @@ overrides:
 #   - The two GitHub Actions whose dates had come due: harden-runner
 #     v2.20.1 -> v2.21.0 and docker/setup-buildx-action v4.2.0 -> v4.3.0.
 #
+# - pnpm itself, taken 11.20.0 -> 11.23.0 on 2026-09-23 (published 2026-08-23).
+#   NOTE FOR FUTURE PASSES: pnpm had never appeared in this list, and the tool
+#   that installs everything else is exactly the dependency an audit should not
+#   forget. It is pinned in THREE places that must move together, or corepack
+#   and the Dockerfile disagree about what runs:
+#     package.json#packageManager, .tool-versions, Dockerfile.dev.server
+#   (the Dockerfile cannot read `packageManager` before the COPY, so it spells
+#   the version out — supply-chain.md §1). Verified by deleting node_modules
+#   and reinstalling under 11.23.0: `pnpm install --frozen-lockfile` passes and
+#   `pnpm-lock.yaml` is BYTE-IDENTICAL (sha256 41f5ccf3…), so this is a tool
+#   bump with no resolution change behind it, and the audit stays clean.
+#   11.24.0 (2026-08-24) is one day short of the bar and becomes eligible on
+#   2026-09-24. Take the newest eligible 11.x each pass. pnpm 12.x is a
+#   MAJOR and is NOT taken on the date bar alone — same rule as the GitHub
+#   Actions majors below — and `engines.pnpm` (">=11.0.0") plus every CI
+#   `corepack prepare` would need reviewing with it.
+#
 # - @hono/standard-validator, held at 0.2.3 (re-verified 2026-09-23). NOT
 #   date-gated on its own account: 0.3.0 (2026-07-15) and 0.4.0 (2026-08-05)
 #   both clear the 30-day bar, but `hono-openapi@1.3.1` declares
