@@ -37,9 +37,10 @@ livekit = [
   "livekit-api>=1.0",
 ]
 # Live mic sessions (xray.run_live). Exact-pinned + cooldown-checked per
-# .claude/rules/supply-chain.md §6: 0.5.5 uploaded 2026-01-23 (>7d old).
+# .claude/rules/supply-chain.md §6: 0.5.6 uploaded 2026-08-17, taken
+# 2026-09-23 once it cleared the 30-day bar. It is the newest release.
 live = [
-  "sounddevice==0.5.5",
+  "sounddevice==0.5.6",
 ]
 dev = [
   # Floor is 9.0.3, not 8.0, because of GHSA-6w46-j5rx-g56g / CVE-2025-71176:
@@ -69,8 +70,11 @@ dev = [
   # the newest release clearing the 30-day bar — 0.16.3 is 2026-08-13). Same
   # minor, so no rule was promoted into the default set; `ruff check`,
   # `ruff format --check`, `pyright` strict and `pytest` were all re-run on
-  # 0.16.2 and are clean, no source change needed.
-  "ruff==0.16.2",
+  # 0.16.2 and are clean, no source change needed. Bumped 2026-09-23 to
+  # 0.16.4 (uploaded 2026-08-20, the newest release clearing the 30-day
+  # bar — 0.16.5 is 2026-08-27). Still the same minor, so again no rule
+  # was promoted into the default set; all four gates re-run clean.
+  "ruff==0.16.4",
   "respx>=0.21",
 ]
 
