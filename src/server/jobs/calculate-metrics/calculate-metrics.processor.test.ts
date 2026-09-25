@@ -233,6 +233,47 @@ describe("makeCalculateMetricsProcessor", () => {
 		store.close();
 	});
 
+	it("skips the write phase and reports metricsWritten without a lifecycle change when the row already left 'analyzing'", async () => {
+		const { store, replayId } = await setupReplay();
+		store.db
+			.insert(replayTurns)
+			.values({
+				replayId,
+				idx: 0,
+				role: "user",
+				turnStartMs: 0,
+				turnEndMs: 1000,
+				voiceStartMs: 0,
+				voiceEndMs: 1000,
+			})
+			.run();
+		// A concurrent path (e.g. the driver reporting `driver_aborted`) already
+		// moved the row out of `analyzing` before this stage's transaction reads
+		// it — the WHERE guard must no-op rather than clobber that write.
+		store.db
+			.update(replays)
+			.set({ lifecycleState: "failed", failureReason: "driver_aborted" })
+			.where(eq(replays.id, replayId))
+			.run();
+
+		const runner = makeFakeJobRunner();
+		const processor = makeCalculateMetricsProcessor(store, makeReplayEvents(), runner);
+		const result = await processor({ replayId });
+
+		expect(result).toEqual({ ok: true, metricsWritten: 1 });
+		const rows = store.db
+			.select()
+			.from(replayMetrics)
+			.where(eq(replayMetrics.replayId, replayId))
+			.all();
+		expect(rows).toEqual([]);
+		const after = store.db.select().from(replays).where(eq(replays.id, replayId)).get();
+		expect(after?.lifecycleState).toBe("failed");
+		expect(after?.failureReason).toBe("driver_aborted");
+		expect(runner.enqueued).toEqual([]);
+		store.close();
+	});
+
 	it("throws when the replay row doesn't exist", async () => {
 		const store = makeTempStore();
 		const runner = makeFakeJobRunner();
