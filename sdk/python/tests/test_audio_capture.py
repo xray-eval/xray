@@ -211,3 +211,16 @@ def test_load_sounddevice_missing_raises_live_dependency_error(monkeypatch: pyte
     monkeypatch.setattr(importlib, "import_module", _raise)
     with pytest.raises(LiveDependencyError):
         load_sounddevice()
+
+
+def test_load_sounddevice_incompatible_version_raises_live_dependency_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import importlib
+
+    def _import(_name: str) -> object:
+        return object()  # installed, but missing RawInputStream
+
+    monkeypatch.setattr(importlib, "import_module", _import)
+    with pytest.raises(LiveDependencyError, match="sounddevice is missing RawInputStream"):
+        load_sounddevice()
