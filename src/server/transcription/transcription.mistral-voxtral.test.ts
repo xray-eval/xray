@@ -1,5 +1,6 @@
 import * as v from "valibot";
 
+import type { FetchLike } from "@/server/core/fetch.ts";
 import { makeFetch } from "@/server/core/test-utils.ts";
 
 import {
@@ -194,5 +195,100 @@ describe("createMistralVoxtralProvider", () => {
 		await expect(
 			provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }),
 		).rejects.toBeInstanceOf(TranscriptionProviderError);
+	});
+
+	it("wraps a rejected fetch as a generic fetch failure", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw new Error("simulated network failure");
+		};
+		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TranscriptionProviderError)) {
+			throw new Error(`expected TranscriptionProviderError, got ${err}`);
+		}
+		expect(err.provider).toBe("mistral-voxtral");
+		expect(err.message).toContain("fetch failed");
+	});
+
+	it("wraps an AbortSignal timeout with a timeout-specific message", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw Object.assign(new Error("The operation timed out."), { name: "TimeoutError" });
+		};
+		const provider = createMistralVoxtralProvider({
+			apiKey: () => "mk",
+			fetchImpl,
+			timeoutMs: 5_000,
+		});
+		const err = await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TranscriptionProviderError)) {
+			throw new Error(`expected TranscriptionProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("fetch timed out after 5000ms");
+	});
+
+	it("wraps a caller-triggered abort with an abort-specific message", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw Object.assign(new Error("This operation was aborted"), { name: "AbortError" });
+		};
+		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
+		const controller = new AbortController();
+		const err = await provider
+			.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000, signal: controller.signal })
+			.then(
+				() => null,
+				(e: unknown) => e,
+			);
+		if (!(err instanceof TranscriptionProviderError)) {
+			throw new Error(`expected TranscriptionProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("fetch aborted by caller");
+	});
+
+	it("falls back to '<unreadable body>' when the error body stream errors mid-read", async () => {
+		// A ReadableStream that errors on read simulates a connection dropping
+		// after the status line but before the body finishes — `.text()`
+		// rejects, which is what drives the fallback branch.
+		const fetchImpl: FetchLike = async () =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.error(new Error("stream broke"));
+					},
+				}),
+				{ status: 500 },
+			);
+		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TranscriptionProviderError)) {
+			throw new Error(`expected TranscriptionProviderError, got ${err}`);
+		}
+		expect(err.statusCode).toBe(500);
+		expect(err.message).toContain("<unreadable body>");
+	});
+
+	it("throws TranscriptionProviderError when the success body's JSON parse throws", async () => {
+		const fetchImpl: FetchLike = async () =>
+			new Response("not valid json {", {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		const provider = createMistralVoxtralProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.transcribe({ audio: new Int16Array([0]), sampleRate: 16_000 }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TranscriptionProviderError)) {
+			throw new Error(`expected TranscriptionProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("response body was not valid JSON");
 	});
 });
