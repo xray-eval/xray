@@ -1,4 +1,6 @@
-import { conversations } from "@/server/store/schema.ts";
+import { eq } from "drizzle-orm";
+
+import { conversations, runConfigs } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
 import { fakeHash, makeConversationInput, makeTempStore } from "@/server/store/test-utils.ts";
 
@@ -110,6 +112,21 @@ describe("listRunConfigs", () => {
 		expect(items).toHaveLength(1);
 		expect(items[0]?.coverage).toEqual({ conversations: 0, replays: 0, failed_replays: 0 });
 		expect(items[0]?.last_run_at).toBeNull();
+	});
+
+	test("renders config as null instead of throwing when config_json is corrupted on disk", () => {
+		// ensureRunConfig always writes valid JSON — this simulates on-disk
+		// corruption or an out-of-band write, which the row's own writer can't
+		// prevent from happening between writes.
+		const group = ensureRunConfig(store.db, { config: BASELINE, name: "corrupt", now: NOW });
+		store.db
+			.update(runConfigs)
+			.set({ configJson: "{not json" })
+			.where(eq(runConfigs.hash, group.hash))
+			.run();
+		const { items } = listRunConfigs(store);
+		expect(items).toHaveLength(1);
+		expect(items[0]?.config).toBeNull();
 	});
 });
 

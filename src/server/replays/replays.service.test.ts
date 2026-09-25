@@ -75,6 +75,25 @@ describe("createReplay", () => {
 		store.close();
 	});
 
+	it("renders run_config as null instead of throwing when run_config_json is corrupted on disk", async () => {
+		// createReplay always writes valid JSON — this simulates on-disk
+		// corruption or an out-of-band write between writes.
+		const store = makeTempStore();
+		const { hash } = await seedConversation(store);
+		const detail = createReplay(store, {
+			conversation_hash: hash,
+			run_config: { model: "gpt-4o" },
+		});
+		store.db
+			.update(replays)
+			.set({ runConfigJson: "{not json" })
+			.where(eq(replays.id, detail.id))
+			.run();
+		const reread = getReplay(store, detail.id);
+		expect(reread.run_config).toBeNull();
+		store.close();
+	});
+
 	it("assigns the replay to a run-config group", async () => {
 		const store = makeTempStore();
 		const { hash } = await seedConversation(store);
