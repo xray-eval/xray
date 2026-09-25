@@ -101,6 +101,95 @@ describe("ingestOtlpTraces — xray vocabulary (raw spans only)", () => {
 	});
 });
 
+describe("ingestOtlpTraces — attribute value flattening", () => {
+	it("flattens a boolValue attribute to a JS boolean", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = makeOtlpRequest({
+			replayId,
+			spans: [{ name: "xray.stage.stt", attributes: { "xray.stage.succeeded": true } }],
+		});
+		ingestOtlpTraces(store, req);
+		const [row] = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
+		expect(row).toBeDefined();
+		const attrs: Record<string, unknown> = JSON.parse(row?.attributesJson ?? "{}");
+		expect(attrs["xray.stage.succeeded"]).toBe(true);
+		store.close();
+	});
+
+	it("serializes an arrayValue attribute as a JSON string", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = makeOtlpRequest({
+			replayId,
+			spans: [
+				{
+					name: "xray.stage.stt",
+					rawAttributes: [
+						{
+							key: "xray.stage.candidates",
+							value: { arrayValue: { values: [{ stringValue: "a" }, { stringValue: "b" }] } },
+						},
+					],
+				},
+			],
+		});
+		ingestOtlpTraces(store, req);
+		const [row] = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
+		expect(row).toBeDefined();
+		const attrs: Record<string, unknown> = JSON.parse(row?.attributesJson ?? "{}");
+		expect(attrs["xray.stage.candidates"]).toBe(
+			JSON.stringify({ values: [{ stringValue: "a" }, { stringValue: "b" }] }),
+		);
+		store.close();
+	});
+
+	it("serializes a kvlistValue attribute as a JSON string", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = makeOtlpRequest({
+			replayId,
+			spans: [
+				{
+					name: "xray.stage.stt",
+					rawAttributes: [
+						{
+							key: "xray.stage.meta",
+							value: {
+								kvlistValue: { values: [{ key: "lang", value: { stringValue: "en" } }] },
+							},
+						},
+					],
+				},
+			],
+		});
+		ingestOtlpTraces(store, req);
+		const [row] = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
+		expect(row).toBeDefined();
+		const attrs: Record<string, unknown> = JSON.parse(row?.attributesJson ?? "{}");
+		expect(attrs["xray.stage.meta"]).toBe(
+			JSON.stringify({ values: [{ key: "lang", value: { stringValue: "en" } }] }),
+		);
+		store.close();
+	});
+
+	it("passes a bytesValue attribute through as its base64 string", async () => {
+		const { store, replayId } = await setupReplay();
+		const req = makeOtlpRequest({
+			replayId,
+			spans: [
+				{
+					name: "xray.stage.stt",
+					rawAttributes: [{ key: "xray.stage.raw_audio", value: { bytesValue: "AQIDBA==" } }],
+				},
+			],
+		});
+		ingestOtlpTraces(store, req);
+		const [row] = store.db.select().from(spans).where(eq(spans.replayId, replayId)).all();
+		expect(row).toBeDefined();
+		const attrs: Record<string, unknown> = JSON.parse(row?.attributesJson ?? "{}");
+		expect(attrs["xray.stage.raw_audio"]).toBe("AQIDBA==");
+		store.close();
+	});
+});
+
 // registry.test.ts pins the order of SPAN_VOCABULARIES and walks it with its
 // own copy of the matcher loop. That proves the array, not the consumer:
 // reversing the loop inside `recognize()` here left all 1382 tests green while

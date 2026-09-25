@@ -14,6 +14,12 @@ export interface MakeOtlpSpanOptions {
 	startedAtMs?: number;
 	endedAtMs?: number;
 	attributes?: Record<string, string | number | boolean>;
+	/**
+	 * Escape hatch for `AnyValue` variants `attributes` can't express
+	 * (`arrayValue` / `kvlistValue` / `bytesValue`) — appended after
+	 * `attributes` is flattened to `KeyValue`s.
+	 */
+	rawAttributes?: KeyValue[];
 }
 
 export interface MakeOtlpRequestOptions {
@@ -54,7 +60,7 @@ export function makeOtlpRequest(opts: MakeOtlpRequestOptions): ExportTraceServic
 								name: s.name,
 								startTimeUnixNano: String(BigInt(startMs) * 1_000_000n),
 								endTimeUnixNano: String(BigInt(endMs) * 1_000_000n),
-								attributes: toKvList(s.attributes ?? {}),
+								attributes: [...toKvList(s.attributes ?? {}), ...(s.rawAttributes ?? [])],
 							};
 						}),
 					},
