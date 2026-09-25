@@ -45,14 +45,13 @@ import {
 	CompareReplaysRequestSchema,
 	CompareReplaysResponseSchema,
 	CreateReplayRequestSchema,
+	MAX_COMPARE_BODY_BYTES,
+	MAX_REPLAY_BODY_BYTES,
 	ReplayDetailResponseSchema,
 	ReplayIdSchema,
 	ReplayResultSchema,
 	UpdateReplayRequestSchema,
 } from "./replays.types.ts";
-
-const MAX_REPLAY_BODY_BYTES = 64 * 1024;
-const MAX_COMPARE_BODY_BYTES = 16 * 1024;
 
 /**
  * Interval of the `: heartbeat` comment written to an otherwise-idle SSE

@@ -9,6 +9,7 @@ import { makeTempStore } from "@/server/store/test-utils.ts";
 import { makeReplayEvents } from "./replays.events.ts";
 import { createReplaysRouter, SSE_HEARTBEAT_MS, SSE_IDLE_TIMEOUT_S } from "./replays.router.ts";
 import { seedReplay } from "./replays.test-utils.ts";
+import { MAX_COMPARE_BODY_BYTES, MAX_REPLAY_BODY_BYTES } from "./replays.types.ts";
 import { describe, expect, it } from "bun:test";
 
 async function readSseUntilCompleted(
@@ -166,6 +167,34 @@ describe("POST /v1/replays", () => {
 		expect(body.error).toBe("invalid_replay_request");
 		expect(body.issues[0]).toMatchObject({ type: "run_config", received: "±Infinity" });
 	});
+
+	it("returns 400 invalid_replay_request for syntactically malformed JSON", async () => {
+		const { app } = makeApp();
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{not json",
+		});
+		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string() }));
+		expect(body.error).toBe("invalid_replay_request");
+	});
+
+	it("returns 413 with body_too_large shape when the body exceeds MAX_REPLAY_BODY_BYTES", async () => {
+		const { app } = makeApp();
+		const oversize = "x".repeat(MAX_REPLAY_BODY_BYTES + 1);
+		const res = await app.request("/v1/replays", {
+			method: "POST",
+			headers: { "content-type": "application/json", "content-length": String(oversize.length) },
+			body: oversize,
+		});
+		expect(res.status).toBe(413);
+		const body = await readJson(
+			res,
+			v.object({ error: v.literal("body_too_large"), max_bytes: v.number() }),
+		);
+		expect(body.max_bytes).toBe(MAX_REPLAY_BODY_BYTES);
+	});
 });
 
 describe("PATCH /v1/replays/:id", () => {
@@ -203,6 +232,54 @@ describe("PATCH /v1/replays/:id", () => {
 			body: JSON.stringify({ lifecycle_state: "running" }),
 		});
 		expect(res.status).toBe(400);
+	});
+
+	it("returns 400 invalid_replay_request for syntactically malformed JSON", async () => {
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const res = await app.request(`/v1/replays/${replayId}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: "{not json",
+		});
+		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string() }));
+		expect(body.error).toBe("invalid_replay_request");
+	});
+
+	it("returns 413 with body_too_large shape when the body exceeds MAX_REPLAY_BODY_BYTES", async () => {
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const oversize = "x".repeat(MAX_REPLAY_BODY_BYTES + 1);
+		const res = await app.request(`/v1/replays/${replayId}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json", "content-length": String(oversize.length) },
+			body: oversize,
+		});
+		expect(res.status).toBe(413);
+		const body = await readJson(
+			res,
+			v.object({ error: v.literal("body_too_large"), max_bytes: v.number() }),
+		);
+		expect(body.max_bytes).toBe(MAX_REPLAY_BODY_BYTES);
+	});
+
+	it("returns 409 invalid_lifecycle_transition when patching a terminal replay to a different state", async () => {
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store, { lifecycleState: "completed" });
+		const res = await app.request(`/v1/replays/${replayId}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ lifecycle_state: "running" }),
+		});
+		expect(res.status).toBe(409);
+		const body = await readJson(
+			res,
+			v.object({ error: v.string(), replay_id: v.string(), from: v.string(), to: v.string() }),
+		);
+		expect(body.error).toBe("invalid_lifecycle_transition");
+		expect(body.from).toBe("completed");
+		expect(body.to).toBe("running");
 	});
 });
 
@@ -488,6 +565,50 @@ describe("POST /v1/replays/compare", () => {
 			body: JSON.stringify({ replay_ids: [replayId] }),
 		});
 		expect(res.status).toBe(400);
+	});
+
+	it("returns 400 invalid_replay_request for a malformed id inside an in-range selection", async () => {
+		// A valid count (2-8) with a bad element falls through the
+		// InvalidCompareSelectionError count check to the generic schema-issue
+		// branch — distinct from the too-few/too-many count tests below.
+		const { app, store } = makeApp();
+		const { replayId } = await seedReplay(store);
+		const res = await app.request("/v1/replays/compare", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ replay_ids: [replayId, "not-a-uuid"] }),
+		});
+		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string() }));
+		expect(body.error).toBe("invalid_replay_request");
+	});
+
+	it("returns 400 invalid_replay_request for syntactically malformed JSON", async () => {
+		const { app } = makeApp();
+		const res = await app.request("/v1/replays/compare", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{not json",
+		});
+		expect(res.status).toBe(400);
+		const body = await readJson(res, v.object({ error: v.string() }));
+		expect(body.error).toBe("invalid_replay_request");
+	});
+
+	it("returns 413 with body_too_large shape when the body exceeds MAX_COMPARE_BODY_BYTES", async () => {
+		const { app } = makeApp();
+		const oversize = "x".repeat(MAX_COMPARE_BODY_BYTES + 1);
+		const res = await app.request("/v1/replays/compare", {
+			method: "POST",
+			headers: { "content-type": "application/json", "content-length": String(oversize.length) },
+			body: oversize,
+		});
+		expect(res.status).toBe(413);
+		const body = await readJson(
+			res,
+			v.object({ error: v.literal("body_too_large"), max_bytes: v.number() }),
+		);
+		expect(body.max_bytes).toBe(MAX_COMPARE_BODY_BYTES);
 	});
 
 	it("returns 400 when too many ids", async () => {

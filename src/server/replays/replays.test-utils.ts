@@ -2,6 +2,7 @@ import { makeTurns, seedConversation } from "@/server/conversations/conversation
 import type { ConversationTurn } from "@/server/conversations/conversations.types.ts";
 import { replays } from "@/server/store/schema.ts";
 import type { Store } from "@/server/store/store.ts";
+import type { ReplayLifecycleState } from "@/server/store/types.ts";
 
 import { createReplay } from "./replays.service.ts";
 import type { ReplayDetailResponse, UpdateReplayRequest } from "./replays.types.ts";
@@ -83,6 +84,7 @@ export async function seedReplay(
 		turns?: ConversationTurn[];
 		conversationHash?: string;
 		id?: string;
+		lifecycleState?: ReplayLifecycleState;
 	} = {},
 ): Promise<{ replayId: string; conversationHash: string }> {
 	counter += 1;
@@ -102,7 +104,7 @@ export async function seedReplay(
 		.values({
 			id,
 			conversationHash,
-			lifecycleState: "pending",
+			lifecycleState: overrides.lifecycleState ?? "pending",
 			analysisStep: null,
 			failureReason: null,
 			startedAt: "2026-05-18T12:00:00.000Z",

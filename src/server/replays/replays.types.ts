@@ -14,6 +14,9 @@ const MAX_RUN_CONFIG_BYTES = 32 * 1024;
 const MAX_COMPARE_REPLAYS = 8;
 const MIN_COMPARE_REPLAYS = 2;
 
+export const MAX_REPLAY_BODY_BYTES = 64 * 1024;
+export const MAX_COMPARE_BODY_BYTES = 16 * 1024;
+
 export const ReplayIdSchema = v.pipe(v.string(), v.regex(/^[0-9a-fA-F-]{36}$/, "Must be a UUID"));
 
 export const ReplayLifecycleStateSchema = v.picklist(REPLAY_LIFECYCLE_STATES);
