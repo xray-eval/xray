@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import { writeMonoWav } from "@/server/audio/audio.wav.ts";
+import type { FetchLike } from "@/server/core/fetch.ts";
 import { makeFetch } from "@/server/core/test-utils.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
@@ -121,6 +122,97 @@ describe("createMistralTtsProvider", () => {
 		await expect(provider.synthesize({ text: "x", voice: "v" })).rejects.toBeInstanceOf(
 			TtsProviderError,
 		);
+	});
+
+	it("wraps a rejected synthesize fetch as a generic fetch failure", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw new Error("simulated network failure");
+		};
+		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.synthesize({ text: "x", voice: "en_paul_neutral" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.provider).toBe("mistral");
+		expect(err.message).toContain("fetch failed");
+	});
+
+	it("wraps an AbortSignal timeout on synthesize with a timeout-specific message", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw Object.assign(new Error("The operation timed out."), { name: "TimeoutError" });
+		};
+		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl, timeoutMs: 5_000 });
+		const err = await provider.synthesize({ text: "x", voice: "en_paul_neutral" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("fetch timed out after 5000ms");
+	});
+
+	it("wraps a caller-triggered abort on synthesize with an abort-specific message", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw Object.assign(new Error("This operation was aborted"), { name: "AbortError" });
+		};
+		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl });
+		const controller = new AbortController();
+		const err = await provider
+			.synthesize({ text: "x", voice: "en_paul_neutral", signal: controller.signal })
+			.then(
+				() => null,
+				(e: unknown) => e,
+			);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("fetch aborted by caller");
+	});
+
+	it("falls back to '<unreadable body>' when the synthesize error body stream errors mid-read", async () => {
+		// A ReadableStream that errors on read simulates a connection dropping
+		// after the status line but before the body finishes — `.text()`
+		// rejects, which is what drives the fallback branch.
+		const fetchImpl: FetchLike = async () =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.error(new Error("stream broke"));
+					},
+				}),
+				{ status: 500 },
+			);
+		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.synthesize({ text: "x", voice: "en_paul_neutral" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.statusCode).toBe(500);
+		expect(err.message).toContain("<unreadable body>");
+	});
+
+	it("throws TtsProviderError when the synthesize success body's JSON parse throws", async () => {
+		const fetchImpl: FetchLike = async () =>
+			new Response("not valid json {", {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.synthesize({ text: "x", voice: "en_paul_neutral" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("response body was not valid JSON");
 	});
 });
 
@@ -248,5 +340,58 @@ describe("createMistralTtsProvider resolveDefaultVoice", () => {
 		const fetchImpl = makeFetch(() => new Response("boom", { status: 500 }));
 		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl });
 		await expect(provider.resolveDefaultVoice("de")).rejects.toBeInstanceOf(TtsProviderError);
+	});
+
+	it("wraps a rejected voice-catalog fetch as a generic fetch failure", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw new Error("simulated network failure");
+		};
+		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.resolveDefaultVoice("de").then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("voice catalog fetch failed");
+	});
+
+	it("falls back to '<unreadable body>' when the voice-catalog error body stream errors mid-read", async () => {
+		const fetchImpl: FetchLike = async () =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.error(new Error("stream broke"));
+					},
+				}),
+				{ status: 500 },
+			);
+		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.resolveDefaultVoice("de").then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("<unreadable body>");
+	});
+
+	it("throws TtsProviderError when the voice-catalog body's JSON parse throws", async () => {
+		const fetchImpl: FetchLike = async () =>
+			new Response("not valid json {", {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		const provider = createMistralTtsProvider({ apiKey: () => "mk", fetchImpl });
+		const err = await provider.resolveDefaultVoice("de").then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("voice catalog body was not valid JSON");
 	});
 });

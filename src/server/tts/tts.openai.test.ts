@@ -1,5 +1,6 @@
 import * as v from "valibot";
 
+import type { FetchLike } from "@/server/core/fetch.ts";
 import { makeFetch } from "@/server/core/test-utils.ts";
 import { MissingProviderCredentialError } from "@/server/transcription/transcription.errors.ts";
 
@@ -118,5 +119,102 @@ describe("createOpenAITtsProvider", () => {
 		await expect(provider.synthesize({ text: "x", voice: "alloy" })).rejects.toBeInstanceOf(
 			TtsProviderError,
 		);
+	});
+
+	it("wraps a rejected fetch as a generic fetch failure", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw new Error("simulated network failure");
+		};
+		const provider = createOpenAITtsProvider({ apiKey: () => "sk", fetchImpl });
+		const err = await provider.synthesize({ text: "x", voice: "alloy" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.provider).toBe("openai");
+		expect(err.message).toContain("fetch failed");
+	});
+
+	it("wraps an AbortSignal timeout with a timeout-specific message", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw Object.assign(new Error("The operation timed out."), { name: "TimeoutError" });
+		};
+		const provider = createOpenAITtsProvider({ apiKey: () => "sk", fetchImpl, timeoutMs: 5_000 });
+		const err = await provider.synthesize({ text: "x", voice: "alloy" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("fetch timed out after 5000ms");
+	});
+
+	it("wraps a caller-triggered abort with an abort-specific message", async () => {
+		const fetchImpl: FetchLike = async () => {
+			throw Object.assign(new Error("This operation was aborted"), { name: "AbortError" });
+		};
+		const provider = createOpenAITtsProvider({ apiKey: () => "sk", fetchImpl });
+		const controller = new AbortController();
+		const err = await provider
+			.synthesize({ text: "x", voice: "alloy", signal: controller.signal })
+			.then(
+				() => null,
+				(e: unknown) => e,
+			);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("fetch aborted by caller");
+	});
+
+	it("falls back to '<unreadable body>' when the error body stream errors mid-read", async () => {
+		// A ReadableStream that errors on read simulates a connection dropping
+		// after the status line but before the body finishes — `.text()`
+		// rejects, which is what drives the fallback branch.
+		const fetchImpl: FetchLike = async () =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.error(new Error("stream broke"));
+					},
+				}),
+				{ status: 500 },
+			);
+		const provider = createOpenAITtsProvider({ apiKey: () => "sk", fetchImpl });
+		const err = await provider.synthesize({ text: "x", voice: "alloy" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.statusCode).toBe(500);
+		expect(err.message).toContain("<unreadable body>");
+	});
+
+	it("throws TtsProviderError when the pcm body's arrayBuffer read throws", async () => {
+		// Same broken-stream trick as the error-body test, but on a 200 so it
+		// drives `response.arrayBuffer()`'s catch instead of `.text()`'s.
+		const fetchImpl: FetchLike = async () =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.error(new Error("stream broke"));
+					},
+				}),
+				{ status: 200 },
+			);
+		const provider = createOpenAITtsProvider({ apiKey: () => "sk", fetchImpl });
+		const err = await provider.synthesize({ text: "x", voice: "alloy" }).then(
+			() => null,
+			(e: unknown) => e,
+		);
+		if (!(err instanceof TtsProviderError)) {
+			throw new Error(`expected TtsProviderError, got ${err}`);
+		}
+		expect(err.message).toContain("could not read response body");
 	});
 });
