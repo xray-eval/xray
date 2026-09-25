@@ -479,45 +479,24 @@ async def test_server_chain_failure_missing_reason_falls_back_to_evaluation_fail
     assert exc_info.value.failure_reason == "evaluation_failed"
 
 
-@pytest.mark.asyncio
-async def test_server_chain_failure_unknown_reason_falls_back_to_evaluation_failed(
-    tmp_path: Path,
+def test_parse_failed_reason_falls_through_to_evaluation_failed_for_an_unrecognized_reason() -> (
+    None
 ):
-    """A `failed` SSE payload with a syntactically valid but unrecognized
-    `reason` string falls through `_parse_failed_reason`'s FAILURE_REASONS
-    loop to `evaluation_failed` rather than raising or forwarding an
-    unknown string the dev's typed `FailureReason` union doesn't cover."""
-    wav = _make_wav(tmp_path)
-    replay_id = "00000000-0000-0000-0000-000000000fff"
-    conversation = Conversation(name="x", turns=[Turn.user("hi", key="u0"), Turn.agent(key="a0")])
+    """A syntactically valid but unrecognized `reason` string falls through
+    `_parse_failed_reason`'s FAILURE_REASONS loop to `evaluation_failed`.
 
-    with respx.mock(base_url="http://test.local") as mock:
-        mock.post("/v1/conversations").mock(
-            return_value=httpx.Response(200, json=_conversation_upsert_response())
-        )
-        _mock_turn_audio(mock)
-        mock.post("/v1/replays").mock(
-            return_value=httpx.Response(201, json=_replay_response(replay_id))
-        )
-        mock.post(f"/v1/replays/{replay_id}/audio").mock(return_value=httpx.Response(204))
-        mock.post(f"/v1/replays/{replay_id}/analyze").mock(
-            return_value=httpx.Response(202, json={"job_id": "j1", "lifecycle_state": "analyzing"})
-        )
-        _mock_sse_endpoint(
-            mock,
-            replay_id,
-            _sse_stream([("failed", {"type": "failed", "reason": "some_unknown_reason_xyz"})]),
-        )
+    This can't be proven by driving `run()` end-to-end: the call site
+    (`reason = _parse_failed_reason(data) or "evaluation_failed"`) already
+    falls back to `evaluation_failed` when the parser returns `None`, so an
+    unrecognized reason and a missing/invalid one are externally
+    indistinguishable through the public API — both surface the identical
+    `ReplayEvaluationError`. Calling the parser directly is the only way to
+    tell "the loop fell through" apart from "validation failed".
+    """
+    from xray.orchestrator import _parse_failed_reason
 
-        with pytest.raises(ReplayEvaluationError) as exc_info:
-            await run(
-                conversation=conversation,
-                runtime=StubRuntime(full_audio_path=str(wav)),
-                xray_url="http://test.local",
-            )
-
-    assert exc_info.value.replay_id == replay_id
-    assert exc_info.value.failure_reason == "evaluation_failed"
+    raw = json.dumps({"type": "failed", "reason": "some_unknown_reason_xyz"})
+    assert _parse_failed_reason(raw) == "evaluation_failed"
 
 
 @pytest.mark.asyncio
