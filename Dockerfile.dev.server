@@ -9,8 +9,8 @@
 # copied in from the official bun image. Both pinned by manifest digest per
 # .claude/rules/supply-chain.md §4.
 
-# oven/bun:1.3.14-debian
-FROM oven/bun@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f AS bun-src
+# oven/bun:1.4.0-debian
+FROM oven/bun@sha256:5bb0f9be3a1a36a03e27c9a9dd894a3b1ad26657155c7df4dda771e17bf872ef AS bun-src
 
 # node:24.19.0-bookworm (matches .nvmrc). NOT the -bookworm-slim variant: the
 # slim image omits git, and `apt-get install git` at build time is currently
@@ -32,7 +32,7 @@ COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 # `packageManager` field to read. Keep it equal to package.json's
 # `packageManager` — a mismatch means `pnpm dev` resolves the lockfile with a
 # different pnpm than CI and every developer.
-RUN corepack enable && corepack prepare pnpm@11.20.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.23.0 --activate
 
 # Pre-create /app/node_modules and /data owned by the dev UID so the named
 # volumes attached at runtime inherit that ownership (Docker copies the
