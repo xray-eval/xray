@@ -203,7 +203,7 @@ One Bun process serves both the SPA and the API. One SQLite file at `/data/xray.
 ```bash
 corepack enable             # picks up the pinned pnpm
 pnpm install                # frozen-lockfile-safe; respects 7-day cooldown
-pnpm dev                    # single Bun process via compose.dev.yaml (HMR for SPA + API)
+pnpm dev                    # single Bun process via compose.dev.yaml (SPA rebuilt per reload, API hot-reloaded)
 pnpm docker:smoke           # build image, run it, curl /healthz, kill — same check CI runs
 ```
 

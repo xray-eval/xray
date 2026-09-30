@@ -35,18 +35,6 @@ allowBuilds:
   # already trusts. esbuild has provenance attestation + Sigstore signature.
   # Audited 2026-07-29 against `node_modules/.pnpm/esbuild@0.28.1/node_modules/esbuild/install.js`.
   esbuild: true
-  # bun — pulled in as a peer of `bun-plugin-tailwind` (the Tailwind v4
-  # plugin for Bun's HTML bundler). The npm `bun` package is *only* installed
-  # to satisfy that peer; at runtime everything uses the system bun on
-  # PATH. The postinstall (`install.js`) loads the platform-specific binary
-  # subpackage `@oven/bun-<platform>-<arch>` (already resolved by pnpm with
-  # cooldown rules), or falls back to `registry.npmjs.org/@oven/<pkg>/-/<pkg>-1.3.13.tgz`
-  # over HTTPS — same registry/trust boundary pnpm already enforces. Same
-  # pattern as esbuild above. Without this, the system `bun` errors at
-  # startup when it detects an incomplete `node_modules/bun` sibling.
-  # Audited 2026-05-16 against
-  # `node_modules/.pnpm/bun@1.3.13/node_modules/bun/install.js`.
-  bun: true
   # msgpackr-extract — pulled in transitively by bunqueue (via msgpackr for
   # the queue's binary serialization). The install script is
   # `node-gyp-build-optional-packages`, which looks for a prebuilt binary in
@@ -75,8 +63,10 @@ verifyDepsBeforeRun: install
 # `allowBuilds` above. Keep the path as specific as possible so the override
 # disappears the moment the upstream chain is fixed.
 #
-# TWO entries remain, down from six. Both were re-verified on 2026-09-23 the
-# only way that proves anything: deleted, reinstalled, audited.
+# THREE entries: the two version workarounds below, re-verified on 2026-09-30
+# the only way that proves anything (deleted, reinstalled, audited), plus one
+# REMOVAL (`bun-plugin-tailwind>bun`, added 2026-09-30) that forces no version
+# at all — it deletes a duplicate toolchain; its own note says why.
 # `@esbuild-kit/core-utils>esbuild` brings GHSA-67mh-4wv8-2f99 straight back
 # when removed, and dropping `vite` fails the install outright on
 # `trustPolicy: no-downgrade` before the audit even runs. So neither is a habit
@@ -92,6 +82,11 @@ verifyDepsBeforeRun: install
 #   - `react-cosmos>ws`, `react-cosmos>http-proxy-middleware`, `express>qs` and
 #     `body-parser>qs` (all removed 2026-09-23) were fixed at the source by
 #     react-cosmos 7.4.0 — see the note where they used to sit, below.
+#   - The fast-uri pair that reappeared 2026-09-30 (GHSA-qw65-cvwx-89v3,
+#     GHSA-58mr-gqgx-xq4g, both high, on `@commitlint/*>ajv>fast-uri@3.1.6`)
+#     did NOT get an override: ajv's `^3.0.1` already admits the patched 3.1.8
+#     (2026-09-15, past the 7-day gate), so `pnpm update fast-uri --depth
+#     Infinity` was the whole fix — the same lesson as the 2026-09-09 entry.
 # When you add one, write the condition that deletes it, then check that
 # condition on every pass.
 overrides:
@@ -109,8 +104,12 @@ overrides:
   # `.>drizzle-kit>@esbuild-kit/esm-loader>@esbuild-kit/core-utils>esbuild`.
   # drizzle-kit 0.31.10 still ships `@esbuild-kit/*`. Note 0.31.11 landed
   # 2026-09-21 and is the first movement on this package since 2026-03-17 —
-  # it is two days old, so it is not installable yet; re-check on 2026-10-21
-  # whether it drops `@esbuild-kit/*` and lets this entry go. esbuild 0.28.x
+  # it is two days old, so it is not installable yet. Checked 2026-09-30
+  # against the published manifest: 0.31.11 STILL declares
+  # `@esbuild-kit/esm-loader ^2.5.5`, so taking it on its 30-day date
+  # (2026-10-21) will not retire this entry. Only drizzle-kit's 1.0 line (beta /
+  # rc today) is a candidate. Re-verified 2026-09-30 by deletion: the advisory
+  # comes straight back. esbuild 0.28.x
   # arrives via tsx/vite and carries no open advisory; raising this entry to
   # it would add a third esbuild copy for no audit gain, which is why it says
   # ^0.25.0 rather than ^0.28.1 (it dedupes onto the 0.25.12 drizzle-kit
@@ -156,8 +155,29 @@ overrides:
   # this version has provenance attestation`. So removing this entry would mean
   # relaxing a supply-chain gate, not just accepting an advisory. Re-confirmed
   # 2026-09-23 by deleting the entry: the install still dies on that exact
-  # error for vite@5.4.21, before the audit ever runs.
+  # error for vite@5.4.21, before the audit ever runs. Re-confirmed 2026-09-30
+  # the same way, same error. vitepress `latest` is still 1.6.4, `next` still
+  # 2.0.0-alpha.20, and 7.3.6 is still the newest 7.x (vite `latest` is 8.3.1).
   vite: "7.3.6"
+  # REMOVAL, not a version pin: "-" drops `bun` from bun-plugin-tailwind's
+  # dependency set. The plugin declares `bun >=1.0.0` as a peer purely to say
+  # "runs under Bun"; `autoInstallPeers` answered it by installing the npm `bun`
+  # package, which puts a SECOND bun (1.3.13, the newest the lockfile had seen)
+  # at `node_modules/.bin/bun`. pnpm prepends `.bin` to PATH, so every
+  # `pnpm test` / `pnpm build` / `pnpm cosmos` ran on 1.3.13 while
+  # `.tool-versions`, `setup-bun` in CI and the runtime image all say 1.4.0 —
+  # the 2026-09-23 "suite re-run on bun 1.4.0" was in fact on 1.3.13 through
+  # `pnpm test`. Found 2026-09-30 by `pnpm exec bun -v`.
+  #
+  # Why an override and not a setting: `peerDependencyRules.ignoreMissing`
+  # still auto-installs (verified in a scratch project), and
+  # `autoInstallPeers: false` also drops peers we need at runtime
+  # (hono-openapi's `@standard-community/*`). Declaring `bun` ourselves would
+  # keep a second binary and add a fourth place the Bun version must agree.
+  # Types are unaffected: `import { BunPlugin } from 'bun'` resolves through
+  # `@types/bun`. Remove if bun-plugin-tailwind stops declaring the peer, or if
+  # pnpm grows a per-package "do not auto-install this peer" switch.
+  "bun-plugin-tailwind>bun": "-"
   # The four entries that used to sit here — `react-cosmos>ws`,
   # `react-cosmos>http-proxy-middleware`, `express>qs` and `body-parser>qs` —
   # are GONE as of 2026-09-23, resolved at the source rather than expired.
@@ -231,34 +251,65 @@ overrides:
 # keeping the pin honest. Each entry names the version and the date it becomes
 # installable, so the next audit converts it instead of rediscovering it.
 #
-# Converted by the 2026-09-23 pass and therefore GONE from this list:
-#   - react-cosmos / -core / -dom 7.3.0 -> 7.4.0, which deleted FOUR overrides
-#     at the source (see the overrides block above). 7.4.1 exists for
-#     react-cosmos only and is 22 days old, so all three stay on 7.4.0 and on
-#     the same minor; take 7.4.1 on 2026-09-30 if -core / -dom have caught up.
-#   - bun 1.3.14 -> 1.4.0 in `.tool-versions` + both Dockerfile digests.
-#   - sounddevice 0.5.5 -> 0.5.6 in `sdk/python/pyproject.toml`.
-#   - The two GitHub Actions whose dates had come due: harden-runner
-#     v2.20.1 -> v2.21.0 and docker/setup-buildx-action v4.2.0 -> v4.3.0.
+# Converted by the 2026-09-30 pass and therefore GONE from this list (cutoff
+# for the 30-day bar: published on or before 2026-08-31):
+#   - npm, same line: @fontsource-variable/onest 5.3.1, @scalar/hono-api-reference
+#     0.12.0 (additive: adds `Scalar.serve`), @tanstack/react-query 5.102.8,
+#     bunqueue 2.9.2 (drops its `croner` dep), ky 2.1.0, lucide-react 1.38.0,
+#     @biomejs/biome 2.5.11 (+ `biome.json` $schema via `biome migrate`),
+#     happy-dom + @happy-dom/global-registrator 20.12.0,
+#     @testing-library/react 16.3.3, lefthook 2.1.12, mermaid 11.17.2.
+#   - react-cosmos 7.4.1 (-core / -dom have no 7.4.1; react-cosmos's own
+#     `^7.4.0` ranges keep them on 7.4.0, which is what 7.4.1 was built
+#     against). NOT cosmetic: 7.4.0 served the playground page but 404'd its
+#     own `playground.bundle.js`, because Express 5's `res.sendFile` refuses
+#     any path with a dot-segment and pnpm's store lives under `.pnpm/`. The
+#     previous pass's "`pnpm cosmos` serves 200" was a curl of `/` and could
+#     not see it; open the playground in a browser and select a fixture.
+#   - The Cosmos renderer AND the dev-mode SPA (`pnpm dev`) had a SECOND,
+#     older break — a load-time crash in @tanstack/router-core under Bun's HMR
+#     runtime, present since react-router 1.170.19 (taken 2026-09-09 as
+#     1.170.25). Fixed by turning HMR off, not by holding the router; see
+#     `development` in src/server/main.ts. When react-router is next bumped,
+#     re-check `pnpm dev` and `pnpm cosmos` in a BROWSER, with HMR back on,
+#     before keeping the workaround.
+#   - The Scalar bundle `/docs` loads from jsDelivr, pinned in
+#     src/server/docs/docs.router.ts: @scalar/api-reference 1.57.2 (2026-05-16)
+#     -> 1.67.0 (2026-08-28). This pin is NOT in package.json, so no audit
+#     sees it — it had not moved since May. Verified by serving each version's
+#     `dist/browser/standalone.js` to /docs in Chromium: all 11 operations
+#     render, no page errors, and the page contacts the same hosts as before
+#     (jsdelivr, fonts.scalar.com, api.scalar.com — nothing new).
+#   - pnpm 11.23.0 -> 11.25.0 (2026-08-29) and Node 24.19.0 -> 24.20.0
+#     (2026-08-26; `"security": false`), each in every place it is pinned —
+#     see their entries below.
+#   - GitHub Actions: harden-runner v2.21.0 -> v2.21.1, anchore/sbom-action
+#     v0.24.0 -> v0.24.2.
+#   - Python: ruff 0.16.4 -> 0.16.5; livekit-agents + livekit-plugins-google
+#     1.7.0 -> 1.7.1 (2026-08-27 — the previous pass listed only 1.8.2 as
+#     "next" and missed this same-line patch); langfuse 4.14.4 -> 4.15.1;
+#     CI Python 3.12.7 -> 3.12.13; livekit-server image v1.7.2 -> v1.13.6.
 #
-# - pnpm itself, taken 11.20.0 -> 11.23.0 on 2026-09-23 (published 2026-08-23).
-#   NOTE FOR FUTURE PASSES: pnpm had never appeared in this list, and the tool
-#   that installs everything else is exactly the dependency an audit should not
-#   forget. It is pinned in THREE places that must move together, or corepack
-#   and the Dockerfile disagree about what runs:
+# - pnpm itself, taken 11.23.0 -> 11.25.0 on 2026-09-30. Pinned in THREE
+#   places that must move together, or corepack and the Dockerfile disagree
+#   about what runs:
 #     package.json#packageManager, .tool-versions, Dockerfile.dev.server
 #   (the Dockerfile cannot read `packageManager` before the COPY, so it spells
-#   the version out — supply-chain.md §1). Verified by deleting node_modules
-#   and reinstalling under 11.23.0: `pnpm install --frozen-lockfile` passes and
-#   `pnpm-lock.yaml` is BYTE-IDENTICAL (sha256 41f5ccf3…), so this is a tool
-#   bump with no resolution change behind it, and the audit stays clean.
-#   11.24.0 (2026-08-24) is one day short of the bar and becomes eligible on
-#   2026-09-24. Take the newest eligible 11.x each pass. pnpm 12.x is a
-#   MAJOR and is NOT taken on the date bar alone — same rule as the GitHub
-#   Actions majors below — and `engines.pnpm` (">=11.0.0") plus every CI
-#   `corepack prepare` would need reviewing with it.
+#   the version out — supply-chain.md §1). 11.26.0 (2026-09-06) becomes
+#   eligible 2026-10-06. Take the newest eligible 11.x each pass. pnpm 12.x is
+#   a MAJOR and is NOT taken on the date bar alone — `engines.pnpm`
+#   (">=11.0.0") plus every CI `corepack prepare` would need reviewing with it.
 #
-# - @hono/standard-validator, held at 0.2.3 (re-verified 2026-09-23). NOT
+# - bun, held at 1.4.0 (the bar, not a hold). 1.4.1 (2026-09-04) becomes
+#   eligible 2026-10-04, 1.4.2 (2026-09-05) on 2026-10-05. Pinned in
+#   `.tool-versions` + `Dockerfile` + `Dockerfile.dev.server` (image digests),
+#   and `@types/bun` should move with it (1.4.1 on 2026-10-04).
+#   ONE PLACE IT IS NOT PINNED ANY MORE: `node_modules/.bin/bun`. Until
+#   2026-09-30 an auto-installed npm `bun@1.3.13` sat there and every `pnpm`
+#   script ran on it — see the `bun-plugin-tailwind>bun` override. Check with
+#   `pnpm exec bun -v`; it must print the `.tool-versions` version.
+#
+# - @hono/standard-validator, held at 0.2.3 (re-verified 2026-09-30). NOT
 #   date-gated on its own account: 0.3.0 (2026-07-15) and 0.4.0 (2026-08-05)
 #   both clear the 30-day bar, but `hono-openapi@1.3.1` declares
 #   `@hono/standard-validator ^0.2.0` as an optional peer, so anything from
@@ -270,111 +321,112 @@ overrides:
 #   The exit is a DELETION, not a bump. hono-openapi 1.3.2 (2026-09-06)
 #   promotes `@hono/standard-validator` to a REAL dependency at `^0.4.0` and
 #   drops it from `peerDependencies`, which removes the only reason we list it
-#   at all — pnpm would then install it unasked, at a version hono-openapi
-#   itself sanctions, and our declaration would be a second pin on someone
-#   else's dependency. 1.3.2 is 17 days old today and 1.3.3 (2026-09-13) is 10;
-#   1.3.2 clears the 30-day bar on 2026-10-06, 1.3.3 on 2026-10-13.
+#   at all. 1.3.2 clears the 30-day bar on 2026-10-06, 1.3.3 on 2026-10-13.
 #   ON 2026-10-06: BUMP hono-openapi TO WHICHEVER 1.3.x IS THEN ELIGIBLE AND
 #   DELETE THE `@hono/standard-validator` ENTRY FROM package.json's
 #   `dependencies`. Verify with `pnpm why @hono/standard-validator` (it must
-#   still be present, as hono-openapi's own dep) plus `pnpm typecheck` —
-#   nothing imports it by name, so a green typecheck is the whole proof.
+#   still be present, as hono-openapi's own dep) plus `pnpm typecheck`.
 #
-# - Node, held at 24.19.0 (re-verified 2026-09-23 against
-#   https://nodejs.org/dist/index.json). This is the bar, not a hold: 24.20.0
-#   (2026-08-26) is 28 days old — two days short — and 24.21.0 (2026-09-07) is
-#   16. Neither is a security release (`"security": false` in that index, which
-#   is the field this check reads), so there is no reason to take one early.
-#   24.20.0 is still the current Latest LTS line head for our purposes.
-#   BUMP TO 24.20.0 ON 2026-09-25 (or to 24.21.0 on 2026-10-07 if the next
-#   pass lands after that), or immediately if a security release supersedes.
-#   Remember `.nvmrc` and `.tool-versions` both carry it.
+# - npm packages younger than the bar on 2026-09-30, with the date the FIRST
+#   newer release in the current line becomes eligible (take the newest
+#   eligible one on the day, not this one):
+#     hono 4.13.6 -> 2026-10-04          @tanstack/react-router 1.170.33 -> 10-06
+#     bunqueue 2.9.3 -> 2026-10-02       @scalar/hono-api-reference 0.12.1 -> 10-07
+#     lucide-react 1.39.0 -> 2026-10-01  @tanstack/react-query 5.103.0 -> 10-16
+#     happy-dom (+registrator) 20.12.1 -> 2026-10-01
+#     @biomejs/biome 2.5.12 -> 2026-10-03
+#     @types/react-dom 19.2.6 -> 2026-10-03
+#     react / react-dom / @types/react 19.3.0 -> 2026-10-09 (a minor: move
+#       all four React packages together)
+#     valibot 1.5.0 -> 2026-10-09        @valibot/to-json-schema 1.8.0 -> 10-11
+#     wavesurfer.js 7.12.12 -> 2026-10-10 tailwind-merge 3.7.0 -> 2026-10-12
+#     lefthook 2.1.14 -> 2026-10-14      @commitlint/* 21.2.3 -> 2026-10-19
+#     drizzle-orm 0.45.3 -> 2026-10-21   drizzle-kit 0.31.11 -> 2026-10-21
+#   Majors seen but NOT taken on the date bar alone: mermaid 12.0.0
+#   (eligible 2026-10-10), wavesurfer.js 8.0.1 (2026-10-24), msw 3.0.0
+#   (2026-10-28). Each needs its changelog read deliberately.
 #
-# - bun: NO LONGER HELD. Taken to 1.4.0 on 2026-09-23 (published 2026-08-20,
-#   33 days). `.tool-versions`, `Dockerfile` and `Dockerfile.dev.server` all
-#   move together — the image digest is `oven/bun:1.4.0-debian` =
-#   `sha256:5bb0f9be…`, resolved from the registry on the bump date. The full
-#   suite (1393 tests), `pnpm build` and `pnpm cosmos` were re-run on 1.4.0.
-#   `@types/bun` moved to 1.4.0 in the same pass so the types match the
-#   runtime. 1.4.1 (2026-09-04) and 1.4.2 (2026-09-05) are younger than the
-#   bar; 1.4.1 becomes eligible 2026-10-04.
+# - Node, bumped 24.19.0 -> 24.20.0 on 2026-09-30 (published 2026-08-26,
+#   `"security": false` in https://nodejs.org/dist/index.json). Pinned in
+#   `.nvmrc`, `.tool-versions`, and BOTH Dockerfiles as digests:
+#     node:24.20.0-bookworm-slim = sha256:ba849c60…, pushed 2026-08-27
+#     node:24.20.0-bookworm      = sha256:be23f54a…, pushed 2026-08-27
+#   24.21.0 (2026-09-07) becomes eligible 2026-10-07, or immediately if a
+#   security release supersedes it.
 #
-# - python base image for the two example Dockerfiles. The pin moved on
-#   2026-09-23 from `sha256:d50fb761…` to `sha256:4766d8b5…`, and the comment
-#   in both Dockerfiles now names `3.12.13-slim-bookworm` rather than the
-#   floating `3.12-slim-bookworm`, because THE TWO TAGS HAVE DIVERGED and only
-#   the patch tag is takeable. Concretely, on the bump date:
-#     3.12-slim-bookworm     = sha256:392307d2…, pushed 2026-09-19 (4 days)
-#     3.12.13-slim-bookworm  = sha256:4766d8b5…, pushed 2026-08-05 (49 days)
-#   The floating tag is rebuilt on the upstream debian:bookworm-slim cadence,
-#   so it is almost always inside the cooldown when an audit looks at it —
-#   that is why every previous pass found it ineligible and deferred. The
-#   patch tag is rebuilt far less often, which is exactly what makes it
-#   eligible, and it is a rebuild of the same Python patch level the pin has
-#   always meant, so taking it is a Debian security refresh and nothing else.
-#   Keep pinning the PATCH tag from here on; re-resolve it rather than pasting
-#   any digest written here, since it drifts. Re-check on 2026-10-19 (when
-#   today's floating digest ages in) whether the 3.12 line has settled and the
-#   two tags agree again.
+# - python base image for the two example Dockerfiles, held at
+#   `3.12.13-slim-bookworm` (`sha256:4766d8b5…`, pushed 2026-08-05). The
+#   floating `3.12-slim-bookworm` and the new `3.12.14-slim-bookworm` are the
+#   same digest (`sha256:392307d2…`), pushed 2026-09-19 — eligible
+#   2026-10-19. 3.12 is a security-only branch, so 3.12.14 is a security
+#   release by definition; if its CVE list turns out to reach the example
+#   agents, take it early rather than wait. CI's `.python-version` /
+#   `.tool-versions` moved 3.12.7 -> 3.12.13 in this pass to match the images
+#   (3.12.7 dated from 2024-10); move them to 3.12.14 together with the images.
+#
+# - livekit/livekit-server image in examples/livekit-voice-agent/compose.yaml,
+#   bumped v1.7.2 (pushed 2024-08-12 — two years old, and on NO previous hold
+#   list, which is why it never moved) -> v1.13.6 (`sha256:e37d68f1…`, pushed
+#   2026-08-26). v1.13.7 (2026-09-14) is eligible 2026-10-14. Nothing in CI
+#   runs the example, so it was verified by hand against the example's own
+#   `livekit.yaml`: boots healthy under compose (the `wget` healthcheck still
+#   works and the DNS lockdown does not stop it), carries 48kHz audio between
+#   two participants, delivers the SDK's `xray` token attribute and
+#   `kind=sip` + `sip.*` attributes from `mint_user_token`, and honours
+#   `NODE_IP` with `livekit.live.yaml`.
 #
 # - GitHub Actions. Every `uses:` is SHA-pinned (supply-chain.md §4) and moves
-#   on the same 30-day bar as everything else, evaluated per action against its
-#   own release dates. The 2026-09-23 pass converted the two that had come due:
-#   harden-runner v2.20.1 -> v2.21.0 (13 refs across 9 workflows) and
-#   docker/setup-buildx-action v4.2.0 -> v4.3.0.
+#   on the same 30-day bar, evaluated per action against its own tag dates.
+#   Enumerated MECHANICALLY on 2026-09-30 — `git ls-remote --tags` for all 19
+#   pinned actions, every newest in-major tag diffed against the pin — and all
+#   19 SHAs still match the tag their comment claims.
 #
 #   Still held, with the date each becomes eligible:
-#     step-security/harden-runner      v2.21.0 -> v2.21.1 (2026-08-30) 2026-09-29
-#     anchore/sbom-action              v0.24.0 -> v0.24.2 (2026-08-28) 2026-09-27
-#     docker/setup-qemu-action         v4.2.0  -> v4.3.0  (2026-09-01) 2026-10-01
 #     actions/deploy-pages             v5.0.0  -> v5.0.1  (2026-09-01) 2026-10-01
+#     docker/setup-qemu-action         v4.2.0  -> v4.3.0  (2026-09-01) 2026-10-01
+#                                              -> v4.4.0  (2026-09-15) 2026-10-15
 #     docker/build-push-action         v7.3.0  -> v7.4.0  (2026-09-15) 2026-10-15
 #     docker/setup-buildx-action       v4.3.0  -> v4.4.0  (2026-09-15) 2026-10-15
 #                                              -> v4.4.1  (2026-09-16) 2026-10-16
-#     docker/setup-qemu-action         v4.3.0  -> v4.4.0  (2026-09-15) 2026-10-15
-#   (anchore v0.24.1 is 2026-08-27; take the newest eligible in the major on
-#   the bump date, not the first row.)
-#
-#   docker/build-push-action v7.4.0 was NOT in the previous pass's list, which
-#   is the second time a docker/* row has been missed — same failure the
-#   previous pass warned about. The enumeration is mechanical, so DO IT
-#   MECHANICALLY: `git ls-remote --tags https://github.com/<owner>/<repo>` for
-#   all 19 pinned actions, diff every newest in-major tag against the pin, and
-#   never re-read this list and check only the rows it already names. A hold
-#   list can only go stale in the direction of under-reporting.
-#
 #   Majors are NOT taken on the date bar alone — actions/cache v6,
-#   actions/checkout v7, actions/setup-node v7 and astral-sh/setup-uv v9/v10
-#   are all 30-day-eligible but stay on their current major until someone
-#   reviews the major's changelog deliberately. That matches how this repo has
-#   always moved actions; note actions/cache and actions/checkout both still
-#   ship backport releases on the current major, so staying put is not the same
-#   as going stale.
-#
-#   SHA-drift check: all 19 pinned SHAs were re-resolved to tags on 2026-09-23
-#   and every one matches the tag its comment claims. (The 2026-09-02 pass
-#   found `actions/upload-artifact` mislabelled `# v6.0.0` when the SHA was
-#   v7.0.1; that fix has held.) Re-run this every audit — a wrong tag comment
-#   silently defeats the audit trail the SHA pin exists to provide.
+#   actions/checkout v7, actions/setup-node v7 and astral-sh/setup-uv v10 are
+#   all available but stay on their current major until someone reviews the
+#   major's changelog deliberately.
 #
 #   How to run both checks without the GitHub API (it is not always reachable
-#   from an audit session, and `releases.atom` is not either):
-#   `git ls-remote --tags https://github.com/<owner>/<repo>` maps every tag to
-#   a SHA, covering both the drift check and "newest tag in this major". For
-#   the release DATE a tag needs — the input to the 30-day bar —
-#   `git clone --depth 1 --branch <tag>` then `git log -1 --format=%cI` reads
-#   the tag's commit date, which for these repos is the release date.
+#   from an audit session): `git ls-remote --tags https://github.com/<o>/<r>`
+#   maps every tag to a SHA (use the `^{}` line for annotated tags), and
+#   `git clone --depth 1 --branch <tag>` + `git log -1 --format=%cI` reads the
+#   tag's commit date, which for these repos is the release date.
 #
-# - Python, non-SDK. The example pins (`examples/livekit-voice-agent/*`) move
-#   on the same bar and must stay identical between each slice's `Dockerfile`
-#   and its `pyproject.toml` (supply-chain.md §6). Taken 2026-09-23:
-#   livekit-agents + livekit-plugins-google 1.6.9 -> 1.7.0, langfuse
-#   4.14.3 -> 4.14.4. Held (younger than the bar): livekit-agents 1.8.2
-#   (2026-09-15) eligible 2026-10-15; langfuse 4.15.2 (2026-09-09) eligible
-#   2026-10-09. pytest 9.1.1 / pytest-asyncio 1.4.0 / httpx 0.28.1 are all
-#   still the newest release. NOTE: nothing in CI builds or runs the examples,
-#   so a bump here has no automated signal behind it — verify by installing
-#   the candidate set into a venv and exercising the API surface `agent/main.py`
-#   actually touches (that is how 1.7.0 was checked: FunctionTool schema,
-#   AgentSession + google.realtime.RealtimeModel construction,
-#   ConversationItemAddedEvent, and `session.say(audio=...)`).
+# - gitleaks in .github/workflows/secret-scan.yml: 8.30.1 is still the newest
+#   release (checked 2026-09-30 via `git ls-remote --tags`).
+#
+# - Python, non-SDK. The example pins (`examples/livekit-voice-agent/*`) must
+#   stay identical between each slice's `Dockerfile` and its `pyproject.toml`
+#   (supply-chain.md §6). Taken 2026-09-30: livekit-agents +
+#   livekit-plugins-google 1.7.0 -> 1.7.1, langfuse 4.14.4 -> 4.15.1. Held:
+#   livekit-agents 1.8.0 (2026-09-05) eligible 2026-10-05 — a MINOR, so
+#   re-verify the API surface below; langfuse 4.15.2 (2026-09-09) eligible
+#   2026-10-09. pytest 9.1.1 / pytest-asyncio 1.4.0 / httpx 0.28.1 are still
+#   the newest releases. Nothing in CI builds the examples, so verify by
+#   installing the candidate set into a venv and exercising what
+#   `agent/main.py` touches (done for 1.7.1 / 4.15.1: importing main.py, the
+#   `@observe` step, the FunctionTool schema, AgentSession +
+#   google.realtime.RealtimeModel construction, ConversationItemAddedEvent's
+#   fields, `session.say(text, audio, allow_interruptions, ...)`, and the
+#   greeting WAV frame generator).
+#
+# - Python SDK (`sdk/python`). `uv.lock` had drifted out of sync with
+#   `pyproject.toml` (it still resolved ruff 0.15.20 against a `==0.16.4`
+#   pin, and `uv lock --check` failed) and carried 18 open advisories that
+#   GitHub's dependency graph reads even though CI installs from
+#   pyproject.toml: aiohttp 3.14.1 (6), anyio 4.13.0 (2), pyjwt 2.13.0 (10).
+#   Re-locked 2026-09-30 with ONLY those moved — `uv lock --upgrade-package
+#   aiohttp==3.14.3 --upgrade-package anyio==4.14.2 --upgrade-package
+#   pyjwt==2.14.0` — which also brought ruff and sounddevice into line with
+#   their pins; nothing else in the lock moved. pyjwt 2.14.0 is 19 days old:
+#   a security fix past the 7-day gate, taken per the policy above. The
+#   PyPI JSON API (`/pypi/<pkg>/<ver>/json` -> `vulnerabilities`) is how the
+#   lock was scanned; re-run it every pass. ruff 0.16.6 (2026-09-03) becomes
+#   eligible 2026-10-03.

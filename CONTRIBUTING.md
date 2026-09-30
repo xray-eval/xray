@@ -48,7 +48,7 @@ Install `uv` if you don't have it (`curl -LsSf https://astral.sh/uv/install.sh |
 ## Daily loop
 
 ```bash
-pnpm dev              # Single Bun container serving SPA + API on :8080 with HMR
+pnpm dev              # Single Bun container serving SPA + API on :8080; reload to pick up SPA edits
 pnpm cosmos           # Component workbench on :5050 (renderer on :5051)
 pnpm typecheck        # tsc --noEmit
 pnpm typecheck:cosmos # tsc -p cosmos --noEmit (the workbench harness)
@@ -77,13 +77,13 @@ src/client/run-configs/
   config-picker.fixture.tsx    ← default-exports one element, or an object of named states
 ```
 
-Cosmos runs in **custom-bundler mode**: it serves the playground UI, and `cosmos/serve-renderer.ts` serves the component renderer on `:5051` using Bun's HTML bundler — the same bundler that builds production. There is deliberately no Vite or webpack in this path; see [`.claude/rules/one-bundler.md`](./.claude/rules/one-bundler.md).
+Cosmos runs in **custom-bundler mode**: it serves the playground UI, and `cosmos/serve-renderer.ts` serves the component renderer on `:5051` using Bun's HTML bundler — the same bundler that builds production. There is deliberately no Vite or webpack in this path; see [`.claude/rules/one-bundler.md`](./.claude/rules/one-bundler.md). The renderer runs with Bun's HMR switched off (see `development` in `src/server/main.ts` for the `@tanstack/router-core` cycle that crashes it), so restart `pnpm cosmos` to see an edit to a component or fixture.
 
 `cosmos/cosmos.imports.ts` is generated on every start and gitignored — it is derived entirely from which fixture files exist. Because it is generated, the `cosmos/` directory is excluded from the root `tsconfig.json`, so a fresh clone typechecks before anyone has run the workbench. `pnpm typecheck:cosmos` covers the harness as its own project; `cosmos/tsconfig.json` excludes the generated map and the renderer entry that imports it, so it runs on a fresh clone and in CI alongside `pnpm typecheck`.
 
 App code must never import a fixture file — fixtures may import devDependencies that a production install doesn't have. `.dockerignore` keeps `*.fixture.tsx` out of the image so that stays true even though the runtime stage copies `src/` wholesale.
 
-`react-cosmos` pins its own server deps (`express`, `glob`, `http-proxy-middleware`, `ws`) to exact versions, several of which carry open advisories that no release of react-cosmos itself resolves — so four `overrides` entries in [`pnpm-workspace.yaml`](./pnpm-workspace.yaml) force patched versions to keep `pnpm audit` honest rather than suppressed. Each carries its GHSA and its reasoning; drop the corresponding entry when react-cosmos bumps that pin. If you upgrade react-cosmos, re-run `pnpm audit --audit-level=moderate` **and** start `pnpm cosmos` once — the `glob` override crosses three majors, so the fixture scan is verified by behaviour, not by semver.
+`react-cosmos` pins its own server deps (`express`, `http-proxy-middleware`, `ws`) to **exact** versions, so a patched transitive release can only arrive through a react-cosmos release — pnpm cannot reach it on its own. If `pnpm audit` flags one of them, look for a react-cosmos release that moves the pin before reaching for an `overrides` entry (see the overrides block in [`pnpm-workspace.yaml`](./pnpm-workspace.yaml)). If you upgrade react-cosmos, re-run `pnpm audit --audit-level=moderate` **and** open `pnpm cosmos` in a browser and select a fixture — a `200` from `:5050` is not enough: 7.4.0 served the playground page but 404'd its own `playground.bundle.js` under pnpm's `.pnpm/` layout, which 7.4.1 fixed.
 
 `pnpm docker:smoke` is the **single most important** local check — it builds the production image, runs it, and waits for the container's `HEALTHCHECK` (which probes `/healthz`) to report healthy. CI runs the same script in the `smoke` job of `build.yml` on every PR and push. If it passes locally, it passes in CI.
 
