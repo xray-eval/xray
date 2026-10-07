@@ -9,17 +9,17 @@
 # copied in from the official bun image. Both pinned by manifest digest per
 # .claude/rules/supply-chain.md §4.
 
-# oven/bun:1.4.0-debian
-FROM oven/bun@sha256:5bb0f9be3a1a36a03e27c9a9dd894a3b1ad26657155c7df4dda771e17bf872ef AS bun-src
+# oven/bun:1.4.2-debian
+FROM oven/bun@sha256:4f6e31d1a54d6a3dd312daef655fc998101b5043d52e12592ac293ef04b9bc73 AS bun-src
 
-# node:24.20.0-bookworm (matches .nvmrc). NOT the -bookworm-slim variant: the
+# node:24.21.0-bookworm (matches .nvmrc). NOT the -bookworm-slim variant: the
 # slim image omits git, and `apt-get install git` at build time is currently
 # broken on bookworm-slim because apt 2.6.1's apt-key signature-split pipeline
 # mis-parses the multi-signature InRelease Debian ships (gpgv validates the
 # file directly; apt's wrapper exits 1 with an empty parse). The non-slim
 # image ships git preinstalled, so we never invoke apt at build time.
 # Production (Dockerfile) stays on -slim because it doesn't need git.
-FROM node@sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2
+FROM node@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
 
 COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 
@@ -32,7 +32,7 @@ COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 # `packageManager` field to read. Keep it equal to package.json's
 # `packageManager` — a mismatch means `pnpm dev` resolves the lockfile with a
 # different pnpm than CI and every developer.
-RUN corepack enable && corepack prepare pnpm@11.25.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.26.0 --activate
 
 # Pre-create /app/node_modules and /data owned by the dev UID so the named
 # volumes attached at runtime inherit that ownership (Docker copies the
