@@ -119,12 +119,11 @@ jobs:
           # entry lives in pnpm-workspace.yaml; it is deliberately not duplicated
           # here, so that there is one place to read and two places to delete.
           #
-          # Two entries as of 2026-10-07, each the twin of the same GHSA in
+          # One entry as of 2026-10-07, the twin of the same GHSA in
           # pnpm-workspace.yaml `auditConfig.ignoreGhsas` — braces (no patched
-          # release exists) and source-map-js (patch inside the 7-day
-          # cooldown until 2026-10-07T14:08Z). Delete each here on the same
-          # commit that deletes it there.
-          allow-ghsas: GHSA-vfj7-8cjw-p6xm, GHSA-68fv-2mgg-jv7q
+          # release exists). Delete it here on the same commit that deletes it
+          # there.
+          allow-ghsas: GHSA-vfj7-8cjw-p6xm
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft
