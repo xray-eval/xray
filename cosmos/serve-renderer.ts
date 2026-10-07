@@ -11,7 +11,9 @@ export const RENDERER_PORT = rendererPort(config.rendererUrl);
 export function serveRenderer(): ReturnType<typeof Bun.serve> {
 	return Bun.serve({
 		port: RENDERER_PORT,
-		development: true,
+		// HMR off for the same Bun + @tanstack/router-core cycle crash as the
+		// app's dev server — see `development` in src/server/main.ts.
+		development: { hmr: false },
 		routes: { "/*": renderer },
 	});
 }

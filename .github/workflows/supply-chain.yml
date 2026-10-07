@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           # Start in audit mode to learn the egress profile, then flip to `block`
           # with an allowed-endpoints list once stable.
@@ -119,12 +119,11 @@ jobs:
           # entry lives in pnpm-workspace.yaml; it is deliberately not duplicated
           # here, so that there is one place to read and two places to delete.
           #
-          # No allow-ghsas entries: the fast-uri/hono pair (added 2026-08-05)
-          # reached its cooldown dates and was fixed by real upgrades on
-          # 2026-08-11; the qs pair (added 2026-09-03) reached its cooldown
-          # date and was fixed by a real upgrade on 2026-09-06. Any new entry
-          # needs a twin in pnpm-workspace.yaml `auditConfig.ignoreGhsas` on
-          # the same commit.
+          # One entry as of 2026-10-07, the twin of the same GHSA in
+          # pnpm-workspace.yaml `auditConfig.ignoreGhsas` — braces (no patched
+          # release exists). Delete it here on the same commit that deletes it
+          # there.
+          allow-ghsas: GHSA-vfj7-8cjw-p6xm
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft

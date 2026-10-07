@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 // `import index from "*.html"` triggers Bun's HTML bundler: Bun walks the
 // shell's `<script type="module">` tags and bundles the React entry on boot.
-// With `bun --hot` the bundle is rebuilt + HMR'd on file change.
+// With `bun --hot` the bundle is rebuilt on file change (HMR is off — see `development` below).
 import index from "../../index.html";
 import { loadEnv } from "./env/env.ts";
 import { makeAnalyzeProcessor } from "./jobs/analyze-replay/analyze-replay.processor.ts";
@@ -108,7 +108,14 @@ const app = createApp(store, {
 const server = Bun.serve({
 	port: env.PORT,
 	hostname: env.HOST,
-	development: process.env.NODE_ENV !== "production",
+	// HMR off: Bun's HMR module runtime nulls a hoisted import inside the
+	// `router.js` <-> `load-client.js` cycle that @tanstack/router-core has
+	// shipped since 1.171.16 (react-router 1.170.19), and the SPA dies on load
+	// with "Cannot read properties of null (reading 'replaceRouteChunk')".
+	// Reproduced on Bun 1.3.13, 1.4.0 and 1.4.2; production bundles are
+	// unaffected. The dev bundle still rebuilds per request, so a reload picks
+	// up edits. Re-enable once `pnpm dev` loads `/` cleanly with `hmr: true`.
+	development: process.env.NODE_ENV !== "production" ? { hmr: false } : false,
 	// Must outlast the SSE heartbeat — Bun's 10s default killed idle
 	// `/v1/replays/:id/events` streams before their first heartbeat. See the
 	// constant's docstring.

@@ -1,12 +1,12 @@
 services:
   livekit:
-    # livekit/livekit-server:v1.7.2 — pinned per `.claude/rules/supply-chain.md` §4.
-    image: livekit/livekit-server@sha256:27d72fa264baa4db4e635b3b6df12d185b4a95fee5f2ddce03e06d150d599e0e
+    # livekit/livekit-server:v1.13.6 — pinned per `.claude/rules/supply-chain.md` §4.
+    image: livekit/livekit-server@sha256:e37d68f172556d02aa77968b9fc55ef481468c0315fa38e4fa6c56ce72e3a815
     container_name: example-livekit
     command: --config /etc/livekit.yaml --bind 0.0.0.0
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
-    # LiveKit 1.7.2 calls out to public STUN at boot regardless of YAML config;
+    # LiveKit calls out to public STUN at boot regardless of YAML config (seen on 1.7.2);
     # restricting DNS to Docker's embedded resolver blocks the lookup. No srflx leak.
     dns:
       - 127.0.0.11

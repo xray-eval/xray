@@ -12,8 +12,8 @@
 # GitHub Action pinning. Bump the tag in the comment and the digest in the
 # same commit.
 #
-# node:24.19.0-bookworm-slim (matches .nvmrc)
-FROM node@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS prod-deps
+# node:24.21.0-bookworm-slim (matches .nvmrc)
+FROM node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS prod-deps
 
 ENV CI=1 \
     PNPM_HOME=/root/.local/share/pnpm \
@@ -27,8 +27,8 @@ RUN corepack enable && corepack prepare --activate \
 
 # --- Stage 2: runtime --------------------------------------------------------
 #
-# oven/bun:1.4.0-debian (matches .tool-versions; pinned by manifest digest)
-FROM oven/bun@sha256:5bb0f9be3a1a36a03e27c9a9dd894a3b1ad26657155c7df4dda771e17bf872ef AS runtime
+# oven/bun:1.4.2-debian (matches .tool-versions; pinned by manifest digest)
+FROM oven/bun@sha256:4f6e31d1a54d6a3dd312daef655fc998101b5043d52e12592ac293ef04b9bc73 AS runtime
 
 # Non-root user. The image carries code + production deps; secrets are
 # runtime-only (.claude/rules/public-repo.md §2) — never ARG/ENV them here.

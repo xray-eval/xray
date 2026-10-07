@@ -41,7 +41,7 @@ export function createDocsRouter(app: Hono): Hono {
 			// with read access to every recorded replay. Pinning a version
 			// doesn't remove CDN trust (no SRI) but it stops `latest` from
 			// drifting silently.
-			cdn: "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.57.2",
+			cdn: "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.68.0",
 		}),
 	);
 
