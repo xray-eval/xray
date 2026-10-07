@@ -114,6 +114,7 @@ overrides:
   # it would add a third esbuild copy for no audit gain, which is why it says
   # ^0.25.0 rather than ^0.28.1 (it dedupes onto the 0.25.12 drizzle-kit
   # already resolves — confirmed by `pnpm why esbuild` on 2026-09-23).
+  # Re-verified 2026-10-07 by deletion: GHSA-67mh-4wv8-2f99 comes back.
   "@esbuild-kit/core-utils>esbuild": "^0.25.0"
   # GHSA-fx2h-pf6j-xcff / GHSA-4w7w-66w2-5vf9 / GHSA-v6wh-96g9-6wx3 — vite
   # <=6.4.2 has a `server.fs.deny` bypass via Windows alternate paths, a path
@@ -158,6 +159,10 @@ overrides:
   # error for vite@5.4.21, before the audit ever runs. Re-confirmed 2026-09-30
   # the same way, same error. vitepress `latest` is still 1.6.4, `next` still
   # 2.0.0-alpha.20, and 7.3.6 is still the newest 7.x (vite `latest` is 8.3.1).
+  # Re-confirmed 2026-10-07 by deletion: same ERR_PNPM_TRUST_DOWNGRADE on
+  # vite@5.4.21; vitepress is still 1.6.4 / next 2.0.0-alpha.20. vite 7.3.7
+  # (and 6.4.4) appeared 2026-10-06 — one day old, no advisory against 7.3.6
+  # behind it; eligible for this pin on 2026-11-05, re-verify by docs build.
   vite: "7.3.6"
   # REMOVAL, not a version pin: "-" drops `bun` from bun-plugin-tailwind's
   # dependency set. The plugin declares `bun >=1.0.0` as a peer purely to say
@@ -177,7 +182,30 @@ overrides:
   # Types are unaffected: `import { BunPlugin } from 'bun'` resolves through
   # `@types/bun`. Remove if bun-plugin-tailwind stops declaring the peer, or if
   # pnpm grows a per-package "do not auto-install this peer" switch.
+  # Re-verified 2026-10-07 by deletion: pnpm auto-installs npm `bun@1.4.2`
+  # and the install then fails on ERR_PNPM_IGNORED_BUILDS (its postinstall is
+  # no longer in `allowBuilds`), so the entry is still load-bearing.
   "bun-plugin-tailwind>bun": "-"
+  # GHSA-238p-pmpm-9mq7 (low) — katex >=0.11.0 <0.18.2: prototype pollution
+  # that already exists elsewhere in the page can bypass katex's `trust`
+  # restrictions. Patched only on the 0.18 line (0.18.2, 2026-08-08). mermaid
+  # declares `katex ^0.16.47` on every 11.x AND on 12.0.0 / 12.1.0, so no
+  # mermaid upgrade reaches a patched katex, and there is no 0.16.x backport.
+  # An override is therefore the only fix that is not a suppression.
+  #
+  # Like `vite` above, this is deliberately OUTSIDE the consumer's range, so it
+  # is verified by use rather than by semver. mermaid touches exactly one katex
+  # API — `(await import("katex")).default.renderToString(src, { throwOnError,
+  # displayMode, output: "mathml" | "htmlAndMathml" })`, and only for `$$…$$`
+  # labels (no diagram in docs/ has one). The two breaking changes between
+  # 0.16.47 and 0.18.7 are the internal `__defineFunction` API (0.17.0) and
+  # prefixed CSS class names (0.18.0); mermaid uses neither. Checked
+  # 2026-10-07 by rendering the same expressions through both versions in
+  # both output modes and running `pnpm docs:build`. Exact-pinned to the
+  # newest 30-day-eligible 0.18.x so it only moves on a re-verified bump.
+  # Deleting it brings GHSA-238p-pmpm-9mq7 straight back (katex 0.16.47).
+  # Remove once mermaid declares `katex >=0.18.2`. Added 2026-10-07.
+  "mermaid>katex": "0.18.7"
   # The four entries that used to sit here — `react-cosmos>ws`,
   # `react-cosmos>http-proxy-middleware`, `express>qs` and `body-parser>qs` —
   # are GONE as of 2026-09-23, resolved at the source rather than expired.
@@ -205,42 +233,72 @@ overrides:
   # and still serves the playground on :5050 and the renderer on :5051, both
   # 200, with all 11 fixtures discovered.
 
-# VEX-style "not affected" dispositions. THE LIST IS EMPTY, and the note below
-# is the standing policy for the day it isn't.
+# VEX-style "not affected" dispositions. ONE entry as of 2026-10-07 (braces,
+# reason 2 below). A reason-1 entry for source-map-js GHSA-68fv-2mgg-jv7q was
+# added and converted the same day: added at 01:00Z when the fix, 1.2.2, was
+# 13 hours short of the 7-day gate, deleted at 14:16Z by taking 1.2.2 with
+# `pnpm update source-map-js --depth Infinity` (postcss and @vue/compiler-core
+# both declare `^1.2.1`, so no override). That left one 1.2.1 copy behind a
+# stale postcss 8.5.24 under vitepress; `pnpm dedupe` collapsed it, removing
+# five stale copies (postcss 8.5.24, source-map-js 1.2.1, yargs 18.0.0,
+# @vue/shared 3.5.38, type-fest 5.6.0) and adding no new versions.
 #
-# There is exactly ONE structural reason an entry may be added here, and it is
-# not "we'd rather not upgrade": the patched release is inside the 7-day
-# `minimumReleaseAge` cooldown, so there is no version pnpm is allowed to
-# install that clears the finding. Bypassing the cooldown with
-# `minimumReleaseAgeExclude` would be the wrong trade — that gate is this repo's
-# primary Shai-Hulud defence (see .claude/rules/supply-chain.md) — so for an
-# advisory that is genuinely unreachable here, suppressing it for a few days is
-# strictly safer than installing a package that is days old. Every entry names
-# the date it converts into a real upgrade; on that date, delete the entry and
-# bump. Do not let one outlive its date.
+# Reason 1 — the patched release is inside the 7-day `minimumReleaseAge`
+# cooldown, so there is no version pnpm is allowed to install that clears the
+# finding. Bypassing the cooldown with `minimumReleaseAgeExclude` would be the
+# wrong trade — that gate is this repo's primary Shai-Hulud defence (see
+# .claude/rules/supply-chain.md) — so for an advisory that is genuinely
+# unreachable here, suppressing it for a few days is strictly safer than
+# installing a package that is days old. Such an entry names the date it
+# converts into a real upgrade; on that date, delete the entry and bump.
+#
+# Reason 2 (first used 2026-10-07) — NO patched release exists at all: the
+# advisory says `patched_versions: null` / `patched_versions_unpublished`, so
+# there is nothing to upgrade to and nothing an override could point at. Such
+# an entry names the condition that deletes it (upstream publishes a fix) and
+# must be re-checked on every pass, because it has no date to expire on.
 #
 # What is NOT a reason to add an entry: a patched release that is merely younger
 # than the 30-day proactive bar. That bar says "upgrade even when the audit is
 # green"; it is a floor on staleness, never a ceiling on a security fix. The
 # 2026-09-09 pass is the worked example — hono <4.13.5 opened three advisories
 # and the fix, 4.13.5, was 14 days old: past the 7-day gate, short of 30. It was
-# taken as a real upgrade the same day rather than suppressed.
+# taken as a real upgrade the same day rather than suppressed. Nor is "the
+# consumer's range does not reach the fix": that is what an override is for
+# (see `mermaid>katex` above, added the same day as the braces entry).
 #
-# Every entry this file has ever carried is gone, each resolved by an upgrade
-# rather than by expiry: the fast-uri/hono pair (added 2026-08-04) on
-# 2026-08-11, and the qs pair (GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g, added
-# 2026-09-03) on 2026-09-06 by bumping the `express>qs` override to "6.16.0".
-# Re-confirmed empty on 2026-09-23: `pnpm audit --audit-level=moderate` passes
-# with nothing suppressed, so there is no advisory this list could be hiding.
-# The 2026-09-23 pass also retired the last four overrides those qs entries
-# fed into — see the overrides block above — so the whole qs chain is now
-# resolved at the source with neither a suppression nor an override behind it.
+# EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the dependency-review step of
+# .github/workflows/supply-chain.yml, because that action reads GitHub's
+# advisory DB directly and never looks at this file. Add and delete in both
+# places on the same commit, or `pnpm audit` and the `Supply-chain audit` job
+# disagree.
 #
-# If an entry ever comes back: EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the
-# dependency-review step of .github/workflows/supply-chain.yml, because that
-# action reads GitHub's advisory DB directly and never looks at this file. Add
-# and delete in both places on the same commit, or `pnpm audit` and the
-# `Supply-chain audit` job disagree.
+# History: every earlier entry was resolved by an upgrade rather than by
+# expiry — the fast-uri/hono pair (added 2026-08-04) on 2026-08-11 and the qs
+# pair (added 2026-09-03) on 2026-09-06. The list was empty from 2026-09-06
+# until 2026-10-07.
+auditConfig:
+  ignoreGhsas:
+    # GHSA-vfj7-8cjw-p6xm (high) — braces <=3.0.3: stack exhaustion when
+    # expanding a deeply nested brace PATTERN. Reason 2: braces 3.0.3
+    # (2024-09) is the newest release and the advisory lists no patched
+    # version (`patched_versions_unpublished`); `git ls-remote --tags
+    # https://github.com/micromatch/braces` shows no tag past 3.0.3 either.
+    # Nothing to upgrade or override to. NOT AFFECTED:
+    #   - Dev-only. Every path is `react-cosmos > micromatch@4.0.8 > braces`
+    #     or `react-cosmos > http-proxy-middleware > micromatch > braces`;
+    #     react-cosmos is a devDependency and the `--prod` image never has it.
+    #     react-cosmos 7.4.1 exact-pins `micromatch 4.0.8` itself.
+    #   - Patterns are ours. The DoS needs an attacker-controlled glob.
+    #     react-cosmos calls `micromatch(paths, patterns)` in
+    #     `findUserModulePaths` with patterns built from cosmos.config.json;
+    #     http-proxy-middleware matches request paths against the `httpProxy`
+    #     patterns from the same config (we declare none, so it is not even
+    #     mounted). A request path is the subject, never the pattern.
+    # DELETE when braces publishes a fix: micromatch declares `braces ^3.0.3`,
+    # so `pnpm update braces --depth Infinity` then reaches it unaided.
+    # Re-check `npm view braces version` every pass. Added 2026-10-07.
+    - GHSA-vfj7-8cjw-p6xm
 
 # Deliberate version holds — packages whose newest release is NOT the one
 # pinned in package.json. Two different reasons live here, and the entry says
@@ -251,147 +309,133 @@ overrides:
 # keeping the pin honest. Each entry names the version and the date it becomes
 # installable, so the next audit converts it instead of rediscovering it.
 #
-# Converted by the 2026-09-30 pass and therefore GONE from this list (cutoff
-# for the 30-day bar: published on or before 2026-08-31):
-#   - npm, same line: @fontsource-variable/onest 5.3.1, @scalar/hono-api-reference
-#     0.12.0 (additive: adds `Scalar.serve`), @tanstack/react-query 5.102.8,
-#     bunqueue 2.9.2 (drops its `croner` dep), ky 2.1.0, lucide-react 1.38.0,
-#     @biomejs/biome 2.5.11 (+ `biome.json` $schema via `biome migrate`),
-#     happy-dom + @happy-dom/global-registrator 20.12.0,
-#     @testing-library/react 16.3.3, lefthook 2.1.12, mermaid 11.17.2.
-#   - react-cosmos 7.4.1 (-core / -dom have no 7.4.1; react-cosmos's own
-#     `^7.4.0` ranges keep them on 7.4.0, which is what 7.4.1 was built
-#     against). NOT cosmetic: 7.4.0 served the playground page but 404'd its
-#     own `playground.bundle.js`, because Express 5's `res.sendFile` refuses
-#     any path with a dot-segment and pnpm's store lives under `.pnpm/`. The
-#     previous pass's "`pnpm cosmos` serves 200" was a curl of `/` and could
-#     not see it; open the playground in a browser and select a fixture.
-#   - The Cosmos renderer AND the dev-mode SPA (`pnpm dev`) had a SECOND,
-#     older break — a load-time crash in @tanstack/router-core under Bun's HMR
-#     runtime, present since react-router 1.170.19 (taken 2026-09-09 as
-#     1.170.25). Fixed by turning HMR off, not by holding the router; see
-#     `development` in src/server/main.ts. When react-router is next bumped,
-#     re-check `pnpm dev` and `pnpm cosmos` in a BROWSER, with HMR back on,
-#     before keeping the workaround.
-#   - The Scalar bundle `/docs` loads from jsDelivr, pinned in
-#     src/server/docs/docs.router.ts: @scalar/api-reference 1.57.2 (2026-05-16)
-#     -> 1.67.0 (2026-08-28). This pin is NOT in package.json, so no audit
-#     sees it — it had not moved since May. Verified by serving each version's
-#     `dist/browser/standalone.js` to /docs in Chromium: all 11 operations
-#     render, no page errors, and the page contacts the same hosts as before
-#     (jsdelivr, fonts.scalar.com, api.scalar.com — nothing new).
-#   - pnpm 11.23.0 -> 11.25.0 (2026-08-29) and Node 24.19.0 -> 24.20.0
-#     (2026-08-26; `"security": false`), each in every place it is pinned —
+# Converted by the 2026-10-07 pass and therefore GONE from this list (cutoff
+# for the 30-day bar: published on or before 2026-09-07):
+#   - npm, same line: @scalar/hono-api-reference 0.12.1,
+#     @tanstack/react-router 1.170.33, bunqueue 2.9.4, lucide-react 1.42.0,
+#     @biomejs/biome 2.5.12 (+ `biome.json` $schema via `biome migrate`),
+#     happy-dom + @happy-dom/global-registrator 20.14.0, @types/bun 1.4.1,
+#     @types/react-dom 19.2.7.
+#   - hono 4.13.5 -> 4.13.7: a SECURITY bump as well as a 30-day one —
+#     GHSA-hxh3-vqpv-xpqv (moderate, hono/jsx boundary XSS) is patched in
+#     4.13.7, which is also the newest hono past the 30-day bar.
+#   - hono-openapi 1.3.1 -> 1.3.2, and `@hono/standard-validator` DELETED
+#     from package.json, exactly as the previous pass scheduled. 1.3.2 makes
+#     it a real dependency at `^0.4.0`, so pnpm now installs 0.4.0 unasked
+#     (`pnpm why @hono/standard-validator` -> hono-openapi only). Nothing in
+#     `src/` imports it by name; `/openapi.json` is byte-identical to the
+#     1.3.1 build (sorted-key diff of both servers' output).
+#   - Transitive lockfile refreshes that clear advisories with no override:
+#     dompurify 3.4.16, proxy-addr 2.0.8, shell-quote 1.11.0, vue 3.5.43
+#     and source-map-js 1.2.2 (taken at 14:16Z once it cleared the 7-day
+#     gate) (`pnpm update <pkg> --depth Infinity`; every consumer's range
+#     already allowed the fix).
+#   - The `/docs` Scalar bundle on jsDelivr (src/server/docs/docs.router.ts):
+#     @scalar/api-reference 1.67.0 -> 1.68.0 (2026-09-07). Verified by
+#     serving each version's `dist/browser/standalone.js` to /docs in
+#     Chromium: same rendered text, same hosts contacted, no page errors.
+#   - pnpm 11.25.0 -> 11.26.0, bun 1.4.0 -> 1.4.2, Node 24.20.0 -> 24.21.0 —
 #     see their entries below.
-#   - GitHub Actions: harden-runner v2.21.0 -> v2.21.1, anchore/sbom-action
-#     v0.24.0 -> v0.24.2.
-#   - Python: ruff 0.16.4 -> 0.16.5; livekit-agents + livekit-plugins-google
-#     1.7.0 -> 1.7.1 (2026-08-27 — the previous pass listed only 1.8.2 as
-#     "next" and missed this same-line patch); langfuse 4.14.4 -> 4.15.1;
-#     CI Python 3.12.7 -> 3.12.13; livekit-server image v1.7.2 -> v1.13.6.
+#   - GitHub Actions: actions/deploy-pages v5.0.0 -> v5.0.1,
+#     docker/setup-qemu-action v4.2.0 -> v4.3.0.
+#   - Python: ruff 0.16.5 -> 0.16.6; livekit-agents + livekit-plugins-google
+#     1.7.1 -> 1.8.0; SDK uv.lock security refresh (multidict, pyjwt,
+#     urllib3).
 #
-# - pnpm itself, taken 11.23.0 -> 11.25.0 on 2026-09-30. Pinned in THREE
-#   places that must move together, or corepack and the Dockerfile disagree
-#   about what runs:
+# - The react-router HMR workaround (`development: { hmr: false }` in
+#   src/server/main.ts) is STILL NEEDED on 1.170.33. Re-checked 2026-10-07 by
+#   flipping it to `hmr: true` and loading `/` in Chromium under
+#   `bun --hot`: same "Cannot read properties of null (reading
+#   'replaceRouteChunk')" from @tanstack/router-core 1.171.28, on bun 1.4.2.
+#   With HMR off the SPA loads with no console errors, and `pnpm cosmos`
+#   renders a fixture. Re-check the same way on every react-router bump.
+#
+# - pnpm, taken 11.25.0 -> 11.26.0 (2026-09-06) on 2026-10-07. Pinned in
+#   THREE places that must move together, or corepack and the Dockerfile
+#   disagree about what runs:
 #     package.json#packageManager, .tool-versions, Dockerfile.dev.server
 #   (the Dockerfile cannot read `packageManager` before the COPY, so it spells
-#   the version out — supply-chain.md §1). 11.26.0 (2026-09-06) becomes
-#   eligible 2026-10-06. Take the newest eligible 11.x each pass. pnpm 12.x is
+#   the version out — supply-chain.md §1). 11.27.0 (2026-09-12) becomes
+#   eligible 2026-10-12. Take the newest eligible 11.x each pass. pnpm 12.x is
 #   a MAJOR and is NOT taken on the date bar alone — `engines.pnpm`
 #   (">=11.0.0") plus every CI `corepack prepare` would need reviewing with it.
 #
-# - bun, held at 1.4.0 (the bar, not a hold). 1.4.1 (2026-09-04) becomes
-#   eligible 2026-10-04, 1.4.2 (2026-09-05) on 2026-10-05. Pinned in
-#   `.tool-versions` + `Dockerfile` + `Dockerfile.dev.server` (image digests),
-#   and `@types/bun` should move with it (1.4.1 on 2026-10-04).
-#   ONE PLACE IT IS NOT PINNED ANY MORE: `node_modules/.bin/bun`. Until
-#   2026-09-30 an auto-installed npm `bun@1.3.13` sat there and every `pnpm`
-#   script ran on it — see the `bun-plugin-tailwind>bun` override. Check with
-#   `pnpm exec bun -v`; it must print the `.tool-versions` version.
+# - bun, taken 1.4.0 -> 1.4.2 (2026-09-05) on 2026-10-07: `.tool-versions`
+#   plus the `oven/bun:1.4.2-debian` digest (`sha256:4f6e31d1…`, pushed
+#   2026-09-05) in `Dockerfile` + `Dockerfile.dev.server`. `@types/bun` is on
+#   1.4.1 because its 1.4.2 was published 2026-09-08 — one day past the
+#   cutoff; take it on 2026-10-08. `pnpm exec bun -v` must print the
+#   `.tool-versions` version (see the `bun-plugin-tailwind>bun` override).
 #
-# - @hono/standard-validator, held at 0.2.3 (re-verified 2026-09-30). NOT
-#   date-gated on its own account: 0.3.0 (2026-07-15) and 0.4.0 (2026-08-05)
-#   both clear the 30-day bar, but `hono-openapi@1.3.1` declares
-#   `@hono/standard-validator ^0.2.0` as an optional peer, so anything from
-#   0.3.0 up leaves the range its only consumer sanctions. Nothing in `src/`
-#   imports this package by name; it is a direct dependency purely because
-#   `hono-openapi/dist/index.js` statically imports `sValidator` from it and an
-#   *optional* peer is not installed unless we declare it.
-#
-#   The exit is a DELETION, not a bump. hono-openapi 1.3.2 (2026-09-06)
-#   promotes `@hono/standard-validator` to a REAL dependency at `^0.4.0` and
-#   drops it from `peerDependencies`, which removes the only reason we list it
-#   at all. 1.3.2 clears the 30-day bar on 2026-10-06, 1.3.3 on 2026-10-13.
-#   ON 2026-10-06: BUMP hono-openapi TO WHICHEVER 1.3.x IS THEN ELIGIBLE AND
-#   DELETE THE `@hono/standard-validator` ENTRY FROM package.json's
-#   `dependencies`. Verify with `pnpm why @hono/standard-validator` (it must
-#   still be present, as hono-openapi's own dep) plus `pnpm typecheck`.
-#
-# - npm packages younger than the bar on 2026-09-30, with the date the FIRST
+# - npm packages younger than the bar on 2026-10-07, with the date the FIRST
 #   newer release in the current line becomes eligible (take the newest
 #   eligible one on the day, not this one):
-#     hono 4.13.6 -> 2026-10-04          @tanstack/react-router 1.170.33 -> 10-06
-#     bunqueue 2.9.3 -> 2026-10-02       @scalar/hono-api-reference 0.12.1 -> 10-07
-#     lucide-react 1.39.0 -> 2026-10-01  @tanstack/react-query 5.103.0 -> 10-16
-#     happy-dom (+registrator) 20.12.1 -> 2026-10-01
-#     @biomejs/biome 2.5.12 -> 2026-10-03
-#     @types/react-dom 19.2.6 -> 2026-10-03
-#     react / react-dom / @types/react 19.3.0 -> 2026-10-09 (a minor: move
-#       all four React packages together)
+#     lucide-react 1.43.0 -> 2026-10-08  @types/bun 1.4.2 -> 2026-10-08
+#     @tanstack/react-router 1.170.34 -> 10-09 (re-check HMR, see above)
+#     bunqueue 2.9.5 -> 2026-10-09       happy-dom (+registrator) 20.14.1 -> 10-09
+#     react / react-dom / @types/react / @types/react-dom 19.3.0 -> 2026-10-09
+#       (a minor: move all four React packages together)
 #     valibot 1.5.0 -> 2026-10-09        @valibot/to-json-schema 1.8.0 -> 10-11
-#     wavesurfer.js 7.12.12 -> 2026-10-10 tailwind-merge 3.7.0 -> 2026-10-12
-#     lefthook 2.1.14 -> 2026-10-14      @commitlint/* 21.2.3 -> 2026-10-19
+#     @biomejs/biome 2.5.13 -> 2026-10-10 wavesurfer.js 7.12.12 -> 2026-10-10
+#     tailwind-merge 3.7.0 -> 2026-10-12 hono-openapi 1.3.3 -> 2026-10-13
+#     lefthook 2.1.14 -> 2026-10-14      hono 4.13.8 -> 2026-10-15
+#     @scalar/hono-api-reference 0.12.2 -> 10-16
+#     @tanstack/react-query 5.103.0 -> 2026-10-16
+#     @commitlint/* 21.2.3 -> 2026-10-19
 #     drizzle-orm 0.45.3 -> 2026-10-21   drizzle-kit 0.31.11 -> 2026-10-21
+#     radix-ui 1.7.0 -> 2026-11-04 (a minor)
+#     Scalar `/docs` bundle 1.69.0 (2026-09-16) -> 2026-10-16
 #   Majors seen but NOT taken on the date bar alone: mermaid 12.0.0
-#   (eligible 2026-10-10), wavesurfer.js 8.0.1 (2026-10-24), msw 3.0.0
-#   (2026-10-28). Each needs its changelog read deliberately.
+#   (eligible 2026-10-10 — but vitepress-plugin-mermaid@2.0.17 peers
+#   `mermaid 10 || 11`, and 12.x still declares `katex ^0.16.47`, so it would
+#   not retire the `mermaid>katex` override either), wavesurfer.js 8.0.0
+#   (2026-10-23), msw 3.0.0 (2026-10-28). Each needs its changelog read
+#   deliberately.
 #
-# - Node, bumped 24.19.0 -> 24.20.0 on 2026-09-30 (published 2026-08-26,
-#   `"security": false` in https://nodejs.org/dist/index.json). Pinned in
-#   `.nvmrc`, `.tool-versions`, and BOTH Dockerfiles as digests:
-#     node:24.20.0-bookworm-slim = sha256:ba849c60…, pushed 2026-08-27
-#     node:24.20.0-bookworm      = sha256:be23f54a…, pushed 2026-08-27
-#   24.21.0 (2026-09-07) becomes eligible 2026-10-07, or immediately if a
-#   security release supersedes it.
+# - Node, taken 24.20.0 -> 24.21.0 (2026-09-07, `"security": false` in
+#   https://nodejs.org/dist/index.json) on 2026-10-07. Pinned in `.nvmrc`,
+#   `.tool-versions`, and BOTH Dockerfiles as digests. NOTE THE DIGESTS ARE
+#   NOT THE TAGS' CURRENT ONES: docker-library rebuilt both 24.21.0 tags on
+#   2026-10-06 (one day old, inside the 7-day gate), so the pins are the
+#   PREVIOUS builds of the same tags, read from the history of
+#   https://github.com/docker-library/repo-info (`repos/node/remote/<tag>.md`)
+#   and confirmed pullable from registry-1.docker.io:
+#     node:24.21.0-bookworm-slim = sha256:0e0ff40c…, built 2026-09-19
+#     node:24.21.0-bookworm      = sha256:64af3819…, built 2026-09-19
+#   Move to the current digests once they age past 7 days (2026-10-13 slim,
+#   2026-10-14 bookworm), or on the next Node bump, whichever comes first.
 #
 # - python base image for the two example Dockerfiles, held at
 #   `3.12.13-slim-bookworm` (`sha256:4766d8b5…`, pushed 2026-08-05). The
-#   floating `3.12-slim-bookworm` and the new `3.12.14-slim-bookworm` are the
-#   same digest (`sha256:392307d2…`), pushed 2026-09-19 — eligible
-#   2026-10-19. 3.12 is a security-only branch, so 3.12.14 is a security
-#   release by definition; if its CVE list turns out to reach the example
-#   agents, take it early rather than wait. CI's `.python-version` /
-#   `.tool-versions` moved 3.12.7 -> 3.12.13 in this pass to match the images
-#   (3.12.7 dated from 2024-10); move them to 3.12.14 together with the images.
+#   floating `3.12-slim-bookworm` and `3.12.14-slim-bookworm` are the same
+#   digest (`sha256:392307d2…`), pushed 2026-09-19 — eligible 2026-10-19.
+#   3.12 is a security-only branch, so 3.12.14 is a security release by
+#   definition; if its CVE list turns out to reach the example agents, take
+#   it early rather than wait. Move `.python-version` / `.tool-versions`
+#   (3.12.13) to 3.12.14 together with the images.
 #
 # - livekit/livekit-server image in examples/livekit-voice-agent/compose.yaml,
-#   bumped v1.7.2 (pushed 2024-08-12 — two years old, and on NO previous hold
-#   list, which is why it never moved) -> v1.13.6 (`sha256:e37d68f1…`, pushed
-#   2026-08-26). v1.13.7 (2026-09-14) is eligible 2026-10-14. Nothing in CI
-#   runs the example, so it was verified by hand against the example's own
-#   `livekit.yaml`: boots healthy under compose (the `wget` healthcheck still
-#   works and the DNS lockdown does not stop it), carries 48kHz audio between
-#   two participants, delivers the SDK's `xray` token attribute and
-#   `kind=sip` + `sip.*` attributes from `mint_user_token`, and honours
-#   `NODE_IP` with `livekit.live.yaml`.
+#   at v1.13.6 (`sha256:e37d68f1…`, pushed 2026-08-26). v1.13.7 (2026-09-14)
+#   is eligible 2026-10-14. Nothing in CI runs the example; the 2026-09-30
+#   bump was verified by hand against the example's own `livekit.yaml`.
 #
 # - GitHub Actions. Every `uses:` is SHA-pinned (supply-chain.md §4) and moves
 #   on the same 30-day bar, evaluated per action against its own tag dates.
-#   Enumerated MECHANICALLY on 2026-09-30 — `git ls-remote --tags` for all 19
+#   Enumerated MECHANICALLY on 2026-10-07 — `git ls-remote --tags` for all 19
 #   pinned actions, every newest in-major tag diffed against the pin — and all
 #   19 SHAs still match the tag their comment claims.
 #
 #   Still held, with the date each becomes eligible:
-#     actions/deploy-pages             v5.0.0  -> v5.0.1  (2026-09-01) 2026-10-01
-#     docker/setup-qemu-action         v4.2.0  -> v4.3.0  (2026-09-01) 2026-10-01
-#                                              -> v4.4.0  (2026-09-15) 2026-10-15
+#     docker/setup-qemu-action         v4.3.0  -> v4.4.0  (2026-09-15) 2026-10-15
 #     docker/build-push-action         v7.3.0  -> v7.4.0  (2026-09-15) 2026-10-15
 #     docker/setup-buildx-action       v4.3.0  -> v4.4.0  (2026-09-15) 2026-10-15
 #                                              -> v4.4.1  (2026-09-16) 2026-10-16
+#     anchore/sbom-action              v0.24.2 -> v0.24.3 (2026-10-02) 2026-11-01
+#     step-security/harden-runner      v2.21.1 -> v2.22.0 (2026-10-05) 2026-11-04
 #   Majors are NOT taken on the date bar alone — actions/cache v6,
-#   actions/checkout v7, actions/setup-node v7 and astral-sh/setup-uv v10 are
-#   all available but stay on their current major until someone reviews the
-#   major's changelog deliberately.
+#   actions/checkout v7, actions/setup-node v7 and astral-sh/setup-uv v9/v10
+#   are all available but stay on their current major until someone reviews
+#   the major's changelog deliberately.
 #
 #   How to run both checks without the GitHub API (it is not always reachable
 #   from an audit session): `git ls-remote --tags https://github.com/<o>/<r>`
@@ -400,33 +444,32 @@ overrides:
 #   tag's commit date, which for these repos is the release date.
 #
 # - gitleaks in .github/workflows/secret-scan.yml: 8.30.1 is still the newest
-#   release (checked 2026-09-30 via `git ls-remote --tags`).
+#   release (checked 2026-10-07 via `git ls-remote --tags`).
 #
 # - Python, non-SDK. The example pins (`examples/livekit-voice-agent/*`) must
 #   stay identical between each slice's `Dockerfile` and its `pyproject.toml`
-#   (supply-chain.md §6). Taken 2026-09-30: livekit-agents +
-#   livekit-plugins-google 1.7.0 -> 1.7.1, langfuse 4.14.4 -> 4.15.1. Held:
-#   livekit-agents 1.8.0 (2026-09-05) eligible 2026-10-05 — a MINOR, so
-#   re-verify the API surface below; langfuse 4.15.2 (2026-09-09) eligible
-#   2026-10-09. pytest 9.1.1 / pytest-asyncio 1.4.0 / httpx 0.28.1 are still
-#   the newest releases. Nothing in CI builds the examples, so verify by
-#   installing the candidate set into a venv and exercising what
-#   `agent/main.py` touches (done for 1.7.1 / 4.15.1: importing main.py, the
-#   `@observe` step, the FunctionTool schema, AgentSession +
-#   google.realtime.RealtimeModel construction, ConversationItemAddedEvent's
-#   fields, `session.say(text, audio, allow_interruptions, ...)`, and the
-#   greeting WAV frame generator).
+#   (supply-chain.md §6). Taken 2026-10-07: livekit-agents +
+#   livekit-plugins-google 1.7.1 -> 1.8.0 (2026-09-05, a MINOR). Verified in a
+#   Python 3.12.13 venv by importing `agent/main.py` and exercising what it
+#   touches: the `@function_tool` schema, AgentSession +
+#   google.realtime.RealtimeModel construction, Agent(tools=[...]),
+#   ConversationItemAddedEvent's `item` field, ChatMessage.text_content,
+#   `session.say(text, *, audio, allow_interruptions)`, WorkerOptions'
+#   `entrypoint_fnc`, `rtc.TranscriptionSegment` / `publish_transcription`,
+#   the `@observe` step and the greeting WAV frame generator (125 frames).
+#   Held: livekit-agents 1.8.1 (2026-09-10) eligible 2026-10-10; langfuse
+#   4.15.2 (2026-09-09) eligible 2026-10-09. pytest 9.1.1 / pytest-asyncio
+#   1.4.0 / httpx 0.28.1 are still the newest stable releases.
 #
-# - Python SDK (`sdk/python`). `uv.lock` had drifted out of sync with
-#   `pyproject.toml` (it still resolved ruff 0.15.20 against a `==0.16.4`
-#   pin, and `uv lock --check` failed) and carried 18 open advisories that
-#   GitHub's dependency graph reads even though CI installs from
-#   pyproject.toml: aiohttp 3.14.1 (6), anyio 4.13.0 (2), pyjwt 2.13.0 (10).
-#   Re-locked 2026-09-30 with ONLY those moved — `uv lock --upgrade-package
-#   aiohttp==3.14.3 --upgrade-package anyio==4.14.2 --upgrade-package
-#   pyjwt==2.14.0` — which also brought ruff and sounddevice into line with
-#   their pins; nothing else in the lock moved. pyjwt 2.14.0 is 19 days old:
-#   a security fix past the 7-day gate, taken per the policy above. The
-#   PyPI JSON API (`/pypi/<pkg>/<ver>/json` -> `vulnerabilities`) is how the
-#   lock was scanned; re-run it every pass. ruff 0.16.6 (2026-09-03) becomes
-#   eligible 2026-10-03.
+# - Python SDK (`sdk/python`). ruff 0.16.5 -> 0.16.6 (2026-09-03); 0.16.7
+#   (2026-09-10) becomes eligible 2026-10-10. `uv.lock` re-scanned 2026-10-07
+#   through the PyPI JSON API (`/pypi/<pkg>/<ver>/json` -> `vulnerabilities`,
+#   all 58 locked packages) and three had open advisories: multidict 6.7.1
+#   (GHSA-54p9-h82j-f925), pyjwt 2.14.0 (GHSA-42vr-xj54-vc7v,
+#   GHSA-x33g-cr3x-6449, PYSEC-2026-4141) and urllib3 2.7.0 (three GHSAs +
+#   three PYSECs). Re-locked with ONLY those moved — `uv lock
+#   --upgrade-package multidict==6.9.1 --upgrade-package pyjwt==2.15.1
+#   --upgrade-package urllib3==2.8.0` — all three past the 7-day gate
+#   (multidict 7.0.0 is a major and was not taken). Re-run the scan every pass;
+#   CI installs from pyproject.toml, so nothing but this scan and GitHub's
+#   dependency graph ever looks at the lock.
