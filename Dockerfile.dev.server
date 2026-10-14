@@ -19,7 +19,7 @@ FROM oven/bun@sha256:4f6e31d1a54d6a3dd312daef655fc998101b5043d52e12592ac293ef04b
 # file directly; apt's wrapper exits 1 with an empty parse). The non-slim
 # image ships git preinstalled, so we never invoke apt at build time.
 # Production (Dockerfile) stays on -slim because it doesn't need git.
-FROM node@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
+FROM node@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0
 
 COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 
@@ -32,7 +32,7 @@ COPY --from=bun-src /usr/local/bin/bun /usr/local/bin/bun
 # `packageManager` field to read. Keep it equal to package.json's
 # `packageManager` — a mismatch means `pnpm dev` resolves the lockfile with a
 # different pnpm than CI and every developer.
-RUN corepack enable && corepack prepare pnpm@11.26.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.27.0 --activate
 
 # Pre-create /app/node_modules and /data owned by the dev UID so the named
 # volumes attached at runtime inherit that ownership (Docker copies the
