@@ -49,20 +49,19 @@ jobs:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
-      # `.python-version` is the single source of truth (pyenv format).
-      # `.tool-versions` carries the same pin for mise/asdf parity.
-      # setup-uv reads `.python-version` automatically and caches the
-      # resolved interpreter + wheel set across runs.
+      # `.python-version` is the single source of truth (pyenv format);
+      # `.tool-versions` carries the same pin for mise/asdf parity. setup-uv
+      # has no input for it — the venv step below passes it to `uv venv`.
       - name: Setup uv (pinned via SHA)
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
-          python-version-file: '.python-version'
-          # Re-key the wheel cache when the dep set changes. uv reads
-          # pyproject.toml directly; no separate lockfile yet.
+          # Re-key the wheel cache when the dep set changes. CI installs from
+          # pyproject.toml (`uv pip install -e`), not uv.lock, so that is the
+          # file the cache tracks.
           cache-dependency-glob: 'sdk/python/pyproject.toml'
           enable-cache: true
 
