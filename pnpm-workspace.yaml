@@ -20,11 +20,6 @@ allowBuilds:
   # package contains zero fetch/download code. Required for the git hooks to
   # function. Audited 2026-07-29 against `postinstall.js` + `get-exe.js` @ v2.1.9.
   lefthook: true
-  # msw — postinstall is a no-op unless `msw.workerDirectory` is set in our
-  # package.json (it isn't; we're Node-only, no browser service worker). The
-  # script wraps its body in `.catch(() => void 0)`. Audited 2026-07-29 against
-  # `node_modules/msw/config/scripts/postinstall.js` @ v2.14.6.
-  msw: true
   # esbuild — pulled in transitively by the dev build tooling (`drizzle-kit` for
   # migration generation, and `tsx` under both drizzle-kit and the VitePress
   # vite). The postinstall script selects the platform-specific binary subpackage
@@ -46,6 +41,7 @@ allowBuilds:
   # allowing the build just buys the native accelerator. Audited 2026-05-20
   # against `node_modules/.pnpm/msgpackr-extract@3.0.3/node_modules/msgpackr-extract/package.json`.
   msgpackr-extract: true
+  msw: set this to true or false
 
 # Reinforce the v11 default in case it ever changes upstream.
 strictDepBuilds: true
@@ -218,7 +214,7 @@ overrides:
   # 30-day bar 2026-11-12), and it is a major that vitepress-plugin-mermaid
   # 2.0.17 does not sanction (peer `mermaid 10 || 11`) — so retiring this
   # entry means taking mermaid 12.2.0 deliberately, verified by docs build.
-  "mermaid>katex": "0.18.7"
+  "mermaid>katex": "0.19.0"
   # The four entries that used to sit here — `react-cosmos>ws`,
   # `react-cosmos>http-proxy-middleware`, `express>qs` and `body-parser>qs` —
   # are GONE as of 2026-09-23, resolved at the source rather than expired.
@@ -246,50 +242,50 @@ overrides:
   # and still serves the playground on :5050 and the renderer on :5051, both
   # 200, with all 11 fixtures discovered.
 
-# VEX-style "not affected" dispositions. ONE entry as of 2026-10-07 (braces,
-# reason 2 below). A reason-1 entry for source-map-js GHSA-68fv-2mgg-jv7q was
-# added and converted the same day: added at 01:00Z when the fix, 1.2.2, was
-# 13 hours short of the 7-day gate, deleted at 14:16Z by taking 1.2.2 with
-# `pnpm update source-map-js --depth Infinity` (postcss and @vue/compiler-core
-# both declare `^1.2.1`, so no override). That left one 1.2.1 copy behind a
-# stale postcss 8.5.24 under vitepress; `pnpm dedupe` collapsed it, removing
-# five stale copies (postcss 8.5.24, source-map-js 1.2.1, yargs 18.0.0,
-# @vue/shared 3.5.38, type-fest 5.6.0) and adding no new versions.
-#
-# Reason 1 — the patched release is inside the 7-day `minimumReleaseAge`
-# cooldown, so there is no version pnpm is allowed to install that clears the
-# finding. Bypassing the cooldown with `minimumReleaseAgeExclude` would be the
-# wrong trade — that gate is this repo's primary Shai-Hulud defence (see
-# .claude/rules/supply-chain.md) — so for an advisory that is genuinely
-# unreachable here, suppressing it for a few days is strictly safer than
-# installing a package that is days old. Such an entry names the date it
-# converts into a real upgrade; on that date, delete the entry and bump.
-#
-# Reason 2 (first used 2026-10-07) — NO patched release exists at all: the
-# advisory says `patched_versions: null` / `patched_versions_unpublished`, so
-# there is nothing to upgrade to and nothing an override could point at. Such
-# an entry names the condition that deletes it (upstream publishes a fix) and
-# must be re-checked on every pass, because it has no date to expire on.
-#
-# What is NOT a reason to add an entry: a patched release that is merely younger
-# than the 30-day proactive bar. That bar says "upgrade even when the audit is
-# green"; it is a floor on staleness, never a ceiling on a security fix. The
-# 2026-09-09 pass is the worked example — hono <4.13.5 opened three advisories
-# and the fix, 4.13.5, was 14 days old: past the 7-day gate, short of 30. It was
-# taken as a real upgrade the same day rather than suppressed. Nor is "the
-# consumer's range does not reach the fix": that is what an override is for
-# (see `mermaid>katex` above, added the same day as the braces entry).
-#
-# EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the dependency-review step of
-# .github/workflows/supply-chain.yml, because that action reads GitHub's
-# advisory DB directly and never looks at this file. Add and delete in both
-# places on the same commit, or `pnpm audit` and the `Supply-chain audit` job
-# disagree.
-#
-# History: every earlier entry was resolved by an upgrade rather than by
-# expiry — the fast-uri/hono pair (added 2026-08-04) on 2026-08-11 and the qs
-# pair (added 2026-09-03) on 2026-09-06. The list was empty from 2026-09-06
-# until 2026-10-07.
+  # VEX-style "not affected" dispositions. ONE entry as of 2026-10-07 (braces,
+  # reason 2 below). A reason-1 entry for source-map-js GHSA-68fv-2mgg-jv7q was
+  # added and converted the same day: added at 01:00Z when the fix, 1.2.2, was
+  # 13 hours short of the 7-day gate, deleted at 14:16Z by taking 1.2.2 with
+  # `pnpm update source-map-js --depth Infinity` (postcss and @vue/compiler-core
+  # both declare `^1.2.1`, so no override). That left one 1.2.1 copy behind a
+  # stale postcss 8.5.24 under vitepress; `pnpm dedupe` collapsed it, removing
+  # five stale copies (postcss 8.5.24, source-map-js 1.2.1, yargs 18.0.0,
+  # @vue/shared 3.5.38, type-fest 5.6.0) and adding no new versions.
+  #
+  # Reason 1 — the patched release is inside the 7-day `minimumReleaseAge`
+  # cooldown, so there is no version pnpm is allowed to install that clears the
+  # finding. Bypassing the cooldown with `minimumReleaseAgeExclude` would be the
+  # wrong trade — that gate is this repo's primary Shai-Hulud defence (see
+  # .claude/rules/supply-chain.md) — so for an advisory that is genuinely
+  # unreachable here, suppressing it for a few days is strictly safer than
+  # installing a package that is days old. Such an entry names the date it
+  # converts into a real upgrade; on that date, delete the entry and bump.
+  #
+  # Reason 2 (first used 2026-10-07) — NO patched release exists at all: the
+  # advisory says `patched_versions: null` / `patched_versions_unpublished`, so
+  # there is nothing to upgrade to and nothing an override could point at. Such
+  # an entry names the condition that deletes it (upstream publishes a fix) and
+  # must be re-checked on every pass, because it has no date to expire on.
+  #
+  # What is NOT a reason to add an entry: a patched release that is merely younger
+  # than the 30-day proactive bar. That bar says "upgrade even when the audit is
+  # green"; it is a floor on staleness, never a ceiling on a security fix. The
+  # 2026-09-09 pass is the worked example — hono <4.13.5 opened three advisories
+  # and the fix, 4.13.5, was 14 days old: past the 7-day gate, short of 30. It was
+  # taken as a real upgrade the same day rather than suppressed. Nor is "the
+  # consumer's range does not reach the fix": that is what an override is for
+  # (see `mermaid>katex` above, added the same day as the braces entry).
+  #
+  # EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the dependency-review step of
+  # .github/workflows/supply-chain.yml, because that action reads GitHub's
+  # advisory DB directly and never looks at this file. Add and delete in both
+  # places on the same commit, or `pnpm audit` and the `Supply-chain audit` job
+  # disagree.
+  #
+  # History: every earlier entry was resolved by an upgrade rather than by
+  # expiry — the fast-uri/hono pair (added 2026-08-04) on 2026-08-11 and the qs
+  # pair (added 2026-09-03) on 2026-09-06. The list was empty from 2026-09-06
+  # until 2026-10-07.
 auditConfig:
   ignoreGhsas:
     # GHSA-vfj7-8cjw-p6xm (high) — braces <=3.0.3: stack exhaustion when

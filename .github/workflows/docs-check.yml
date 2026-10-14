@@ -44,9 +44,11 @@ jobs:
         with:
           node-version-file: ".nvmrc"
 
-      # Corepack must run AFTER setup-node — current pnpm (11.x) needs Node ≥22.13,
-      # newer than the runner's pre-installed Node. package.json#packageManager is
-      # the source of truth for the pnpm version corepack activates.
+      # Corepack must run AFTER setup-node, so pnpm is activated by the corepack
+      # bundled with the .nvmrc Node rather than the runner's preinstalled copy,
+      # which can predate the pnpm release (pnpm >=11 needs corepack to know its
+      # `bin/pnpm.mjs` entry point). package.json#packageManager is the source
+      # of truth for the pnpm version corepack activates.
       - name: Activate the pinned pnpm version via corepack
         run: |
           corepack enable

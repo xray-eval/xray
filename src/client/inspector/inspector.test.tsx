@@ -81,7 +81,7 @@ function buildResult(replay: ReplayDetailResponse): ReplayResult {
 
 // The Inspector fetches the replay, its conversation (for the breadcrumb
 // label), and — once completed — its evaluation result, so all three
-// endpoints must be mocked or MSW's onUnhandledRequest: "error" fires.
+// endpoints must be mocked or MSW fails the request (onUnhandledFrame: "error").
 function mockReplay(replay: ReplayDetailResponse) {
 	server.use(
 		http.get(`http://localhost/v1/replays/${replay.id}`, () => HttpResponse.json(replay)),

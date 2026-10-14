@@ -47,8 +47,7 @@ jobs:
         with:
           node-version-file: '.nvmrc'
 
-      # Corepack must run AFTER setup-node — same reasoning as test.yml: current
-      # pnpm (11.x) needs Node ≥22.13, newer than the runner's pre-installed Node.
+      # Corepack must run AFTER setup-node — same reasoning as test.yml.
       - name: Activate the pinned pnpm version via corepack
         run: |
           corepack enable
