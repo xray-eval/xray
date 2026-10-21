@@ -248,5 +248,7 @@ auditConfig:
 #   Use the uv that wrote the file (0.11.x writes `revision = 3`; 0.13 bumps
 #   it to 5). STILL OPEN: certifi GHSA-6q48-6c7w-9gw2 (compromised emSign
 #   intermediates) is fixed only in 2026.10.18 / 2026.10.19, inside the 7-day
-#   gate; take 2026.10.19 on 2026-10-27. Only the dev lock carries it — every
-#   `pip install` (CI, example images) resolves the fixed certifi itself.
+#   gate; take 2026.10.19 on 2026-10-27. Left at 2026.4.22, not moved to the
+#   equally affected 2026.7.22, so dependency review sees no newly introduced
+#   vulnerable version. Only the dev lock carries it — every `pip install`
+#   (CI, example images) resolves the fixed certifi itself.
