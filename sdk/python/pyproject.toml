@@ -63,7 +63,7 @@ dev = [
   # deliberately after a cooldown-checked audit, re-running ruff check,
   # ruff format --check, pyright and pytest on the new pin. The per-bump
   # history lives in git log, not here.
-  "ruff==0.16.7",
+  "ruff==0.16.8",
   "respx>=0.21",
 ]
 

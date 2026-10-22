@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
-# python:3.12.13-slim-bookworm — pinned per `.claude/rules/supply-chain.md` §4.
+# python:3.12.14-slim-bookworm — pinned per `.claude/rules/supply-chain.md` §4.
 # The patch tag, not the floating `3.12-slim-bookworm`: the two diverged when the
-# 3.12 line moved past 3.12.13, and only the patch tag's rebuild clears the 30-day bar.
-FROM python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+# 3.12 line moved past 3.12.14, and only the patch tag's rebuild clears the 30-day bar.
+FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
