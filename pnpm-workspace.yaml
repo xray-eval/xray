@@ -396,22 +396,18 @@ auditConfig:
 #   - SECURITY, Python: the SDK `uv.lock` scan (all 58 locked packages through
 #     `/pypi/<pkg>/<ver>/json` -> `vulnerabilities`) found aiohttp 3.14.3
 #     (eight GHSAs), certifi 2026.4.22 (GHSA-6q48-6c7w-9gw2, PYSEC-2026-4320)
-#     and opentelemetry-api 1.41.1 (GHSA-xcq7-p3pf-p88h). Re-locked with
-#     aiohttp 3.14.4 (2026-10-05) and the whole opentelemetry 1.45.1 / 0.66b1
-#     family (2026-10-06), which has to move together.
-#     certifi is HELD at 2026.4.22, advisory still open in the lock, pending
-#     an owner decision: bumping it to 2026.10.19 (2026-10-20, the release that
-#     clears both IDs) makes the dependency-review step in supply-chain.yml
-#     fail, because certifi is single-licensed MPL-2.0 and MPL-2.0 is on
-#     `deny-licenses`. That list guards the SPA bundle; certifi is httpx's CA
-#     bundle in the Python SDK, installed unmodified alongside it and never
-#     vendored. Clearing it needs `pkg:pypi/certifi` added to
-#     `allow-dependencies-licenses` (as dompurify is) — a relaxation of a CI
-#     gate, so it was not made unilaterally. Exposure meanwhile: CI and SDK
-#     users install from pyproject.toml (httpx's open `certifi` range), so
-#     they already get the current certifi; only the dev lockfile pins the
-#     old one. DELETE this hold by taking 2026.10.19+ on the same commit
-#     that adds the license exception. Knock-on: yarl 1.25.1 (2026-09-15), two new otel
+#     and opentelemetry-api 1.41.1 (GHSA-xcq7-p3pf-p88h). Re-locked with only
+#     those moved: aiohttp 3.14.4 (2026-10-05), certifi 2026.10.19
+#     (2026-10-20 — the version that clears the PYSEC as well as the GHSA),
+#     and the whole opentelemetry 1.45.1 / 0.66b1 family (2026-10-06), which
+#     has to move together.
+#     certifi needed a license exception first: it is single-licensed
+#     MPL-2.0, which is on `deny-licenses` in supply-chain.yml, so the bump
+#     failed dependency review. That list guards the SPA bundle; certifi is
+#     httpx's CA bundle in the Python SDK, installed unmodified next to it
+#     and never vendored. The repo owner approved adding `pkg:pypi/certifi`
+#     to `allow-dependencies-licenses` (as dompurify is) on 2026-10-28, and
+#     the bump rides the same commit. Knock-on: yarl 1.25.1 (2026-09-15), two new otel
 #     0.66b1 packages, importlib-metadata + zipp dropped. All past the 7-day
 #     gate, none with an advisory. This also covers dependabot #155.
 #   - npm, same line, 30-day bar: @biomejs/biome 2.5.14 (+ `biome.json`
@@ -588,5 +584,4 @@ auditConfig:
 #   `uv.lock` re-scanned 2026-10-28 (see the security bullet above); re-run
 #   the scan every pass — CI installs from pyproject.toml, so nothing but
 #   this scan and GitHub's dependency graph ever looks at the lock. After the
-#   re-lock the only open advisory on a locked package is the held certifi
-#   (see the security bullet above).
+#   re-lock the scan reports no open advisory on any locked package.
