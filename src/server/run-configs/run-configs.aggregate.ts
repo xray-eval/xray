@@ -94,7 +94,7 @@ export function selectIncludedReplays<T extends IncludableReplay>(
 	});
 }
 
-function compareNewestFirst(a: IncludableReplay, b: IncludableReplay): number {
+function compareNewestFirst(a: IncludableReplay, b: IncludableReplay): -1 | 0 | 1 {
 	if (a.startedAt !== b.startedAt) return a.startedAt < b.startedAt ? 1 : -1;
 	return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
