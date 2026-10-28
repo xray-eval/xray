@@ -119,11 +119,12 @@ jobs:
           # entry lives in pnpm-workspace.yaml; it is deliberately not duplicated
           # here, so that there is one place to read and two places to delete.
           #
-          # One entry as of 2026-10-07, the twin of the same GHSA in
+          # Two entries as of 2026-10-28, each the twin of the same GHSA in
           # pnpm-workspace.yaml `auditConfig.ignoreGhsas` — braces (no patched
-          # release exists). Delete it here on the same commit that deletes it
-          # there.
-          allow-ghsas: GHSA-vfj7-8cjw-p6xm
+          # release exists) and body-parser (fix inside the 7-day cooldown;
+          # converts 2026-10-29). Delete each here on the same commit that
+          # deletes it there.
+          allow-ghsas: GHSA-vfj7-8cjw-p6xm, GHSA-27r3-jxmh-p828
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft
@@ -156,5 +157,16 @@ jobs:
           # the bundle source-availability concern the deny-list guards cannot
           # arise here. Excluded from license checking by purl (version-agnostic,
           # so the planned 3.4.11 bump doesn't reopen it). Added 2026-06-21.
-          allow-dependencies-licenses: pkg:npm/dompurify
+          #
+          # certifi (MPL-2.0, single-licensed) is the CA bundle httpx requires,
+          # reaching the Python SDK's `uv.lock` only through httpx. The
+          # deny-list guards the SPA bundle; certifi never enters it — it is a
+          # Python package installed separately by pip/uv next to the SDK,
+          # used unmodified and never vendored, so MPL-2.0's file-level
+          # copyleft (it binds only modified MPL files we distribute) imposes
+          # nothing on xray. Surfaced 2026-10-28 when the security bump for
+          # GHSA-6q48-6c7w-9gw2 / PYSEC-2026-4320 made it a changed
+          # dependency; exception approved by the repo owner the same day.
+          # Excluded by purl, version-agnostic.
+          allow-dependencies-licenses: pkg:npm/dompurify, pkg:pypi/certifi
           comment-summary-in-pr: on-failure
