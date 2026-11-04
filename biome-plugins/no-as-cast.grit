@@ -16,7 +16,7 @@ language js
 
 `$expr as $type` as $cast where {
 	$cast <: not `$x as const`,
-	$cast <: not within `import $_ from $_` ,
-	$cast <: not within `export $_ from $_` ,
+	$cast <: not within `import $_ from $_`,
+	$cast <: not within `export $_ from $_`,
 	register_diagnostic(span=$type, message="Banned `as` cast. The only allowed form is `as const`. Use `satisfies`, a type guard, or `ts-pattern.match` instead.")
 }

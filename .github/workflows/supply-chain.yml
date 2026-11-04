@@ -124,7 +124,7 @@ jobs:
           # release exists) and body-parser (fix inside the 7-day cooldown;
           # converts 2026-10-29). Delete each here on the same commit that
           # deletes it there.
-          allow-ghsas: GHSA-vfj7-8cjw-p6xm, GHSA-27r3-jxmh-p828
+          allow-ghsas: GHSA-vfj7-8cjw-p6xm
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft

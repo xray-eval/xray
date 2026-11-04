@@ -82,7 +82,11 @@ dev = [
   # Bumped 2026-10-28 to 0.16.9 (uploaded 2026-09-24, the newest release
   # clearing the 30-day bar — 0.16.10 is 2026-10-01; 0.17.x is a new minor
   # and not yet eligible). Same minor; all four gates re-run clean.
-  "ruff==0.16.9",
+  # Bumped 2026-11-04 to 0.16.10 (uploaded 2026-10-01, the last 0.16.x and
+  # the newest release clearing the 30-day bar — 0.17.x is a new minor, held
+  # until its promoted rules are read). Same minor; all four gates re-run
+  # clean on Python 3.12.14 and 3.12.15.
+  "ruff==0.16.10",
   "respx>=0.21",
 ]
 
