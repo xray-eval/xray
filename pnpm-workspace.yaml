@@ -600,17 +600,30 @@ auditConfig:
 #   30-day bar (2026-11-14 / 2026-11-23); 2.0.0 is only a beta. pytest 9.2.0
 #   (2026-10-27) -> 2026-11-26 and pytest-asyncio 1.4.1 (2026-10-25) ->
 #   2026-11-24; httpx 0.28.1 is still the newest release.
-#   KNOWN GAP (supply-chain.md §6, unchanged): the example Dockerfiles
-#   resolve transitive deps at build time, and CI installs the SDK's dev
-#   extras from ranges — today that would pull pytest-asyncio 1.4.1.post1
-#   (2026-11-01), inside the 7-day gate. A hash-pinned requirements file
-#   closes both.
+#   KNOWN GAP (supply-chain.md §6, still open for the examples): the
+#   example Dockerfiles resolve transitive deps at build time, so they
+#   install whatever PyPI serves that day. A hash-pinned requirements file
+#   per slice closes it. The SDK half of this gap is CLOSED as of 2026-11-04
+#   — see the Python SDK bullet below.
 #
 # - Python SDK (`sdk/python`). ruff 0.16.9 -> 0.16.10 (2026-10-01, the last
 #   0.16.x); 0.17.x is a new minor (it may promote rules into the default
 #   set — read it before taking). `uv.lock` re-scanned 2026-11-04 (all 58
 #   locked packages through `/pypi/<pkg>/<ver>/json` -> `vulnerabilities`):
-#   no open advisory. Re-run the scan every pass — CI installs from
-#   pyproject.toml, so nothing but this scan and GitHub's dependency graph
-#   ever looks at the lock — and scan the example sets too (see the
+#   no open advisory. Re-run the scan every pass, because the lock is now
+#   exactly what CI installs. Scan the example sets too (see the
 #   livekit-agents bullet above for what skipping them cost).
+#   CI installs FROM the lock as of 2026-11-04: test-python-sdk.yml runs
+#   `uv sync --locked --extra dev` instead of `uv pip install -e '.[dev]'`.
+#   The old command re-resolved the dev extras' ranges on every run, which
+#   would have pulled pytest-asyncio 1.4.1.post1 (2026-11-01, inside the
+#   7-day gate) that day. The lock pins every package with hashes, and
+#   `--locked` fails the job if it drifts from pyproject.toml. With the
+#   switch, the locked dev tools moved to the newest release past the 30-day
+#   bar: pytest 9.0.3 -> 9.1.1 (2026-06-19; 9.2.0 is 2026-10-27, eligible
+#   2026-11-26), pytest-asyncio 1.3.0 -> 1.4.0 (2026-05-26; 1.4.1 is
+#   2026-10-25, eligible 2026-11-24) and pyright 1.1.409 -> 1.1.414
+#   (2026-09-10, the newest). All 59 locked packages are past the 7-day gate
+#   and none has an advisory. Bump them with
+#   `uv lock --upgrade-package <pkg>==<ver>` on the same bar as everything
+#   else.

@@ -55,12 +55,15 @@ dev = [
   "pytest>=9.0.3",
   "pytest-asyncio>=0.24",
   "pyright>=1.1.380",
-  # Exact-pinned: CI installs dev tools with `uv pip install -e '.[dev]'`
-  # (resolves from this file, not uv.lock), so a floating `ruff>=…` lets CI
-  # pull whatever ruff shipped that day. A ruff minor promotes new lint rules
-  # to the default set and turns green code red with no code change — exactly
-  # the drift that reddened this gate. Pin to the tested version; bump
-  # deliberately after a cooldown-checked audit. 0.16.0 uploaded 2026-07-23;
+  # Exact-pinned. CI now installs from uv.lock (`uv sync --locked`, since
+  # 2026-11-04), so the lock already fixes the version CI runs; the exact pin
+  # stays so a `uv lock --upgrade` cannot float ruff onto a new minor
+  # unreviewed. Before the switch, CI resolved from this file, and a floating
+  # `ruff>=…` let it pull whatever ruff shipped that day. A ruff minor
+  # promotes new lint rules to the default set and turns green code red with
+  # no code change — exactly the drift that reddened this gate. Pin to the
+  # tested version; bump deliberately after a cooldown-checked audit. 0.16.0
+  # uploaded 2026-07-23;
   # bumped 2026-08-26 from 0.15.21 after fixing, not suppressing, the nine
   # findings the newly-defaulted rules raised (PYI034 `__aenter__` -> `Self`
   # across the mic/speaker protocols and their three implementations, PYI036

@@ -40,7 +40,7 @@ The pre-commit `ruff` step calls `sdk/python/.venv/bin/ruff` directly to match t
 ```bash
 cd sdk/python
 uv venv
-uv pip install -e '.[dev]'
+uv sync --locked --extra dev
 ```
 
 Install `uv` if you don't have it (`curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`). CI installs it via a SHA-pinned `setup-uv` action; `.tool-versions` pins Node/Bun/pnpm/Python — not uv.
