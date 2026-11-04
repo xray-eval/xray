@@ -12,8 +12,8 @@
 # GitHub Action pinning. Bump the tag in the comment and the digest in the
 # same commit.
 #
-# node:24.21.0-bookworm-slim (matches .nvmrc)
-FROM node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS prod-deps
+# node:24.22.1-bookworm-slim (matches .nvmrc)
+FROM node@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS prod-deps
 
 ENV CI=1 \
     PNPM_HOME=/root/.local/share/pnpm \
