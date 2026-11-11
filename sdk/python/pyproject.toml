@@ -89,7 +89,14 @@ dev = [
   # the newest release clearing the 30-day bar — 0.17.x is a new minor, held
   # until its promoted rules are read). Same minor; all four gates re-run
   # clean on Python 3.12.14 and 3.12.15.
-  "ruff==0.16.10",
+  # Bumped 2026-11-11 to 0.17.0 (uploaded 2026-10-09, the newest release
+  # clearing the 30-day bar — 0.17.1 is 2026-10-15). A new minor, so its
+  # changelog was read first: the default-set change only REMOVES DTZ rules
+  # and adds F406 (a syntax error), the default target-version change is moot
+  # (`target-version = "py310"` below), and pragma-aware line length is the
+  # one formatter change. `ruff check` + `ruff format --check` on src/tests
+  # are clean with no source change; pyright strict and pytest re-run clean.
+  "ruff==0.17.0",
   "respx>=0.21",
 ]
 

@@ -1,7 +1,7 @@
 services:
   livekit:
-    # livekit/livekit-server:v1.13.7 — pinned per `.claude/rules/supply-chain.md` §4.
-    image: livekit/livekit-server@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
+    # livekit/livekit-server:v1.13.9 — pinned per `.claude/rules/supply-chain.md` §4.
+    image: livekit/livekit-server@sha256:d0c04791bf63ca8dcea123571827d56ba9504bd57c8d5de60ee03b5408cc3154
     container_name: example-livekit
     command: --config /etc/livekit.yaml --bind 0.0.0.0
     volumes:
