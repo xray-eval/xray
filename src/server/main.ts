@@ -112,7 +112,7 @@ const server = Bun.serve({
 	// `router.js` <-> `load-client.js` cycle that @tanstack/router-core has
 	// shipped since 1.171.16 (react-router 1.170.19), and the SPA dies on load
 	// with "Cannot read properties of null (reading 'replaceRouteChunk')".
-	// Reproduced on Bun 1.3.13, 1.4.0 and 1.4.2; production bundles are
+	// Reproduced on Bun 1.3.13, 1.4.0, 1.4.2 and 1.4.3; production bundles are
 	// unaffected. The dev bundle still rebuilds per request, so a reload picks
 	// up edits. Re-enable once `pnpm dev` loads `/` cleanly with `hmr: true`.
 	development: process.env.NODE_ENV !== "production" ? { hmr: false } : false,

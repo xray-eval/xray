@@ -9,6 +9,6 @@ dependencies = [
   # (GHSA-xcq7-p3pf-p88h, fixed in 1.45.1). 1.8.7 is the first to allow 1.45.
   "livekit-agents==1.8.7",
   "livekit-plugins-google==1.8.7",
-  "langfuse==4.16.0",
+  "langfuse==4.17.0",
   # xray-py installed editable from ../../sdk/python in the Dockerfile.
 ]

@@ -4,8 +4,12 @@
 #
 # Works with mise (https://mise.jdx.dev) and asdf out of the box.
 nodejs 24.22.1
-bun 1.4.2
-pnpm 11.28.4
+bun 1.4.3
+pnpm 11.28.5
 # Python is also pinned via .python-version (pyenv / setup-python read that
 # file directly; .tool-versions is here for mise/asdf parity).
-python 3.12.15
+python 3.12.16
+# uv drives the Python SDK's CI job: astral-sh/setup-uv reads this line
+# (`version-file` in test-python-sdk.yml). Without it setup-uv installs the
+# newest uv on every run, a floating toolchain like any other.
+uv 0.13.6
