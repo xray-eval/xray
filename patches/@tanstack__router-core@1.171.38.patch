@@ -1,0 +1,26 @@
+diff --git a/dist/cjs/router.cjs b/dist/cjs/router.cjs
+index 68b6ef850a1e1cd10d492dff39b8542adcc372db..285b4a7de68a6f28bfd9995ede54ab1db0141905 100644
+--- a/dist/cjs/router.cjs
++++ b/dist/cjs/router.cjs
+@@ -835,7 +835,7 @@ async function documentNavigation(router, href, { replace, ignoreBlocker }) {
+ * dedicated to HMR.
+ */
+ if (process.env.NODE_ENV !== "production") {
+-	RouterCore.prototype._replaceRouteChunk = require_load_client.replaceRouteChunk;
++	RouterCore.prototype._replaceRouteChunk = (...args) => require_load_client.replaceRouteChunk(...args);
+ 	RouterCore.prototype._refreshRoute = async function() {
+ 		this._serverResult = void 0;
+ 		this.updateLatestLocation();
+diff --git a/dist/esm/router.js b/dist/esm/router.js
+index a31886020d1dfff3c10ee27fea6ae781e6211f9a..237a80ca27d72350ec81c6907d3dac1fb6a484a7 100644
+--- a/dist/esm/router.js
++++ b/dist/esm/router.js
+@@ -835,7 +835,7 @@ async function documentNavigation(router, href, { replace, ignoreBlocker }) {
+ * dedicated to HMR.
+ */
+ if (process.env.NODE_ENV !== "production") {
+-	RouterCore.prototype._replaceRouteChunk = replaceRouteChunk;
++	RouterCore.prototype._replaceRouteChunk = (...args) => replaceRouteChunk(...args);
+ 	RouterCore.prototype._refreshRoute = async function() {
+ 		this._serverResult = void 0;
+ 		this.updateLatestLocation();

@@ -149,14 +149,10 @@ jobs:
             EUPL-1.0, EUPL-1.1, EUPL-1.2,
             CC-BY-SA-1.0, CC-BY-SA-2.0, CC-BY-SA-2.5,
             CC-BY-SA-3.0, CC-BY-SA-4.0
-          # dompurify is dual-licensed `MPL-2.0 OR Apache-2.0`; the deny-list
-          # above matches the MPL-2.0 term, but the OR lets us take it under
-          # permissive Apache-2.0, so no copyleft obligation attaches. It is also
-          # a dev-only docs dep (mermaid → dompurify), dropped by the prod image's
-          # `--prod` install and never inlined into the shipped SPA bundle — so
-          # the bundle source-availability concern the deny-list guards cannot
-          # arise here. Excluded from license checking by purl (version-agnostic,
-          # so the planned 3.4.11 bump doesn't reopen it). Added 2026-06-21.
+          # The dompurify entry that used to sit here (MPL-2.0 OR Apache-2.0,
+          # added 2026-06-21, a transitive docs dep via mermaid) was removed
+          # 2026-11-18: the docs moved to @mermaid-js/tiny, which has no npm
+          # dependencies, so dompurify is no longer in the lockfile.
           #
           # certifi (MPL-2.0, single-licensed) is the CA bundle httpx requires,
           # reaching the Python SDK's `uv.lock` only through httpx. The
@@ -168,5 +164,5 @@ jobs:
           # GHSA-6q48-6c7w-9gw2 / PYSEC-2026-4320 made it a changed
           # dependency; exception approved by the repo owner the same day.
           # Excluded by purl, version-agnostic.
-          allow-dependencies-licenses: pkg:npm/dompurify, pkg:pypi/certifi
+          allow-dependencies-licenses: pkg:pypi/certifi
           comment-summary-in-pr: on-failure

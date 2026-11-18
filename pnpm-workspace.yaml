@@ -63,13 +63,13 @@ verifyDepsBeforeRun: install
 # `allowBuilds` above. Keep the path as specific as possible so the override
 # disappears the moment the upstream chain is fixed.
 #
-# FIVE entries: four version workarounds (`@esbuild-kit/core-utils>esbuild`,
-# `vite`, `mermaid>katex`, `react-cosmos>glob` — the last added 2026-11-04)
-# plus one REMOVAL (`bun-plugin-tailwind>bun`) that forces no version at all —
-# it deletes a duplicate toolchain; its own note says why. All five
-# re-verified 2026-11-18 the only way that proves anything (deleted one at a
-# time, re-resolved, audited) on pnpm 11.28.6, and every one is still
-# load-bearing — see the dated line in each note.
+# FOUR entries: three version workarounds (`@esbuild-kit/core-utils>esbuild`,
+# `vite`, `react-cosmos>glob` — the last added 2026-11-04) plus one REMOVAL
+# (`bun-plugin-tailwind>bun`) that forces no version at all — it deletes a
+# duplicate toolchain; its own note says why. All four re-verified 2026-11-18
+# the only way that proves anything (deleted one at a time, re-resolved,
+# audited) on pnpm 11.28.6, and every one is still load-bearing — see the
+# dated line in each note.
 # `@esbuild-kit/core-utils>esbuild` brings GHSA-67mh-4wv8-2f99 straight back
 # when removed, and dropping `vite` fails the install outright on
 # `trustPolicy: no-downgrade` before the audit even runs. So neither is a habit
@@ -85,6 +85,22 @@ verifyDepsBeforeRun: install
 #   - `react-cosmos>ws`, `react-cosmos>http-proxy-middleware`, `express>qs` and
 #     `body-parser>qs` (all removed 2026-09-23) were fixed at the source by
 #     react-cosmos 7.4.0 — see the note where they used to sit, below.
+#   - `mermaid>katex` (added 2026-10-07, removed 2026-11-18) was retired by
+#     dropping the consumer: the docs now render with `@mermaid-js/tiny`
+#     12.2.0, mermaid's official single-file browser build. It has no npm
+#     dependencies and leaves out KaTeX, so katex left the lockfile along with
+#     mermaid and vitepress-plugin-mermaid (no release since 2024-09; replaced
+#     by docs/.vitepress/theme/Mermaid.vue plus a fence rule in config.mts):
+#     the lockfile went from 761 to 649 packages (d3, cytoscape, dompurify,
+#     katex, ...). Full mermaid
+#     12 was not an option: it hard-depends on elkjs (`EPL-2.0 OR
+#     GPL-3.0-or-later`), which supply-chain.yml's `deny-licenses` rejects.
+#     The tiny bundle carries no ELK code; the licence banners it does carry
+#     are mermaid's and lodash's MIT and DOMPurify's `MPL-2.0 OR Apache-2.0`
+#     (taken under Apache-2.0, as the old dompurify exclusion did).
+#     Verified by screenshotting all six docs diagrams in light and dark:
+#     10 of 12 PNGs are byte-identical to mermaid 11's, the ER diagram differs
+#     only at sub-pixel level, and the zoom viewer and theme toggle still work.
 #   - The fast-uri pair that reappeared 2026-09-30 (GHSA-qw65-cvwx-89v3,
 #     GHSA-58mr-gqgx-xq4g, both high, on `@commitlint/*>ajv>fast-uri@3.1.6`)
 #     did NOT get an override: ajv's `^3.0.1` already admits the patched 3.1.8
@@ -255,71 +271,6 @@ overrides:
   # Re-verified 2026-11-18 on pnpm 11.28.6: same `bun@1.4.4` comes back;
   # bun-plugin-tailwind `latest` still 0.1.2.
   "bun-plugin-tailwind>bun": "-"
-  # GHSA-238p-pmpm-9mq7 (low) — katex >=0.11.0 <0.18.2: prototype pollution
-  # that already exists elsewhere in the page can bypass katex's `trust`
-  # restrictions. Patched only on the 0.18 line (0.18.2, 2026-08-08). mermaid
-  # declares `katex ^0.16.47` on every 11.x AND on 12.0.0 / 12.1.0, so no
-  # mermaid upgrade reaches a patched katex, and there is no 0.16.x backport.
-  # An override is therefore the only fix that is not a suppression.
-  #
-  # Like `vite` above, this is deliberately OUTSIDE the consumer's range, so it
-  # is verified by use rather than by semver. mermaid touches exactly one katex
-  # API — `(await import("katex")).default.renderToString(src, { throwOnError,
-  # displayMode, output: "mathml" | "htmlAndMathml" })`, and only for `$$…$$`
-  # labels (no diagram in docs/ has one). The two breaking changes between
-  # 0.16.47 and 0.18.7 are the internal `__defineFunction` API (0.17.0) and
-  # prefixed CSS class names (0.18.0); mermaid uses neither. Checked
-  # 2026-10-07 by rendering the same expressions through both versions in
-  # both output modes and running `pnpm docs:build`. Exact-pinned to the
-  # newest 30-day-eligible 0.18.x so it only moves on a re-verified bump.
-  # Deleting it brings GHSA-238p-pmpm-9mq7 straight back (katex 0.16.47).
-  # Remove once mermaid declares `katex >=0.18.2`. Added 2026-10-07.
-  #
-  # 2026-10-28: moved 0.18.7 -> 0.18.9 (2026-09-23, the newest 0.18.x past the
-  # 30-day bar; 0.18.10 is 2026-09-30). `pnpm docs:build` clean. Re-verified by
-  # deletion: GHSA-238p-pmpm-9mq7 comes back on katex 0.16.47. The retirement
-  # condition has now been MET UPSTREAM, just not reachably: mermaid 12.2.0
-  # (2026-10-13) is the first release to declare `katex ^0.18.0`. It does not
-  # retire this entry yet, for two independent reasons: it is a major inside
-  # its 30-day window (eligible 2026-11-12), and vitepress-plugin-mermaid@2.0.17
-  # (still its newest release) peers `mermaid 10 || 11`. Revisit when both
-  # hold — taking mermaid 12.2.0+ then deletes this override outright.
-  #
-  # 2026-11-04: moved 0.18.9 -> 0.18.10 (2026-09-30, past the 30-day bar).
-  # NOT 0.18.11 (2026-10-01), although it is also past the bar and was tried
-  # first: upstream deprecated it as "Accidentally published with breaking
-  # changes. Use 0.19.0 instead." (`pnpm dedupe --check` is what flagged it),
-  # and 0.19.x is a new 0.x minor, i.e. a major, not taken on the date bar.
-  # Verified the 2026-10-07 way: the same expressions (fractions, sums, roots,
-  # \text, a matrix) rendered through 0.18.9 and 0.18.10 in both output modes
-  # and both display modes produce byte-identical strings, and `pnpm
-  # docs:build` is clean. Re-verified by deletion: the advisory comes back.
-  # vitepress-plugin-mermaid is still 2.0.17 (`mermaid 10 || 11`), and
-  # mermaid 12.2.0 becomes 30-day-eligible 2026-11-12 — revisit then.
-  # 2026-11-11: re-verified by deletion, katex 0.16.47 and the advisory come
-  # back. Still blocked on both counts: mermaid 12.2.0 clears the 30-day bar
-  # 2026-11-12T08:42Z (one day out), and vitepress-plugin-mermaid is still
-  # 2.0.17 (unpublished since 2024-09) peering `mermaid 10 || 11`. Taking
-  # mermaid 12 therefore means either an unmet peer or replacing the plugin —
-  # a deliberate decision for the pass that takes mermaid 12, not a date bump.
-  # 2026-11-18: re-verified by deletion, katex 0.16.47 + the advisory come
-  # back. mermaid 12.2.0 IS now past the 30-day bar, and the plugin turned out
-  # to be the easy half — it is ~100 lines (a markdown-it fence rule plus a
-  # Vue component calling `mermaid.render`) and could be replaced in-tree.
-  # The real blocker found this pass is LICENSING: mermaid 12 bundles ELK as
-  # its default layout and so declares `elkjs ^0.9.3` as a hard dependency,
-  # and elkjs is `EPL-2.0 OR GPL-3.0-or-later`. Both terms are on the
-  # `deny-licenses` list in supply-chain.yml, so the dependency-review gate
-  # rejects it, and the docs site deployed to GitHub Pages would then ship
-  # EPL code in its bundle. mermaid 11 never pulled elkjs (`pnpm why elkjs` is
-  # empty today). Taking mermaid 12 is therefore a licence decision for a
-  # human — accept EPL-2.0 for the docs bundle (and record the exception
-  # next to the dompurify one), or keep mermaid 11 — not something an audit
-  # pass should settle by adding an exclusion. Until then this override stays.
-  # mermaid 12 also changes the default theme/look/layout (redux-color, neo,
-  # ELK); the docs config would need `theme`/`look`/`layout` set explicitly to
-  # keep today's diagrams.
-  "mermaid>katex": "0.18.10"
   # GHSA-3g3m-2fjr-6pw4 (moderate) — glob >=9.0.0 <=14.0.1: an AbortSignal
   # does not stop an async walk, which keeps reading directories after the
   # caller gave up. GHSA-g3hv-75wg-m249 (moderate) — minimatch <11.0.1:
@@ -332,7 +283,7 @@ overrides:
   # which resolves the patched 11.0.2.
   #
   # Deliberately OUTSIDE the consumer's range, so verified by use (the same
-  # bar as `vite` and `mermaid>katex`). react-cosmos makes exactly two glob
+  # bar as `vite`). react-cosmos makes exactly two glob
   # calls — `glob('**/*', { cwd, absolute: true, ignore })` in
   # findUserModulePaths and `globSync('**/cosmos.plugin.json', { … })` in
   # findCosmosPluginConfigs, with `ignore` defaulting to
@@ -384,66 +335,66 @@ overrides:
   # and still serves the playground on :5050 and the renderer on :5051, both
   # 200, with all 11 fixtures discovered.
 
-# VEX-style "not affected" dispositions. ONE entry as of 2026-11-18:
-# picomatch GHSA-fc5q-39xc-vjpf (reason 2 below, added that day).
-#
-# The braces entry (GHSA-vfj7-8cjw-p6xm, reason 2, 2026-10-07 to 2026-11-18)
-# is GONE, retired neither by an upgrade nor by expiry: GitHub WITHDREW the
-# advisory on 2026-10-23 (OSV `withdrawn: 2026-10-23T12:53Z`, summary now
-# "Withdrawn Advisory: ..."). braces is still 3.0.3 and nothing in the tree
-# moved; the registry simply stopped reporting it. Verified 2026-11-18 by
-# deleting both ignore entries in a scratch copy: `pnpm audit` then reports
-# only picomatch. Its twin in supply-chain.yml `allow-ghsas` went with it.
-# The 2026-11-11 pass re-checked braces' version but not the advisory's
-# status — check BOTH on every pass.
-#
-# The body-parser entry (reason 1,
-# GHSA-27r3-jxmh-p828, added 2026-10-28) was converted on 2026-11-04 exactly
-# as its note said: deleted here and in supply-chain.yml, then
-# `pnpm update body-parser --depth Infinity` took 2.4.0 under express 5.2.1's
-# `^2.2.1` — no override. A reason-1 entry for source-map-js GHSA-68fv-2mgg-jv7q was
-# added and converted the same day: added at 01:00Z when the fix, 1.2.2, was
-# 13 hours short of the 7-day gate, deleted at 14:16Z by taking 1.2.2 with
-# `pnpm update source-map-js --depth Infinity` (postcss and @vue/compiler-core
-# both declare `^1.2.1`, so no override). That left one 1.2.1 copy behind a
-# stale postcss 8.5.24 under vitepress; `pnpm dedupe` collapsed it, removing
-# five stale copies (postcss 8.5.24, source-map-js 1.2.1, yargs 18.0.0,
-# @vue/shared 3.5.38, type-fest 5.6.0) and adding no new versions.
-#
-# Reason 1 — the patched release is inside the 7-day `minimumReleaseAge`
-# cooldown, so there is no version pnpm is allowed to install that clears the
-# finding. Bypassing the cooldown with `minimumReleaseAgeExclude` would be the
-# wrong trade — that gate is this repo's primary Shai-Hulud defence (see
-# .claude/rules/supply-chain.md) — so for an advisory that is genuinely
-# unreachable here, suppressing it for a few days is strictly safer than
-# installing a package that is days old. Such an entry names the date it
-# converts into a real upgrade; on that date, delete the entry and bump.
-#
-# Reason 2 (first used 2026-10-07) — NO patched release exists at all: the
-# advisory says `patched_versions: null` / `patched_versions_unpublished`, so
-# there is nothing to upgrade to and nothing an override could point at. Such
-# an entry names the condition that deletes it (upstream publishes a fix) and
-# must be re-checked on every pass, because it has no date to expire on.
-#
-# What is NOT a reason to add an entry: a patched release that is merely younger
-# than the 30-day proactive bar. That bar says "upgrade even when the audit is
-# green"; it is a floor on staleness, never a ceiling on a security fix. The
-# 2026-09-09 pass is the worked example — hono <4.13.5 opened three advisories
-# and the fix, 4.13.5, was 14 days old: past the 7-day gate, short of 30. It was
-# taken as a real upgrade the same day rather than suppressed. Nor is "the
-# consumer's range does not reach the fix": that is what an override is for
-# (see `mermaid>katex` above, added the same day as the braces entry).
-#
-# EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the dependency-review step of
-# .github/workflows/supply-chain.yml, because that action reads GitHub's
-# advisory DB directly and never looks at this file. Add and delete in both
-# places on the same commit, or `pnpm audit` and the `Supply-chain audit` job
-# disagree.
-#
-# History: every earlier entry was resolved by an upgrade rather than by
-# expiry — the fast-uri/hono pair (added 2026-08-04) on 2026-08-11 and the qs
-# pair (added 2026-09-03) on 2026-09-06. The list was empty from 2026-09-06
-# until 2026-10-07.
+  # VEX-style "not affected" dispositions. ONE entry as of 2026-11-18:
+  # picomatch GHSA-fc5q-39xc-vjpf (reason 2 below, added that day).
+  #
+  # The braces entry (GHSA-vfj7-8cjw-p6xm, reason 2, 2026-10-07 to 2026-11-18)
+  # is GONE, retired neither by an upgrade nor by expiry: GitHub WITHDREW the
+  # advisory on 2026-10-23 (OSV `withdrawn: 2026-10-23T12:53Z`, summary now
+  # "Withdrawn Advisory: ..."). braces is still 3.0.3 and nothing in the tree
+  # moved; the registry simply stopped reporting it. Verified 2026-11-18 by
+  # deleting both ignore entries in a scratch copy: `pnpm audit` then reports
+  # only picomatch. Its twin in supply-chain.yml `allow-ghsas` went with it.
+  # The 2026-11-11 pass re-checked braces' version but not the advisory's
+  # status — check BOTH on every pass.
+  #
+  # The body-parser entry (reason 1,
+  # GHSA-27r3-jxmh-p828, added 2026-10-28) was converted on 2026-11-04 exactly
+  # as its note said: deleted here and in supply-chain.yml, then
+  # `pnpm update body-parser --depth Infinity` took 2.4.0 under express 5.2.1's
+  # `^2.2.1` — no override. A reason-1 entry for source-map-js GHSA-68fv-2mgg-jv7q was
+  # added and converted the same day: added at 01:00Z when the fix, 1.2.2, was
+  # 13 hours short of the 7-day gate, deleted at 14:16Z by taking 1.2.2 with
+  # `pnpm update source-map-js --depth Infinity` (postcss and @vue/compiler-core
+  # both declare `^1.2.1`, so no override). That left one 1.2.1 copy behind a
+  # stale postcss 8.5.24 under vitepress; `pnpm dedupe` collapsed it, removing
+  # five stale copies (postcss 8.5.24, source-map-js 1.2.1, yargs 18.0.0,
+  # @vue/shared 3.5.38, type-fest 5.6.0) and adding no new versions.
+  #
+  # Reason 1 — the patched release is inside the 7-day `minimumReleaseAge`
+  # cooldown, so there is no version pnpm is allowed to install that clears the
+  # finding. Bypassing the cooldown with `minimumReleaseAgeExclude` would be the
+  # wrong trade — that gate is this repo's primary Shai-Hulud defence (see
+  # .claude/rules/supply-chain.md) — so for an advisory that is genuinely
+  # unreachable here, suppressing it for a few days is strictly safer than
+  # installing a package that is days old. Such an entry names the date it
+  # converts into a real upgrade; on that date, delete the entry and bump.
+  #
+  # Reason 2 (first used 2026-10-07) — NO patched release exists at all: the
+  # advisory says `patched_versions: null` / `patched_versions_unpublished`, so
+  # there is nothing to upgrade to and nothing an override could point at. Such
+  # an entry names the condition that deletes it (upstream publishes a fix) and
+  # must be re-checked on every pass, because it has no date to expire on.
+  #
+  # What is NOT a reason to add an entry: a patched release that is merely younger
+  # than the 30-day proactive bar. That bar says "upgrade even when the audit is
+  # green"; it is a floor on staleness, never a ceiling on a security fix. The
+  # 2026-09-09 pass is the worked example — hono <4.13.5 opened three advisories
+  # and the fix, 4.13.5, was 14 days old: past the 7-day gate, short of 30. It was
+  # taken as a real upgrade the same day rather than suppressed. Nor is "the
+  # consumer's range does not reach the fix": that is what an override is for
+  # (see the retired `mermaid>katex` entry in the overrides history above).
+  #
+  # EVERY ENTRY NEEDS A TWIN in `allow-ghsas` on the dependency-review step of
+  # .github/workflows/supply-chain.yml, because that action reads GitHub's
+  # advisory DB directly and never looks at this file. Add and delete in both
+  # places on the same commit, or `pnpm audit` and the `Supply-chain audit` job
+  # disagree.
+  #
+  # History: every earlier entry was resolved by an upgrade rather than by
+  # expiry — the fast-uri/hono pair (added 2026-08-04) on 2026-08-11 and the qs
+  # pair (added 2026-09-03) on 2026-09-06. The list was empty from 2026-09-06
+  # until 2026-10-07.
 auditConfig:
   ignoreGhsas:
     # GHSA-fc5q-39xc-vjpf (high) — picomatch <=4.0.7: ReDoS when COMPILING a
@@ -475,6 +426,33 @@ auditConfig:
     # instead). Re-check `npm view picomatch time` every pass. Added
     # 2026-11-18, with its twin in supply-chain.yml `allow-ghsas`.
     - GHSA-fc5q-39xc-vjpf
+
+# Source patches to installed packages (`pnpm patch` / `pnpm patch-commit`).
+# Same bar as an override: a dated reason and the condition that deletes it.
+#
+# @tanstack/router-core — makes dev HMR work under Bun (src/server/main.ts
+# sets `hmr: true` because of it). Bun's HMR runtime hands `null` to a module
+# that reads an import cycle at top level (oven-sh/bun#40248, reported for
+# TanStack as #40378); router-core's `router.js` imports `load-client.js`,
+# which imports `router.js` back, and `router.js` reads `replaceRouteChunk`
+# off it at load time to set `RouterCore.prototype._replaceRouteChunk`. The
+# patch wraps that one assignment (ESM and CJS builds) in an arrow function,
+# so the import is read when the method is CALLED, after both modules have
+# loaded. Same behaviour, one line per build. The CJS half also silences
+# Node's circular-access warning (TanStack/router#8585).
+# Verified 2026-11-18 on bun 1.4.3: with `hmr: true` the SPA loads with no
+# console errors, and editing src/client/router/root-layout.tsx swaps the
+# text in place with no full reload and no errors. Unpatched, the same setup
+# fails on load on bun 1.4.3 AND 1.4.4. Upgrading TanStack does not help: the
+# newest router-core (1.171.39) still has the cycle.
+# The key is the exact version, so EVERY router-core bump must re-create the
+# patch (`pnpm patch @tanstack/router-core@<new>`, edit the two lines,
+# `pnpm patch-commit`), or the install fails. DELETE when Bun ships
+# oven-sh/bun#40259 (two-phase ESM linking in the dev server; green CI, awaiting
+# review as of 2026-11-18) or router-core breaks the cycle — then re-test
+# `hmr: true` without it. Added 2026-11-18.
+patchedDependencies:
+  '@tanstack/router-core@1.171.38': patches/@tanstack__router-core@1.171.38.patch
 
 # Deliberate version holds — packages whose newest release is NOT the one
 # pinned in package.json. Two different reasons live here, and the entry says
@@ -527,6 +505,12 @@ auditConfig:
 #   - livekit/livekit-server v1.13.9 -> v1.13.10 in the example compose
 #     (`sha256:89ca9ce0…`, the OCI index the registry serves for the tag,
 #     pushed 2026-10-14T07:39Z). No livekit-server advisory in OSV.
+#   - Docs diagrams: mermaid 11.17.2 + vitepress-plugin-mermaid 2.0.17 ->
+#     @mermaid-js/tiny 12.2.0 and an in-tree renderer, retiring the
+#     `mermaid>katex` override and the dompurify licence exclusion — see the
+#     overrides history at the top.
+#   - Router HMR re-enabled through a router-core patch — see
+#     `patchedDependencies`.
 #   - Python example: livekit-agents + livekit-plugins-google 1.8.7 -> 1.8.8
 #     and langfuse 4.17.0 -> 4.18.0 — see below. SDK: ruff 0.17.0 -> 0.17.1
 #     plus four in-major lock moves — see below.
@@ -540,7 +524,6 @@ auditConfig:
 #     like a release-pipeline hiccup rather than a takeover — but the gate
 #     exists precisely so that is not our call to make from a hunch. Stay on
 #     2.2.1 until a release with provenance ships.
-#   - mermaid 12.x — see the `mermaid>katex` note (elkjs licence).
 #   - Node 24.22.3 — see its entry below (Docker images inside the gate).
 #
 # Converted by the 2026-11-11 pass and therefore GONE from this list (cutoff
@@ -597,13 +580,11 @@ auditConfig:
 #   - Python: ruff 0.16.10 -> 0.17.0 and 22 transitive packages in the SDK
 #     lock, langfuse 4.16.0 -> 4.17.0 in the example — see below.
 #
-# - The react-router HMR workaround (`development: { hmr: false }` in
-#   src/server/main.ts) is STILL NEEDED on 1.170.45. Re-checked 2026-11-18 by
-#   flipping it to `hmr: true` and loading `/` in Chromium under
-#   `bun --hot`: same "Cannot read properties of null (reading
-#   'replaceRouteChunk')" from @tanstack/router-core 1.171.38 on bun 1.4.3.
-#   With HMR off the SPA renders with no console errors. Re-check the same
-#   way on every react-router bump.
+# - Router HMR: `hmr: false` in src/server/main.ts is GONE as of 2026-11-18,
+#   replaced by the router-core patch (see `patchedDependencies` above).
+#   On every react-router / router-core bump, re-create the patch for the new
+#   router-core version, then load `/` in Chromium under `bun --hot` and edit
+#   a component: the page must update in place with no console errors.
 #
 # - pnpm, taken 11.28.5 -> 11.28.6 (2026-10-15, the newest 11.x past the
 #   30-day bar, with provenance like its predecessor; 11.28.7 is
@@ -641,10 +622,10 @@ auditConfig:
 #     lefthook — held, see "NOT taken" above.
 #   drizzle-orm 0.45.4, ky 2.2.0, ts-pattern 5.9.2, react 19.3.1, radix-ui
 #   1.8.1 and @commitlint/* 21.2.4 are the newest releases of their lines.
-#   Majors seen but NOT taken on the date bar alone: mermaid 12.x (see the
-#   `mermaid>katex` note — blocked on the elkjs licence), wavesurfer.js 8.x
-#   (newest 8.1.0), msw 3.x (newest 3.0.7), katex 0.19.x. Each needs its
-#   changelog read deliberately.
+#     @mermaid-js/tiny 12.3.0 -> 2026-12-03 (a minor)
+#   Majors seen but NOT taken on the date bar alone: wavesurfer.js 8.x
+#   (newest 8.1.0), msw 3.x (newest 3.0.7). Each needs its changelog read
+#   deliberately.
 #
 # - Node: HELD ON A SECURITY RELEASE, for one reason only. 24.22.3
 #   (2026-11-10, `"security": true` in https://nodejs.org/dist/index.json) is

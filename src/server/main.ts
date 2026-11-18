@@ -108,14 +108,14 @@ const app = createApp(store, {
 const server = Bun.serve({
 	port: env.PORT,
 	hostname: env.HOST,
-	// HMR off: Bun's HMR module runtime nulls a hoisted import inside the
-	// `router.js` <-> `load-client.js` cycle that @tanstack/router-core has
-	// shipped since 1.171.16 (react-router 1.170.19), and the SPA dies on load
-	// with "Cannot read properties of null (reading 'replaceRouteChunk')".
-	// Reproduced on Bun 1.3.13, 1.4.0, 1.4.2 and 1.4.3; production bundles are
-	// unaffected. The dev bundle still rebuilds per request, so a reload picks
-	// up edits. Re-enable once `pnpm dev` loads `/` cleanly with `hmr: true`.
-	development: process.env.NODE_ENV !== "production" ? { hmr: false } : false,
+	// HMR depends on patches/@tanstack__router-core@*.patch. Bun's HMR runtime
+	// hands `null` to a module that reads an import cycle at top level
+	// (oven-sh/bun#40248, fix pending in oven-sh/bun#40259), and router-core's
+	// `router.js` <-> `load-client.js` cycle does exactly that, killing the SPA
+	// with "Cannot read properties of null (reading 'replaceRouteChunk')". The
+	// patch defers that read. If the patch is dropped before Bun ships the fix,
+	// set `hmr: false` here instead.
+	development: process.env.NODE_ENV !== "production" ? { hmr: true } : false,
 	// Must outlast the SSE heartbeat — Bun's 10s default killed idle
 	// `/v1/replays/:id/events` streams before their first heartbeat. See the
 	// constant's docstring.

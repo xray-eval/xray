@@ -22,6 +22,9 @@ ENV CI=1 \
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+# `patchedDependencies` in pnpm-workspace.yaml points here; without it the
+# frozen install fails (router-core, a prod dep, is patched).
+COPY patches ./patches
 RUN corepack enable && corepack prepare --activate \
  && pnpm install --prod --frozen-lockfile --ignore-scripts
 
