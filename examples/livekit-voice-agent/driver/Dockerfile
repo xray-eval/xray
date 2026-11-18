@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
-# python:3.12.15-slim-bookworm — pinned per `.claude/rules/supply-chain.md` §4.
+# python:3.12.16-slim-bookworm — pinned per `.claude/rules/supply-chain.md` §4.
 # The patch tag, not the floating `3.12-slim-bookworm`: the floating tag already
 # points at a newer patch whose image is still inside the 7-day gate. 3.12 is
 # security-only, so each patch is taken on the 7-day gate, not the 30-day bar.
-FROM python@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
+FROM python@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

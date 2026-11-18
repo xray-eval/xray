@@ -43,7 +43,7 @@ uv venv
 uv sync --locked --extra dev
 ```
 
-Install `uv` if you don't have it (`curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`). CI installs it via a SHA-pinned `setup-uv` action; `.tool-versions` pins Node/Bun/pnpm/Python — not uv.
+Install `uv` if you don't have it (`curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`). CI installs it via a SHA-pinned `setup-uv` action at the version `.tool-versions` pins (alongside Node/Bun/pnpm/Python); a uv older than that pin may not know the pinned Python patch release yet.
 
 ## Daily loop
 

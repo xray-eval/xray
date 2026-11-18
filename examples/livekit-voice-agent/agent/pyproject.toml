@@ -7,8 +7,8 @@ dependencies = [
   # livekit-agents is past 1.8.6 for security, not age: through 1.8.6 it caps
   # opentelemetry-* below 1.45, which forces opentelemetry-api 1.44.0
   # (GHSA-xcq7-p3pf-p88h, fixed in 1.45.1). 1.8.7 is the first to allow 1.45.
-  "livekit-agents==1.8.7",
-  "livekit-plugins-google==1.8.7",
-  "langfuse==4.16.0",
+  "livekit-agents==1.8.8",
+  "livekit-plugins-google==1.8.8",
+  "langfuse==4.18.0",
   # xray-py installed editable from ../../sdk/python in the Dockerfile.
 ]

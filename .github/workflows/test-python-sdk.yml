@@ -9,7 +9,7 @@
 #
 # Local equivalent (from sdk/python/), using uv:
 #
-#     uv venv --python 3.12.15
+#     uv venv --python 3.12.16
 #     source .venv/bin/activate
 #     uv sync --locked --extra dev
 #     ruff check src tests
@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
         with:
           egress-policy: audit
 
@@ -61,6 +61,12 @@ jobs:
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           python-version-file: '.python-version'
+          # The uv version comes from `.tool-versions`. The checksum is the
+          # published sha256 of uv-x86_64-unknown-linux-gnu.tar.gz for that
+          # version (ubuntu-24.04 above is x86_64): setup-uv v8.3.2 only ships
+          # built-in checksums up to 0.11.28. Move both together.
+          version-file: '.tool-versions'
+          checksum: 'f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645'
           # Re-key the wheel cache when the dep set changes.
           cache-dependency-glob: |
             sdk/python/pyproject.toml
