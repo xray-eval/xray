@@ -119,12 +119,12 @@ jobs:
           # entry lives in pnpm-workspace.yaml; it is deliberately not duplicated
           # here, so that there is one place to read and two places to delete.
           #
-          # Two entries as of 2026-10-28, each the twin of the same GHSA in
-          # pnpm-workspace.yaml `auditConfig.ignoreGhsas` — braces (no patched
-          # release exists) and body-parser (fix inside the 7-day cooldown;
-          # converts 2026-10-29). Delete each here on the same commit that
-          # deletes it there.
-          allow-ghsas: GHSA-vfj7-8cjw-p6xm
+          # One entry as of 2026-11-18, the twin of the same GHSA in
+          # pnpm-workspace.yaml `auditConfig.ignoreGhsas` — picomatch (no
+          # patched release exists). The braces twin went the same day, because
+          # GitHub withdrew that advisory. Delete each here on the same commit
+          # that deletes it there.
+          allow-ghsas: GHSA-fc5q-39xc-vjpf
           # ELv2-redistributable bundle: reject every copyleft family on any
           # new prod dep. The SPA is built with Bun's HTML bundler, which
           # inlines JS into single output chunks — so even weak-copyleft

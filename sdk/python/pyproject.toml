@@ -96,7 +96,9 @@ dev = [
   # (`target-version = "py310"` below), and pragma-aware line length is the
   # one formatter change. `ruff check` + `ruff format --check` on src/tests
   # are clean with no source change; pyright strict and pytest re-run clean.
-  "ruff==0.17.0",
+  # Bumped 2026-11-18 to 0.17.1 (uploaded 2026-10-15, the newest release
+  # clearing the 30-day bar). A patch; all four gates re-run clean.
+  "ruff==0.17.1",
   "respx>=0.21",
 ]
 
